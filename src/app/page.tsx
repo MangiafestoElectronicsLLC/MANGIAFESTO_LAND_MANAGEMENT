@@ -9,11 +9,46 @@ export default function AuthPage() {
     const [password, setPassword] = useState('');
     const [mode, setMode] = useState<'signin' | 'signup'>('signin');
     const [error, setError] = useState<string | null>(null);
+    const [info, setInfo] = useState<string | null>(null);
+    const [sendingConfirm, setSendingConfirm] = useState(false);
     const router = useRouter();
+
+    const humanizeAuthError = (message: string) => {
+        if (message.toLowerCase().includes('email not confirmed')) {
+            return 'Your email is not confirmed yet. Check your inbox, then try again.';
+        }
+        return message;
+    };
+
+    const handleResendConfirmation = async () => {
+        if (!email.trim()) {
+            setError('Enter your email first, then click resend.');
+            return;
+        }
+
+        setSendingConfirm(true);
+        setError(null);
+        setInfo(null);
+
+        const supabase = supabaseClient();
+        const { error: resendError } = await supabase.auth.resend({
+            type: 'signup',
+            email: email.trim()
+        });
+
+        if (resendError) {
+            setError(humanizeAuthError(resendError.message));
+        } else {
+            setInfo('Confirmation email sent. Check inbox/spam, click the link, then sign in.');
+        }
+
+        setSendingConfirm(false);
+    };
 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setError(null);
+        setInfo(null);
         const supabase = supabaseClient();
 
         try {
@@ -32,6 +67,13 @@ export default function AuthPage() {
                         role_id: null
                     });
                 }
+
+                // If email confirmation is enabled, session is usually null after signup.
+                if (!data.session) {
+                    setInfo('Account created. Check your email to confirm your account, then sign in.');
+                    setMode('signin');
+                    return;
+                }
             } else {
                 const { error } = await supabase.auth.signInWithPassword({
                     email,
@@ -42,7 +84,7 @@ export default function AuthPage() {
 
             router.push('/dashboard');
         } catch (err: any) {
-            setError(err.message ?? 'Auth error');
+            setError(humanizeAuthError(err.message ?? 'Auth error'));
         }
     };
 
@@ -69,6 +111,9 @@ export default function AuthPage() {
                 {error && (
                     <div style={{ color: '#f97373', fontSize: '0.85rem' }}>{error}</div>
                 )}
+                {info && (
+                    <div style={{ color: '#86efac', fontSize: '0.85rem' }}>{info}</div>
+                )}
                 <button
                     type="submit"
                     style={{
@@ -81,6 +126,23 @@ export default function AuthPage() {
                 >
                     {mode === 'signin' ? 'Sign in' : 'Sign up'}
                 </button>
+                {mode === 'signin' && (
+                    <button
+                        type="button"
+                        onClick={handleResendConfirmation}
+                        disabled={sendingConfirm}
+                        style={{
+                            padding: '0.5rem',
+                            borderRadius: 4,
+                            background: 'transparent',
+                            border: '1px solid #93c5fd',
+                            color: '#93c5fd',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {sendingConfirm ? 'Sending...' : 'Resend confirmation email'}
+                    </button>
+                )}
             </form>
             <button
                 onClick={() =>
