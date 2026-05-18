@@ -155,6 +155,36 @@ export default function DashboardPage() {
         router.push('/');
     };
 
+    const roleName =
+        roles.find(r => r.id === profile?.role_id)?.name ?? 'No role set';
+
+    const filteredTickets = useMemo(() => {
+        return tickets.filter(t => {
+            const roleMatch =
+                selectedRoleId === 'all' ? true : t.role_id === selectedRoleId;
+            const statusMatch =
+                selectedStatus === 'all' ? true : t.status === selectedStatus;
+            return roleMatch && statusMatch;
+        });
+    }, [tickets, selectedRoleId, selectedStatus]);
+
+    const ticketCounts = useMemo(() => {
+        return {
+            all: tickets.length,
+            open: tickets.filter(t => t.status === 'open').length,
+            in_progress: tickets.filter(t => t.status === 'in_progress').length,
+            closed: tickets.filter(t => t.status === 'closed').length
+        };
+    }, [tickets]);
+
+    const roleCounts = useMemo(() => {
+        const counts: Record<string, number> = { all: tickets.length };
+        for (const role of roles) {
+            counts[role.id] = tickets.filter(t => t.role_id === role.id).length;
+        }
+        return counts;
+    }, [roles, tickets]);
+
     if (loading) return <div>Loading...</div>;
 
     if (pageError) {
@@ -188,36 +218,6 @@ export default function DashboardPage() {
             </div>
         );
     }
-
-    const roleName =
-        roles.find(r => r.id === profile?.role_id)?.name ?? 'No role set';
-
-    const filteredTickets = useMemo(() => {
-        return tickets.filter(t => {
-            const roleMatch =
-                selectedRoleId === 'all' ? true : t.role_id === selectedRoleId;
-            const statusMatch =
-                selectedStatus === 'all' ? true : t.status === selectedStatus;
-            return roleMatch && statusMatch;
-        });
-    }, [tickets, selectedRoleId, selectedStatus]);
-
-    const ticketCounts = useMemo(() => {
-        return {
-            all: tickets.length,
-            open: tickets.filter(t => t.status === 'open').length,
-            in_progress: tickets.filter(t => t.status === 'in_progress').length,
-            closed: tickets.filter(t => t.status === 'closed').length
-        };
-    }, [tickets]);
-
-    const roleCounts = useMemo(() => {
-        const counts: Record<string, number> = { all: tickets.length };
-        for (const role of roles) {
-            counts[role.id] = tickets.filter(t => t.role_id === role.id).length;
-        }
-        return counts;
-    }, [roles, tickets]);
 
     return (
         <div style={{ display: 'grid', gap: '1.5rem' }}>

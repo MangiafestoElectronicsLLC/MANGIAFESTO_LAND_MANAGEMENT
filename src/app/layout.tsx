@@ -1,9 +1,42 @@
 import './globals.css';
 import type { ReactNode } from 'react';
+import type { Metadata, Viewport } from 'next';
 
-export const metadata = {
-    title: 'Family Land Board',
-    description: 'Tickets and roles for family land'
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://mangiafesto-land-management.vercel.app';
+
+export const metadata: Metadata = {
+    metadataBase: new URL(siteUrl),
+    title: {
+        default: 'Family Land Board',
+        template: '%s | Family Land Board'
+    },
+    description: 'Role-based ticket and land operations board for family land management.',
+    keywords: ['land management', 'family board', 'ticket tracking', 'property operations'],
+    robots: {
+        index: true,
+        follow: true
+    },
+    alternates: {
+        canonical: '/'
+    },
+    openGraph: {
+        title: 'Family Land Board',
+        description: 'Role-based ticket and land operations board for family land management.',
+        url: siteUrl,
+        siteName: 'Family Land Board',
+        type: 'website'
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Family Land Board',
+        description: 'Role-based ticket and land operations board for family land management.'
+    }
+};
+
+export const viewport: Viewport = {
+    width: 'device-width',
+    initialScale: 1,
+    themeColor: '#0f172a'
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
