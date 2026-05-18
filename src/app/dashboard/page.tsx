@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 
-type Role = {
+export type Role = {
     id: string;
     name: string;
 };
