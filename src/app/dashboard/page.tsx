@@ -23,6 +23,7 @@ export default function DashboardPage() {
     const [selectedRoleId, setSelectedRoleId] = useState<string>('all');
     const [selectedStatus, setSelectedStatus] = useState<string>('all');
     const [boardMode, setBoardMode] = useState<'kanban' | 'list'>('kanban');
+    const [pageError, setPageError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
@@ -30,71 +31,123 @@ export default function DashboardPage() {
 
     useEffect(() => {
         const load = async () => {
-            const {
-                data: { user }
-            } = await supabase.auth.getUser();
+            try {
+                const {
+                    data: { user }
+                } = await supabase.auth.getUser();
 
-            if (!user) {
-                router.push('/');
-                return;
-            }
+                if (!user) {
+                    router.push('/');
+                    return;
+                }
 
-            setEmail(user.email || '');
+                setEmail(user.email || '');
 
-            const { data: profileData } = await supabase
-                .from('profiles')
-                .select('id, full_name, role_id')
-                .eq('id', user.id)
-                .maybeSingle();
-
-            let effectiveProfile = profileData as Profile | null;
-
-            if (!effectiveProfile) {
-                // Self-heal missing profile rows so users do not land as unknown.
-                await supabase.from('profiles').upsert({
-                    id: user.id,
-                    full_name: user.email,
-                    role_id: null
-                });
-
-                const { data: createdProfile } = await supabase
+                const { data: profileData } = await supabase
                     .from('profiles')
                     .select('id, full_name, role_id')
                     .eq('id', user.id)
                     .maybeSingle();
 
-                effectiveProfile = (createdProfile as Profile | null) || {
-                    id: user.id,
-                    full_name: user.email || 'Family Member',
-                    role_id: null
-                };
+                let effectiveProfile = profileData as Profile | null;
+
+                if (!effectiveProfile) {
+                    await supabase.from('profiles').upsert({
+                        id: user.id,
+                        full_name: user.email,
+                        role_id: null
+                    });
+
+                    const { data: createdProfile } = await supabase
+                        .from('profiles')
+                        .select('id, full_name, role_id')
+                        .eq('id', user.id)
+                        .maybeSingle();
+
+                    effectiveProfile = (createdProfile as Profile | null) || {
+                        id: user.id,
+                        full_name: user.email || 'Family Member',
+                        role_id: null
+                    };
+                }
+
+                const { data: rolesData } = await supabase
+                    .from('roles')
+                    .select('id, name')
+                    .order('name', { ascending: true });
+
+                const { data: ticketsData } = await supabase
+                    .from('tickets')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                const safeRoles = (rolesData || []).filter(r =>
+                    r && typeof r.id === 'string' && typeof r.name === 'string'
+                ) as Role[];
+
+                const safeTickets = (ticketsData || [])
+                    .filter(t => t && typeof t.id === 'string')
+                    .map(t => ({
+                        ...t,
+                        title: typeof t.title === 'string' ? t.title : 'Untitled ticket',
+                        description:
+                            typeof t.description === 'string' || t.description === null
+                                ? t.description
+                                : String(t.description),
+                        status:
+                            t.status === 'open' ||
+                                t.status === 'in_progress' ||
+                                t.status === 'closed'
+                                ? t.status
+                                : 'open',
+                        priority: typeof t.priority === 'string' ? t.priority : 'normal',
+                        role_id:
+                            typeof t.role_id === 'string' || t.role_id === null
+                                ? t.role_id
+                                : null,
+                        created_by:
+                            typeof t.created_by === 'string' || t.created_by === null
+                                ? t.created_by
+                                : null,
+                        assigned_to:
+                            typeof t.assigned_to === 'string' || t.assigned_to === null
+                                ? t.assigned_to
+                                : null,
+                        created_at:
+                            typeof t.created_at === 'string'
+                                ? t.created_at
+                                : new Date().toISOString(),
+                        updated_at:
+                            typeof t.updated_at === 'string'
+                                ? t.updated_at
+                                : new Date().toISOString()
+                    })) as Ticket[];
+
+                setProfile(effectiveProfile);
+                setRoles(safeRoles);
+                setTickets(safeTickets);
+                setPageError(null);
+                setLoading(false);
+            } catch (err: any) {
+                setPageError(err?.message || 'Dashboard failed to load. Please refresh.');
+                setLoading(false);
             }
-
-            const { data: rolesData } = await supabase
-                .from('roles')
-                .select('id, name')
-                .order('name', { ascending: true });
-
-            const { data: ticketsData } = await supabase
-                .from('tickets')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            setProfile(effectiveProfile);
-            setRoles((rolesData || []) as Role[]);
-            setTickets((ticketsData || []) as Ticket[]);
-            setLoading(false);
         };
 
         load();
     }, []);
 
     const refreshTickets = async () => {
-        const { data } = await supabase
-            .from('tickets')
-            .select('*')
-            .order('created_at', { ascending: false });
-        setTickets((data || []) as Ticket[]);
+        try {
+            const { data } = await supabase
+                .from('tickets')
+                .select('*')
+                .order('created_at', { ascending: false });
+            setTickets((data || []) as Ticket[]);
+            setPageError(null);
+        } catch (err: any) {
+            setPageError(err?.message || 'Could not refresh tickets.');
+        }
     };
 
     const handleSignOut = async () => {
@@ -103,6 +156,38 @@ export default function DashboardPage() {
     };
 
     if (loading) return <div>Loading...</div>;
+
+    if (pageError) {
+        return (
+            <div
+                style={{
+                    border: '1px solid #7f1d1d',
+                    borderRadius: 8,
+                    padding: '1rem',
+                    background: '#1f1111',
+                    display: 'grid',
+                    gap: '0.65rem'
+                }}
+            >
+                <div style={{ fontWeight: 600 }}>Dashboard Error</div>
+                <div style={{ fontSize: '0.9rem', color: '#fecaca' }}>{pageError}</div>
+                <button
+                    onClick={() => window.location.reload()}
+                    style={{
+                        width: 'fit-content',
+                        padding: '0.4rem 0.75rem',
+                        borderRadius: 6,
+                        border: '1px solid #334155',
+                        background: 'transparent',
+                        color: '#e2e8f0',
+                        cursor: 'pointer'
+                    }}
+                >
+                    Reload page
+                </button>
+            </div>
+        );
+    }
 
     const roleName =
         roles.find(r => r.id === profile?.role_id)?.name ?? 'No role set';

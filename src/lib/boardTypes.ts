@@ -39,8 +39,9 @@ export const ROLE_SLUG_TO_NAME: Record<string, string> = {
     technology: 'Technology'
 };
 
-export const roleNameToSlug = (name: string) => {
-    const normalized = name.trim().toLowerCase();
+export const roleNameToSlug = (name: string | null | undefined) => {
+    const normalized = typeof name === 'string' ? name.trim().toLowerCase() : '';
+    if (!normalized) return 'unknown-role';
     if (normalized === 'chairman') return 'chairman';
     if (normalized === 'legal') return 'legal';
     if (normalized === 'grounds') return 'grounds';
@@ -48,6 +49,8 @@ export const roleNameToSlug = (name: string) => {
     return normalized.replace(/\s+/g, '-');
 };
 
-export const roleSlugToName = (slug: string) => {
-    return ROLE_SLUG_TO_NAME[slug.toLowerCase()] || null;
+export const roleSlugToName = (slug: string | null | undefined) => {
+    const key = typeof slug === 'string' ? slug.toLowerCase() : '';
+    if (!key) return null;
+    return ROLE_SLUG_TO_NAME[key] || null;
 };
