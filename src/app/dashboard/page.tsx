@@ -3,40 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
-
-export type Role = {
-    id: string;
-    name: string;
-};
-
-type Profile = {
-    id: string;
-    full_name: string | null;
-    role_id: string | null;
-    role?: Role | null;
-};
-
-export type Ticket = {
-    id: string;
-    title: string;
-    description: string | null;
-    status: string;
-    priority: string;
-    role_id: string | null;
-    created_by: string | null;
-    assigned_to: string | null;
-    created_at: string;
-    updated_at: string;
-};
-
-const STATUS_OPTIONS = [
-    { key: 'all', label: 'All' },
-    { key: 'open', label: 'Open' },
-    { key: 'in_progress', label: 'In Progress' },
-    { key: 'closed', label: 'Closed' }
-] as const;
+import KanbanBoard from '@/components/KanbanBoard';
+import {
+    STATUS_OPTIONS,
+    roleNameToSlug,
+    type Profile,
+    type Role,
+    type Ticket
+} from '@/lib/boardTypes';
 
 export default function DashboardPage() {
     const [profile, setProfile] = useState<Profile | null>(null);
@@ -45,6 +22,7 @@ export default function DashboardPage() {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedRoleId, setSelectedRoleId] = useState<string>('all');
     const [selectedStatus, setSelectedStatus] = useState<string>('all');
+    const [boardMode, setBoardMode] = useState<'kanban' | 'list'>('kanban');
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
@@ -214,20 +192,31 @@ export default function DashboardPage() {
                         All Roles ({roleCounts.all || 0})
                     </button>
                     {roles.map(role => (
-                        <button
-                            key={role.id}
-                            onClick={() => setSelectedRoleId(role.id)}
-                            style={{
-                                padding: '0.35rem 0.65rem',
-                                borderRadius: 999,
-                                border: selectedRoleId === role.id ? '1px solid #93c5fd' : '1px solid #334155',
-                                background: selectedRoleId === role.id ? '#1e3a8a' : 'transparent',
-                                color: '#e2e8f0',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            {role.name} ({roleCounts[role.id] || 0})
-                        </button>
+                        <div key={role.id} style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                            <button
+                                onClick={() => setSelectedRoleId(role.id)}
+                                style={{
+                                    padding: '0.35rem 0.65rem',
+                                    borderRadius: 999,
+                                    border: selectedRoleId === role.id ? '1px solid #93c5fd' : '1px solid #334155',
+                                    background: selectedRoleId === role.id ? '#1e3a8a' : 'transparent',
+                                    color: '#e2e8f0',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                {role.name} ({roleCounts[role.id] || 0})
+                            </button>
+                            <Link
+                                href={`/dashboard/role/${roleNameToSlug(role.name)}`}
+                                style={{
+                                    fontSize: '0.72rem',
+                                    color: '#93c5fd',
+                                    textDecoration: 'none'
+                                }}
+                            >
+                                Open page
+                            </Link>
+                        </div>
                     ))}
                 </div>
 
@@ -257,14 +246,51 @@ export default function DashboardPage() {
                     <span>Closed: {ticketCounts.closed}</span>
                     <span>Showing: {filteredTickets.length}</span>
                 </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={() => setBoardMode('kanban')}
+                        style={{
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: 999,
+                            border: boardMode === 'kanban' ? '1px solid #22d3ee' : '1px solid #334155',
+                            background: boardMode === 'kanban' ? '#083344' : 'transparent',
+                            color: '#e2e8f0',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Kanban View
+                    </button>
+                    <button
+                        onClick={() => setBoardMode('list')}
+                        style={{
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: 999,
+                            border: boardMode === 'list' ? '1px solid #22d3ee' : '1px solid #334155',
+                            background: boardMode === 'list' ? '#083344' : 'transparent',
+                            color: '#e2e8f0',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        List View
+                    </button>
+                </div>
             </div>
 
             <TicketForm roles={roles} onCreated={refreshTickets} />
-            <TicketList
-                tickets={filteredTickets}
-                roles={roles}
-                onChanged={refreshTickets}
-            />
+            {boardMode === 'kanban' ? (
+                <KanbanBoard
+                    tickets={filteredTickets}
+                    roles={roles}
+                    onChanged={refreshTickets}
+                />
+            ) : (
+                <TicketList
+                    tickets={filteredTickets}
+                    roles={roles}
+                    onChanged={refreshTickets}
+                />
+            )}
         </div>
     );
 }

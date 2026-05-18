@@ -1,7 +1,7 @@
 'use client';
 
 import { supabaseClient } from '@/lib/supabaseClient';
-import type { Role, Ticket } from '@/app/dashboard/page';
+import type { Role, Ticket } from '@/lib/boardTypes';
 
 type Props = {
     tickets: Ticket[];

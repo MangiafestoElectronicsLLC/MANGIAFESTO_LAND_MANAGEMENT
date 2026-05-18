@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
-import type { Role } from '@/app/dashboard/page';
+import type { Role } from '@/lib/boardTypes';
 
 type Props = {
     roles: Role[];
