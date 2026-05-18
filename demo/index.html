@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Family Land Board Demo</title>
+    <style>
+        :root {
+            --bg: #f5f7fb;
+            --panel: #ffffff;
+            --text: #122033;
+            --muted: #556379;
+            --line: #d6dfec;
+            --good: #1f9d55;
+            --warn: #b7791f;
+            --danger: #c53030;
+            --accent: #0b6ab8;
+            --accent-2: #0d4d86;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Segoe UI, Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 12% 18%, #d9ecff 0%, transparent 35%),
+                radial-gradient(circle at 88% 4%, #ffe9d3 0%, transparent 28%),
+                var(--bg);
+            min-height: 100vh;
+        }
+
+        .wrap {
+            width: min(1100px, 94vw);
+            margin: 0 auto;
+            padding: 18px;
+        }
+
+        .top {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        h1 {
+            font-size: 1.4rem;
+            margin: 0;
+            letter-spacing: 0.2px;
+        }
+
+        .small {
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            box-shadow: 0 8px 22px rgba(17, 35, 58, 0.08);
+        }
+
+        .card {
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.9rem;
+            margin-bottom: 6px;
+            color: var(--muted);
+        }
+
+        input,
+        select,
+        textarea,
+        button {
+            font: inherit;
+            width: 100%;
+            border-radius: 9px;
+            border: 1px solid var(--line);
+            padding: 10px;
+            background: #fff;
+        }
+
+        textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+
+        .row {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .row3 {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        button {
+            background: var(--accent);
+            color: #fff;
+            border: 0;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background: var(--accent-2);
+        }
+
+        .ghost {
+            background: transparent;
+            color: var(--accent-2);
+            border: 1px solid var(--accent-2);
+        }
+
+        .danger {
+            background: #fff;
+            color: var(--danger);
+            border: 1px solid #f0b3b3;
+        }
+
+        .dash {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin-bottom: 12px;
+        }
+
+        .kpi {
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #fff;
+        }
+
+        .kpi .n {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .kpi .t {
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        .ticket {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+
+        .ticket h4 {
+            margin: 0 0 6px 0;
+        }
+
+        .meta {
+            color: var(--muted);
+            font-size: 0.86rem;
+            margin: 6px 0;
+        }
+
+        .chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            margin-right: 5px;
+            border: 1px solid var(--line);
+            background: #f7fafc;
+        }
+
+        .s-open {
+            border-color: #bfd7f3;
+            background: #edf5ff;
+        }
+
+        .s-in_progress {
+            border-color: #f3e0af;
+            background: #fff8e8;
+        }
+
+        .s-closed {
+            border-color: #bde4c7;
+            background: #effcf3;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            margin-top: 8px;
+        }
+
+        .actions button {
+            width: auto;
+            padding: 6px 9px;
+            font-size: 0.85rem;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 900px) {
+            .dash {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .row,
+            .row3 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="top">
+            <div>
+                <h1>Family Land Board Demo</h1>
+                <div class="small">Offline demo only. Data saved in this browser.</div>
+            </div>
+            <div id="who" class="small"></div>
+        </div>
+
+        <section id="auth" class="panel card">
+            <h3 style="margin-top:0">Sign in</h3>
+            <div class="row">
+                <div>
+                    <label>Email</label>
+                    <input id="email" placeholder="name@example.com" />
+                </div>
+                <div>
+                    <label>Role</label>
+                    <select id="role">
+                        <option>Chairman</option>
+                        <option>Legal</option>
+                        <option>Grounds</option>
+                        <option>Technology</option>
+                    </select>
+                </div>
+            </div>
+            <div style="margin-top:10px" class="row">
+                <button id="loginBtn">Enter Demo</button>
+                <button id="clearBtn" class="ghost">Clear Saved Data</button>
+            </div>
+        </section>
+
+        <section id="app" class="hidden">
+            <div class="dash">
+                <div class="kpi">
+                    <div id="kAll" class="n">0</div>
+                    <div class="t">All Tickets</div>
+                </div>
+                <div class="kpi">
+                    <div id="kOpen" class="n">0</div>
+                    <div class="t">Open</div>
+                </div>
+                <div class="kpi">
+                    <div id="kProg" class="n">0</div>
+                    <div class="t">In Progress</div>
+                </div>
+                <div class="kpi">
+                    <div id="kClose" class="n">0</div>
+                    <div class="t">Closed</div>
+                </div>
+            </div>
+
+            <div class="panel card">
+                <h3 style="margin-top:0">Create Ticket</h3>
+                <div class="row3">
+                    <div>
+                        <label>Title</label>
+                        <input id="tTitle" placeholder="Fence repair at north lot" />
+                    </div>
+                    <div>
+                        <label>Role</label>
+                        <select id="tRole">
+                            <option value="">No specific role</option>
+                            <option>Chairman</option>
+                            <option>Legal</option>
+                            <option>Grounds</option>
+                            <option>Technology</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Priority</label>
+                        <select id="tPriority">
+                            <option>low</option>
+                            <option selected>normal</option>
+                            <option>high</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-top:10px">
+                    <label>Description</label>
+                    <textarea id="tDesc" placeholder="Add details here..."></textarea>
+                </div>
+                <div style="margin-top:10px">
+                    <button id="createBtn">Create Ticket</button>
+                </div>
+            </div>
+
+            <div class="panel card">
+                <div class="top" style="margin-bottom:8px">
+                    <h3 style="margin:0">Tickets</h3>
+                    <button id="logoutBtn" class="danger" style="width:auto">Sign Out</button>
+                </div>
+                <div id="ticketList"></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const KEY_USER = 'land_demo_user_v1';
+        const KEY_TICKETS = 'land_demo_tickets_v1';
+
+        const el = id => document.getElementById(id);
+
+        function now() {
+            return new Date().toLocaleString();
+        }
+
+        function getUser() {
+            try { return JSON.parse(localStorage.getItem(KEY_USER) || 'null'); }
+            catch { return null; }
+        }
+
+        function setUser(u) {
+            localStorage.setItem(KEY_USER, JSON.stringify(u));
+        }
+
+        function getTickets() {
+            try { return JSON.parse(localStorage.getItem(KEY_TICKETS) || '[]'); }
+            catch { return []; }
+        }
+
+        function setTickets(list) {
+            localStorage.setItem(KEY_TICKETS, JSON.stringify(list));
+        }
+
+        function renderDash(list) {
+            el('kAll').textContent = list.length;
+            el('kOpen').textContent = list.filter(t => t.status === 'open').length;
+            el('kProg').textContent = list.filter(t => t.status === 'in_progress').length;
+            el('kClose').textContent = list.filter(t => t.status === 'closed').length;
+        }
+
+        function renderTickets() {
+            const list = getTickets().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+            const node = el('ticketList');
+            node.innerHTML = '';
+
+            renderDash(list);
+
+            if (!list.length) {
+                node.innerHTML = '<div class="small">No tickets yet. Create your first one above.</div>';
+                return;
+            }
+
+            list.forEach(t => {
+                const box = document.createElement('div');
+                box.className = 'ticket';
+
+                box.innerHTML = [
+                    '<h4>' + escapeHtml(t.title) + '</h4>',
+                    '<div>' + (t.description ? escapeHtml(t.description) : '<span class="small">No description</span>') + '</div>',
+                    '<div class="meta">',
+                    '<span class="chip s-' + t.status + '">' + t.status + '</span>',
+                    '<span class="chip">priority: ' + t.priority + '</span>',
+                    '<span class="chip">role: ' + (t.role || 'none') + '</span>',
+                    '</div>',
+                    '<div class="meta">Created: ' + t.createdAt + ' | Updated: ' + t.updatedAt + '</div>',
+                    '<div class="actions">',
+                    '<button data-id="' + t.id + '" data-status="open">Open</button>',
+                    '<button data-id="' + t.id + '" data-status="in_progress">In Progress</button>',
+                    '<button data-id="' + t.id + '" data-status="closed">Closed</button>',
+                    '</div>'
+                ].join('');
+
+                node.appendChild(box);
+            });
+
+            node.querySelectorAll('button[data-id]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = btn.getAttribute('data-id');
+                    const status = btn.getAttribute('data-status');
+                    const arr = getTickets();
+                    const idx = arr.findIndex(x => x.id === id);
+                    if (idx === -1) return;
+                    arr[idx].status = status;
+                    arr[idx].updatedAt = now();
+                    setTickets(arr);
+                    renderTickets();
+                });
+            });
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function updateView() {
+            const u = getUser();
+            const isIn = !!u;
+            el('auth').classList.toggle('hidden', isIn);
+            el('app').classList.toggle('hidden', !isIn);
+            el('who').textContent = isIn ? ('Signed in as ' + u.email + ' (' + u.role + ')') : '';
+            if (isIn) renderTickets();
+        }
+
+        el('loginBtn').addEventListener('click', () => {
+            const email = el('email').value.trim();
+            const role = el('role').value;
+            if (!email) {
+                alert('Enter an email first.');
+                return;
+            }
+            setUser({ email, role, loginAt: now() });
+            updateView();
+        });
+
+        el('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem(KEY_USER);
+            updateView();
+        });
+
+        el('clearBtn').addEventListener('click', () => {
+            if (!confirm('Clear all saved demo data?')) return;
+            localStorage.removeItem(KEY_USER);
+            localStorage.removeItem(KEY_TICKETS);
+            updateView();
+        });
+
+        el('createBtn').addEventListener('click', () => {
+            const title = el('tTitle').value.trim();
+            const description = el('tDesc').value.trim();
+            const role = el('tRole').value;
+            const priority = el('tPriority').value;
+            if (!title) {
+                alert('Title is required.');
+                return;
+            }
+
+            const arr = getTickets();
+            const ts = now();
+            arr.push({
+                id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2),
+                title,
+                description,
+                role,
+                priority,
+                status: 'open',
+                createdAt: ts,
+                updatedAt: ts
+            });
+            setTickets(arr);
+            el('tTitle').value = '';
+            el('tDesc').value = '';
+            el('tRole').value = '';
+            el('tPriority').value = 'normal';
+            renderTickets();
+        });
+
+        updateView();
+    </script>
+</body>
+
+</html>
