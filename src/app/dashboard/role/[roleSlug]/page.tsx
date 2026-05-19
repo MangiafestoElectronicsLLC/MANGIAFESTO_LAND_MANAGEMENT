@@ -7,6 +7,7 @@ import { supabaseClient } from '@/lib/supabaseClient';
 import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
+import ActivityFeed from '@/components/ActivityFeed';
 import type { Profile, Role, Ticket } from '@/lib/boardTypes';
 import { roleSlugToName } from '@/lib/boardTypes';
 import { loadRolesWithFallback } from '@/lib/roleData';
@@ -193,6 +194,7 @@ export default function RoleDashboardPage() {
 
             <KanbanBoard tickets={tickets} roles={roles} onChanged={refreshTickets} />
             <TicketForm roles={roles} onCreated={refreshTickets} />
+            <ActivityFeed title="Role Activity Notifications" />
             <TicketList tickets={tickets} roles={roles} onChanged={refreshTickets} />
         </div>
     );

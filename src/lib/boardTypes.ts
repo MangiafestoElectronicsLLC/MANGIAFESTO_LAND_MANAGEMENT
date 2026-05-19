@@ -27,6 +27,16 @@ export type Ticket = {
     updated_at: string;
 };
 
+export type TicketHistoryEvent = {
+    id: string;
+    ticket_id: string;
+    action: string;
+    performed_by: string | null;
+    from_status: string | null;
+    to_status: string | null;
+    created_at: string;
+};
+
 export const STATUS_OPTIONS = [
     { key: 'all', label: 'All' },
     { key: 'open', label: 'Open' },
