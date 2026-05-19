@@ -199,7 +199,7 @@ export default function DashboardPage() {
     const roleName =
         roles.find(r => r.id === profile?.role_id)?.name ?? 'No role set';
 
-    const filteredTickets = useMemo(() => {
+    const roleFilteredTickets = useMemo(() => {
         return tickets.filter(t => {
             const roleMatch =
                 selectedRoleId === 'all'
@@ -207,11 +207,16 @@ export default function DashboardPage() {
                     : selectedRoleId === 'unassigned'
                         ? t.role_id === null
                         : t.role_id === selectedRoleId;
-            const statusMatch =
-                selectedStatus === 'all' ? true : t.status === selectedStatus;
-            return roleMatch && statusMatch;
+            return roleMatch;
         });
-    }, [tickets, selectedRoleId, selectedStatus]);
+    }, [tickets, selectedRoleId]);
+
+    const statusFilteredTickets = useMemo(() => {
+        if (selectedStatus === 'all') return roleFilteredTickets;
+        return roleFilteredTickets.filter(t => t.status === selectedStatus);
+    }, [roleFilteredTickets, selectedStatus]);
+
+    const showingCount = boardMode === 'kanban' ? roleFilteredTickets.length : statusFilteredTickets.length;
 
     const ticketCounts = useMemo(() => {
         return {
@@ -419,7 +424,7 @@ export default function DashboardPage() {
                     <span>Open: {ticketCounts.open}</span>
                     <span>In Progress: {ticketCounts.in_progress}</span>
                     <span>Closed: {ticketCounts.closed}</span>
-                    <span>Showing: {filteredTickets.length}</span>
+                    <span>Showing: {showingCount}</span>
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -456,13 +461,13 @@ export default function DashboardPage() {
             <ActivityFeed />
             {boardMode === 'kanban' ? (
                 <KanbanBoard
-                    tickets={filteredTickets}
+                    tickets={roleFilteredTickets}
                     roles={roles}
                     onChanged={refreshTickets}
                 />
             ) : (
                 <TicketList
-                    tickets={filteredTickets}
+                    tickets={statusFilteredTickets}
                     roles={roles}
                     onChanged={refreshTickets}
                 />
