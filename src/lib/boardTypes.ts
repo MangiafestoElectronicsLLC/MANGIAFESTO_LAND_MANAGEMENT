@@ -3,6 +3,8 @@ export type Role = {
     name: string;
 };
 
+export const DEFAULT_ROLE_NAMES = ['Chairman', 'Legal', 'Grounds', 'Technology'] as const;
+
 export type Profile = {
     id: string;
     full_name: string | null;
@@ -36,7 +38,8 @@ export const ROLE_SLUG_TO_NAME: Record<string, string> = {
     chairman: 'Chairman',
     legal: 'Legal',
     grounds: 'Grounds',
-    technology: 'Technology'
+    technology: 'Technology',
+    unassigned: 'Unassigned'
 };
 
 export const roleNameToSlug = (name: string | null | undefined) => {
@@ -53,4 +56,14 @@ export const roleSlugToName = (slug: string | null | undefined) => {
     const key = typeof slug === 'string' ? slug.toLowerCase() : '';
     if (!key) return null;
     return ROLE_SLUG_TO_NAME[key] || null;
+};
+
+export const normalizeRoleName = (name: string | null | undefined) => {
+    if (!name) return '';
+    const value = name.trim().toLowerCase();
+    if (value === 'chairman') return 'Chairman';
+    if (value === 'legal') return 'Legal';
+    if (value === 'grounds') return 'Grounds';
+    if (value === 'technology') return 'Technology';
+    return name.trim();
 };

@@ -9,6 +9,7 @@ import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
 import type { Profile, Role, Ticket } from '@/lib/boardTypes';
 import { roleSlugToName } from '@/lib/boardTypes';
+import { loadRolesWithFallback } from '@/lib/roleData';
 
 export default function RoleDashboardPage() {
     const params = useParams<{ roleSlug: string }>();
@@ -61,13 +62,8 @@ export default function RoleDashboardPage() {
             };
         }
 
-        const { data: rolesData } = await supabase
-            .from('roles')
-            .select('id, name')
-            .order('name', { ascending: true });
-
         setProfile(effectiveProfile);
-        setRoles((rolesData || []) as Role[]);
+        setRoles(await loadRolesWithFallback(supabase));
         setLoading(false);
     };
 
@@ -77,17 +73,21 @@ export default function RoleDashboardPage() {
 
     const selectedRole = useMemo(() => {
         if (!roleName) return null;
+        if (roleName === 'Unassigned') return { id: 'unassigned', name: 'Unassigned' } as Role;
         return roles.find(r => r.name.toLowerCase() === roleName.toLowerCase()) || null;
     }, [roles, roleName]);
 
     const refreshTickets = async () => {
         if (!selectedRole) return;
 
-        const { data } = await supabase
+        const baseQuery = supabase
             .from('tickets')
             .select('*')
-            .eq('role_id', selectedRole.id)
             .order('created_at', { ascending: false });
+
+        const { data } = selectedRole.id === 'unassigned'
+            ? await baseQuery.is('role_id', null)
+            : await baseQuery.eq('role_id', selectedRole.id);
 
         setTickets((data || []) as Ticket[]);
     };
@@ -110,6 +110,9 @@ export default function RoleDashboardPage() {
                 <Link href="/dashboard" style={{ color: '#93c5fd' }}>
                     Return to main dashboard
                 </Link>
+                <Link href="/dashboard/roles" style={{ color: '#93c5fd' }}>
+                    Open role directory
+                </Link>
             </div>
         );
     }
@@ -120,6 +123,9 @@ export default function RoleDashboardPage() {
                 <div>Role {roleName} does not exist in your roles table yet.</div>
                 <Link href="/dashboard" style={{ color: '#93c5fd' }}>
                     Return to main dashboard
+                </Link>
+                <Link href="/dashboard/roles" style={{ color: '#93c5fd' }}>
+                    Open role directory
                 </Link>
             </div>
         );
@@ -156,6 +162,18 @@ export default function RoleDashboardPage() {
                         }}
                     >
                         Main Dashboard
+                    </Link>
+                    <Link
+                        href="/dashboard/roles"
+                        style={{
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: 6,
+                            border: '1px solid #334155',
+                            color: '#cbd5e1',
+                            textDecoration: 'none'
+                        }}
+                    >
+                        Role Directory
                     </Link>
                     <button
                         onClick={handleSignOut}

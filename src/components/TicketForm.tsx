@@ -53,16 +53,16 @@ export default function TicketForm({ roles, onCreated }: Props) {
                 .upload(filePath, file, { upsert: false });
 
             if (uploadError) {
-                setError('Image upload failed. Create a Supabase Storage bucket named ticket-images, then try again.');
-                setLoading(false);
-                return;
+                // Keep ticket creation working even if optional image storage is not configured yet.
+                setMessage('Image upload skipped. Create Supabase bucket "ticket-images" to enable attachments.');
+                uploadedImageUrl = null;
+            } else {
+                const { data: publicData } = supabase.storage
+                    .from('ticket-images')
+                    .getPublicUrl(filePath);
+
+                uploadedImageUrl = publicData.publicUrl;
             }
-
-            const { data: publicData } = supabase.storage
-                .from('ticket-images')
-                .getPublicUrl(filePath);
-
-            uploadedImageUrl = publicData.publicUrl;
         }
 
         const finalDescription = uploadedImageUrl

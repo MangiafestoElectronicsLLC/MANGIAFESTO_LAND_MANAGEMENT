@@ -7,6 +7,7 @@ import Link from 'next/link';
 import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
+import { loadRolesWithFallback } from '@/lib/roleData';
 import {
     STATUS_OPTIONS,
     roleNameToSlug,
@@ -71,18 +72,13 @@ export default function DashboardPage() {
                     };
                 }
 
-                const { data: rolesData } = await supabase
-                    .from('roles')
-                    .select('id, name')
-                    .order('name', { ascending: true });
-
                 const { data: ticketsData } = await supabase
                     .from('tickets')
                     .select('*')
                     .order('created_at', { ascending: false });
 
-                const safeRoles = (rolesData || []).filter(r =>
-                    r && typeof r.id === 'string' && typeof r.name === 'string'
+                const safeRoles = (await loadRolesWithFallback(supabase)).filter(
+                    r => r && typeof r.id === 'string' && typeof r.name === 'string'
                 ) as Role[];
 
                 const safeTickets = (ticketsData || [])
@@ -161,7 +157,11 @@ export default function DashboardPage() {
     const filteredTickets = useMemo(() => {
         return tickets.filter(t => {
             const roleMatch =
-                selectedRoleId === 'all' ? true : t.role_id === selectedRoleId;
+                selectedRoleId === 'all'
+                    ? true
+                    : selectedRoleId === 'unassigned'
+                        ? t.role_id === null
+                        : t.role_id === selectedRoleId;
             const statusMatch =
                 selectedStatus === 'all' ? true : t.status === selectedStatus;
             return roleMatch && statusMatch;
@@ -178,7 +178,10 @@ export default function DashboardPage() {
     }, [tickets]);
 
     const roleCounts = useMemo(() => {
-        const counts: Record<string, number> = { all: tickets.length };
+        const counts: Record<string, number> = {
+            all: tickets.length,
+            unassigned: tickets.filter(t => t.role_id === null).length
+        };
         for (const role of roles) {
             counts[role.id] = tickets.filter(t => t.role_id === role.id).length;
         }
@@ -262,6 +265,14 @@ export default function DashboardPage() {
                 }}
             >
                 <div style={{ fontWeight: 600 }}>Board Views</div>
+                <div>
+                    <Link
+                        href="/dashboard/roles"
+                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                    >
+                        Open Role Directory
+                    </Link>
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <button
                         onClick={() => setSelectedRoleId('all')}
@@ -276,6 +287,31 @@ export default function DashboardPage() {
                     >
                         All Roles ({roleCounts.all || 0})
                     </button>
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                        <button
+                            onClick={() => setSelectedRoleId('unassigned')}
+                            style={{
+                                padding: '0.35rem 0.65rem',
+                                borderRadius: 999,
+                                border: selectedRoleId === 'unassigned' ? '1px solid #93c5fd' : '1px solid #334155',
+                                background: selectedRoleId === 'unassigned' ? '#1e3a8a' : 'transparent',
+                                color: '#e2e8f0',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Unassigned ({roleCounts.unassigned || 0})
+                        </button>
+                        <Link
+                            href="/dashboard/role/unassigned"
+                            style={{
+                                fontSize: '0.72rem',
+                                color: '#93c5fd',
+                                textDecoration: 'none'
+                            }}
+                        >
+                            Open page
+                        </Link>
+                    </div>
                     {roles.map(role => (
                         <div key={role.id} style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                             <button
