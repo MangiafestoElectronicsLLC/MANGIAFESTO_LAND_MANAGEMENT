@@ -8,6 +8,7 @@ import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
 import ActivityFeed from '@/components/ActivityFeed';
+import SystemCheckPanel from '@/components/SystemCheckPanel';
 import { loadRolesWithFallback } from '@/lib/roleData';
 import {
     STATUS_OPTIONS,
@@ -423,6 +424,7 @@ export default function DashboardPage() {
                 </div>
             </div>
 
+            <SystemCheckPanel />
             <TicketForm roles={roles} onCreated={refreshTickets} />
             <ActivityFeed />
             {boardMode === 'kanban' ? (

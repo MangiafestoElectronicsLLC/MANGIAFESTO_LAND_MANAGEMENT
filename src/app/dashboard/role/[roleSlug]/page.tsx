@@ -8,6 +8,7 @@ import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
 import ActivityFeed from '@/components/ActivityFeed';
+import SystemCheckPanel from '@/components/SystemCheckPanel';
 import type { Profile, Role, Ticket } from '@/lib/boardTypes';
 import { roleSlugToName } from '@/lib/boardTypes';
 import { loadRolesWithFallback } from '@/lib/roleData';
@@ -193,6 +194,7 @@ export default function RoleDashboardPage() {
             </div>
 
             <KanbanBoard tickets={tickets} roles={roles} onChanged={refreshTickets} />
+            <SystemCheckPanel />
             <TicketForm roles={roles} onCreated={refreshTickets} />
             <ActivityFeed title="Role Activity Notifications" />
             <TicketList tickets={tickets} roles={roles} onChanged={refreshTickets} />
