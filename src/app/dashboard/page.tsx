@@ -31,6 +31,20 @@ export default function DashboardPage() {
 
     const supabase = supabaseClient();
 
+    const humanizeDbError = (message: string) => {
+        const lower = message.toLowerCase();
+        if (lower.includes("could not find the table 'public.tickets'") || lower.includes('schema cache')) {
+            return 'Database setup missing: run SUPABASE_SETUP.md SQL in this Supabase project, then refresh.';
+        }
+        if (lower.includes("could not find the table 'public.roles'")) {
+            return 'roles table missing: run SUPABASE_SETUP.md SQL, then refresh.';
+        }
+        if (lower.includes("could not find the table 'public.profiles'")) {
+            return 'profiles table missing: run SUPABASE_SETUP.md SQL, then refresh.';
+        }
+        return message;
+    };
+
     useEffect(() => {
         const load = async () => {
             try {
@@ -73,16 +87,20 @@ export default function DashboardPage() {
                     };
                 }
 
-                const { data: ticketsData } = await supabase
+                const { data: ticketDataWithErrorCheck, error: ticketsError } = await supabase
                     .from('tickets')
                     .select('*')
                     .order('created_at', { ascending: false });
+
+                if (ticketsError) {
+                    throw ticketsError;
+                }
 
                 const safeRoles = (await loadRolesWithFallback(supabase)).filter(
                     r => r && typeof r.id === 'string' && typeof r.name === 'string'
                 ) as Role[];
 
-                const safeTickets = (ticketsData || [])
+                const safeTickets = (ticketDataWithErrorCheck || [])
                     .filter(t => t && typeof t.id === 'string')
                     .map(t => ({
                         ...t,
@@ -126,7 +144,7 @@ export default function DashboardPage() {
                 setPageError(null);
                 setLoading(false);
             } catch (err: any) {
-                setPageError(err?.message || 'Dashboard failed to load. Please refresh.');
+                setPageError(humanizeDbError(err?.message || 'Dashboard failed to load. Please refresh.'));
                 setLoading(false);
             }
         };
@@ -136,14 +154,18 @@ export default function DashboardPage() {
 
     const refreshTickets = async () => {
         try {
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from('tickets')
                 .select('*')
                 .order('created_at', { ascending: false });
+
+            if (error) {
+                throw error;
+            }
             setTickets((data || []) as Ticket[]);
             setPageError(null);
         } catch (err: any) {
-            setPageError(err?.message || 'Could not refresh tickets.');
+            setPageError(humanizeDbError(err?.message || 'Could not refresh tickets.'));
         }
     };
 
@@ -229,7 +251,9 @@ export default function DashboardPage() {
                 style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem'
                 }}
             >
                 <div>

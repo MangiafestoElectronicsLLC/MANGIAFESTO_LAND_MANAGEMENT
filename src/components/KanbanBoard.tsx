@@ -79,7 +79,7 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
             }}
         >
             <div style={{ marginBottom: '0.8rem', fontWeight: 600 }}>Kanban Board (drag and drop)</div>
-            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))' }}>
                 {COLUMNS.map(column => (
                     <div
                         key={column.key}

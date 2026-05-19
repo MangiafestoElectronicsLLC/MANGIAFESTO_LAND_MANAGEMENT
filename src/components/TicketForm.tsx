@@ -21,6 +21,20 @@ export default function TicketForm({ roles, onCreated }: Props) {
 
     const supabase = supabaseClient();
 
+    const humanizeDbError = (message: string) => {
+        const lower = message.toLowerCase();
+        if (lower.includes("could not find the table 'public.tickets'") || lower.includes('schema cache')) {
+            return 'Database setup is incomplete in this Supabase project. Run the SQL in SUPABASE_SETUP.md, then refresh.';
+        }
+        if (lower.includes("could not find the table 'public.ticket_history'")) {
+            return 'ticket_history table is missing. Run the SQL in SUPABASE_SETUP.md, then refresh.';
+        }
+        if (lower.includes("could not find the table 'public.roles'")) {
+            return 'roles table is missing. Run the SQL in SUPABASE_SETUP.md, then refresh.';
+        }
+        return message;
+    };
+
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -82,7 +96,7 @@ export default function TicketForm({ roles, onCreated }: Props) {
             .single();
 
         if (error) {
-            setError(error.message || 'Failed to create ticket.');
+            setError(humanizeDbError(error.message || 'Failed to create ticket.'));
             setLoading(false);
             return;
         }
@@ -153,7 +167,7 @@ export default function TicketForm({ roles, onCreated }: Props) {
                     <select
                         value={roleId}
                         onChange={e => setRoleId(e.target.value)}
-                        style={{ padding: '0.5rem', borderRadius: 4 }}
+                        style={{ padding: '0.5rem', borderRadius: 4, minWidth: 180, flex: '1 1 220px' }}
                     >
                         <option value="">No specific role</option>
                         {roles.map(r => (
@@ -165,7 +179,7 @@ export default function TicketForm({ roles, onCreated }: Props) {
                     <select
                         value={priority}
                         onChange={e => setPriority(e.target.value)}
-                        style={{ padding: '0.5rem', borderRadius: 4 }}
+                        style={{ padding: '0.5rem', borderRadius: 4, minWidth: 120, flex: '0 0 140px' }}
                     >
                         <option value="low">Low</option>
                         <option value="normal">Normal</option>
