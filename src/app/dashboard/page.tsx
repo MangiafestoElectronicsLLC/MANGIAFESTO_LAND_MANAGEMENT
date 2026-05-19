@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -152,7 +152,7 @@ export default function DashboardPage() {
         load();
     }, []);
 
-    const refreshTickets = async () => {
+    const refreshTickets = useCallback(async () => {
         try {
             const { data, error } = await supabase
                 .from('tickets')
@@ -167,7 +167,29 @@ export default function DashboardPage() {
         } catch (err: any) {
             setPageError(humanizeDbError(err?.message || 'Could not refresh tickets.'));
         }
-    };
+    }, [supabase]);
+
+    useEffect(() => {
+        const channel = supabase
+            .channel('dashboard-tickets-live')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'tickets' },
+                () => {
+                    refreshTickets();
+                }
+            )
+            .subscribe();
+
+        const pollId = window.setInterval(() => {
+            refreshTickets();
+        }, 10000);
+
+        return () => {
+            window.clearInterval(pollId);
+            supabase.removeChannel(channel);
+        };
+    }, [refreshTickets, supabase]);
 
     const handleSignOut = async () => {
         await supabase.auth.signOut();

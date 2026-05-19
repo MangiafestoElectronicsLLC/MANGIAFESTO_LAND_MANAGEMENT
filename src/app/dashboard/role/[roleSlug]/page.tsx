@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseClient } from '@/lib/supabaseClient';
@@ -78,7 +78,7 @@ export default function RoleDashboardPage() {
         return roles.find(r => r.name.toLowerCase() === roleName.toLowerCase()) || null;
     }, [roles, roleName]);
 
-    const refreshTickets = async () => {
+    const refreshTickets = useCallback(async () => {
         if (!selectedRole) return;
 
         const baseQuery = supabase
@@ -96,11 +96,33 @@ export default function RoleDashboardPage() {
             : await baseQuery.eq('role_id', selectedRole.id);
 
         setTickets((data || []) as Ticket[]);
-    };
+    }, [selectedRole, supabase]);
 
     useEffect(() => {
         refreshTickets();
-    }, [selectedRole?.id]);
+    }, [refreshTickets]);
+
+    useEffect(() => {
+        const channel = supabase
+            .channel(`role-tickets-live-${roleSlug || 'all'}`)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'tickets' },
+                () => {
+                    refreshTickets();
+                }
+            )
+            .subscribe();
+
+        const pollId = window.setInterval(() => {
+            refreshTickets();
+        }, 10000);
+
+        return () => {
+            window.clearInterval(pollId);
+            supabase.removeChannel(channel);
+        };
+    }, [refreshTickets, roleSlug, supabase]);
 
     const handleSignOut = async () => {
         await supabase.auth.signOut();
