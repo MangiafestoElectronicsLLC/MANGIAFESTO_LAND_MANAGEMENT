@@ -8,7 +8,7 @@ import TicketForm from '@/components/TicketForm';
 import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
 import ActivityFeed from '@/components/ActivityFeed';
-import type { Profile, Role, Ticket } from '@/lib/boardTypes';
+import { isUuid, type Profile, type Role, type Ticket } from '@/lib/boardTypes';
 import { roleSlugToName } from '@/lib/boardTypes';
 import { loadRolesWithFallback } from '@/lib/roleData';
 
@@ -85,6 +85,11 @@ export default function RoleDashboardPage() {
             .from('tickets')
             .select('*')
             .order('created_at', { ascending: false });
+
+        if (selectedRole.id !== 'unassigned' && !isUuid(selectedRole.id)) {
+            setTickets([]);
+            return;
+        }
 
         const { data } = selectedRole.id === 'unassigned'
             ? await baseQuery.is('role_id', null)

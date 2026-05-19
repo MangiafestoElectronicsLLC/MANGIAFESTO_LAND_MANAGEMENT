@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
-import type { Role } from '@/lib/boardTypes';
+import { isUuid, type Role } from '@/lib/boardTypes';
 
 type Props = {
     roles: Role[];
@@ -83,12 +83,14 @@ export default function TicketForm({ roles, onCreated }: Props) {
             ? `${description}\n\n[attachment] ${uploadedImageUrl}`
             : description;
 
+        const safeRoleId = isUuid(roleId) ? roleId : null;
+
         const { data, error } = await supabase
             .from('tickets')
             .insert({
                 title,
                 description: finalDescription,
-                role_id: roleId || null,
+                role_id: safeRoleId,
                 priority,
                 created_by: profile?.id
             })
