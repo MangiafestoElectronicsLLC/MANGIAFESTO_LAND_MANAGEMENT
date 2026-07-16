@@ -161,10 +161,11 @@ export default function AuthPage() {
         e.preventDefault();
         setError(null);
         setInfo(null);
-        const supabase = supabaseClient();
         const nextEmail = email.trim();
 
         try {
+            const supabase = supabaseClient();
+
             if (mode === 'signup') {
                 const { data, error } = await supabase.auth.signUp({
                     email: nextEmail,
