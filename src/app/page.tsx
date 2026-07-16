@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { useRouter, useSearchParams } from 'next/navigation';
 
@@ -66,6 +67,9 @@ export default function AuthPage() {
         }
         if (lower.includes('email rate limit exceeded')) {
             return 'Too many emails were sent recently. Wait a few minutes, then try again.';
+        }
+        if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('fetch')) {
+            return 'Could not reach the Supabase service. Check the project URL, anon key, and network connection.';
         }
         return message;
     };
@@ -205,17 +209,20 @@ export default function AuthPage() {
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
             <section className="panel panel-pad" style={{ display: 'grid', gap: '1rem' }}>
-                <div style={{ display: 'grid', gap: '0.35rem' }}>
-                    <div style={{ fontSize: '0.85rem', opacity: 0.82 }}>Family Land Board</div>
-                    <h2 style={{ margin: 0, fontSize: 'clamp(1.5rem, 4vw, 2.25rem)' }}>
-                        {mode === 'signin' ? 'Sign in to continue' : 'Create an account'}
-                    </h2>
-                    <p style={{ margin: 0, opacity: 0.78, maxWidth: 56 * 8 }}>
-                        Use the same email and password from your Supabase auth user. If password sign-in fails, try the magic-link or reset-password buttons below.
-                    </p>
+                <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Image src="/icon.svg" alt="Mangiafesto Electronics logo" width={64} height={64} priority />
+                    <div style={{ display: 'grid', gap: '0.35rem' }}>
+                        <div style={{ fontSize: '0.85rem', opacity: 0.82 }}>Mangiafesto Electronics</div>
+                        <h2 style={{ margin: 0, fontSize: 'clamp(1.5rem, 4vw, 2.25rem)' }}>
+                            {mode === 'signin' ? 'Sign in to continue' : 'Create an account'}
+                        </h2>
+                        <p style={{ margin: 0, opacity: 0.78, maxWidth: 56 * 8 }}>
+                            Use the same email and password from your Supabase auth user. If password sign-in fails, try the magic-link or reset-password buttons below.
+                        </p>
+                    </div>
                 </div>
 
-                <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '0.85rem', maxWidth: 520 }}>
+                <form onSubmit={handleSubmit} className="auth-form" style={{ display: 'grid', gap: '0.85rem', maxWidth: 520 }}>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Email</span>
                         <input
@@ -242,12 +249,12 @@ export default function AuthPage() {
                         />
                     </label>
                     {error && (
-                        <div style={{ color: '#fca5a5', fontSize: '0.92rem', lineHeight: 1.4 }}>
+                        <div className="auth-message auth-error" style={{ color: '#fca5a5', fontSize: '0.92rem', lineHeight: 1.4 }}>
                             {error}
                         </div>
                     )}
                     {info && (
-                        <div style={{ color: '#86efac', fontSize: '0.92rem', lineHeight: 1.4 }}>
+                        <div className="auth-message auth-info" style={{ color: '#86efac', fontSize: '0.92rem', lineHeight: 1.4 }}>
                             {info}
                         </div>
                     )}
@@ -321,7 +328,7 @@ export default function AuthPage() {
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.5rem' }}>
                 <div style={{ fontWeight: 700 }}>Login help</div>
                 <div style={{ fontSize: '0.92rem', opacity: 0.82, lineHeight: 1.5 }}>
-                    If sign-in still fails, the most common causes are a missing Supabase env file, an unconfirmed email, a password typo, or a stale session on the device. Magic-link and reset-email fallback buttons are now available.
+                    If sign-in still fails, the most common causes are a missing Supabase env file, an unconfirmed email, a password typo, a stale session on the device, or a network issue reaching Supabase. Magic-link and reset-email fallback buttons are available.
                 </div>
                 <div style={{ fontSize: '0.9rem', opacity: 0.78, lineHeight: 1.5 }}>
                     On a phone, enter your email once, then use the fallback button that fits your situation. The email link will return you to the app automatically.

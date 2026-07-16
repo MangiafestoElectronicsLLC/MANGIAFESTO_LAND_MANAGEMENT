@@ -2,6 +2,7 @@ import './globals.css';
 import type { ReactNode } from 'react';
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
+import Image from 'next/image';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://mangiafesto-land-management.vercel.app';
 
@@ -48,9 +49,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             >
                 <div className="app-shell">
                     <header className="app-header">
-                        <div className="app-brand">
-                            <h1>Family Land Board</h1>
-                            <p>Tickets, roles, meetings, and notes in one place.</p>
+                        <div className="app-brand app-brand-row">
+                            <Image src="/icon.svg" alt="Mangiafesto Electronics logo" width={52} height={52} priority />
+                            <div>
+                                <h1>Family Land Board</h1>
+                                <p>Tickets, roles, meetings, and notes in one place.</p>
+                            </div>
                         </div>
                         <nav className="app-nav" aria-label="Primary">
                             <Link href="/dashboard">Dashboard</Link>
