@@ -326,6 +326,13 @@ export default function DashboardPage() {
                     </Link>
                     <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
                     <Link
+                        href="/dashboard/meetings"
+                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                    >
+                        Open Board Meetings
+                    </Link>
+                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <Link
                         href="/dashboard/system"
                         style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
                     >

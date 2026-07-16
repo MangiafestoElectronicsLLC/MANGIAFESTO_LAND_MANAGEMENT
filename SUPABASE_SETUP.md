@@ -62,10 +62,37 @@ CREATE TABLE ticket_history (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Create BOARD MEETINGS tables
+CREATE TABLE board_meetings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'live', -- live | recorded | completed
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at TIMESTAMPTZ,
+  recording_url TEXT,
+  recording_path TEXT,
+  duration_seconds INTEGER,
+  created_by UUID REFERENCES profiles(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE board_meeting_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  meeting_id UUID NOT NULL REFERENCES board_meetings(id) ON DELETE CASCADE,
+  note TEXT NOT NULL,
+  note_time_seconds INTEGER NOT NULL DEFAULT 0,
+  created_by UUID REFERENCES profiles(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Enable Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ticket_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE board_meetings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE board_meeting_notes ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for PROFILES
 CREATE POLICY "Users can view their own profile"
@@ -96,6 +123,31 @@ CREATE POLICY "Authenticated users can view ticket history"
 
 CREATE POLICY "Authenticated users can insert history"
   ON ticket_history FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- RLS Policies for BOARD MEETINGS
+CREATE POLICY "Authenticated users can view board meetings"
+  ON board_meetings FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can create board meetings"
+  ON board_meetings FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can update board meetings"
+  ON board_meetings FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can delete board meetings"
+  ON board_meetings FOR DELETE
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can view meeting notes"
+  ON board_meeting_notes FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can insert meeting notes"
+  ON board_meeting_notes FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
 ```
 

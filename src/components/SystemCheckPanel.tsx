@@ -12,7 +12,7 @@ type CheckItem = {
     detail?: string;
 };
 
-const REQUIRED_TABLES = ['roles', 'profiles', 'tickets', 'ticket_history'];
+const REQUIRED_TABLES = ['roles', 'profiles', 'tickets', 'ticket_history', 'board_meetings', 'board_meeting_notes'];
 
 const statusColor = (state: CheckState) => {
     if (state === 'ok') return '#22c55e';
@@ -79,6 +79,30 @@ export default function SystemCheckPanel() {
                 label: 'Storage bucket: ticket-images',
                 state: missingBucket ? 'missing' : 'warning',
                 detail: bucketError.message
+            });
+        }
+
+        const { error: meetingsBucketError } = await supabase.storage
+            .from('board-meetings')
+            .list('', { limit: 1 });
+
+        if (!meetingsBucketError) {
+            items.push({
+                key: 'bucket:board-meetings',
+                label: 'Storage bucket: board-meetings',
+                state: 'ok'
+            });
+        } else {
+            const message = (meetingsBucketError.message || '').toLowerCase();
+            const missingBucket =
+                message.includes('bucket not found') ||
+                message.includes('not found');
+
+            items.push({
+                key: 'bucket:board-meetings',
+                label: 'Storage bucket: board-meetings',
+                state: missingBucket ? 'missing' : 'warning',
+                detail: meetingsBucketError.message
             });
         }
 
@@ -173,7 +197,8 @@ export default function SystemCheckPanel() {
                     <div>1. Open Supabase SQL Editor for your active project.</div>
                     <div>2. Run SQL from SUPABASE_SETUP.md.</div>
                     <div>3. Run SQL from supabase/storage_ticket_images.sql.</div>
-                    <div>4. Back here, click Run check again.</div>
+                    <div>4. Run the board meeting SQL files if you want meetings and notes.</div>
+                    <div>5. Back here, click Run check again.</div>
                 </div>
             )}
         </div>

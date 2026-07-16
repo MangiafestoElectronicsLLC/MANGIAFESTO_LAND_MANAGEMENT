@@ -5,8 +5,10 @@ A simple, user-friendly web app for managing family land tasks and tickets. Buil
 ## Features
 
 - **Email Login** - Simple sign-up and sign-in
+- **Fallback Login** - Magic link and password reset when password sign-in fails
 - **Role-Based Access** - 4 predefined roles for team members
 - **Ticket Management** - Create, update, and track tasks with status and priority
+- **Board Meetings** - Record a live meeting, replay it later, and attach timestamped notes
 - **Timestamps** - Automatic tracking of when tickets are created/updated
 - **Basic Dashboard** - View all tickets and filter by status
 - **Mobile Friendly** - Works on phones, tablets, and computers
@@ -122,6 +124,15 @@ Check that **Email/Password** auth is enabled in Supabase:
 1. Go to **Authentication** → **Providers**
 2. Make sure **Email** is toggled on
 
+### Can’t sign in
+
+Use the fallback buttons on the login page:
+1. **Send magic link** for a quick one-tap sign-in
+2. **Reset password email** if you need to set a new password
+3. **Resend confirmation email** if the account was created but never confirmed
+
+The email links route through [src/app/auth/confirm/page.tsx](./src/app/auth/confirm/page.tsx), which finishes the login or password reset.
+
 ## Development
 
 - **Edit pages**: `src/app/*.tsx`
@@ -136,6 +147,18 @@ See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for the full SQL schema, including:
 - **profiles** - User profiles linked to auth
 - **tickets** - Tasks with status, priority, role, timestamps
 - **ticket_history** - Audit log of changes
+- **board_meetings** - Saved meeting sessions with recording metadata
+- **board_meeting_notes** - Timestamped notes tied to a meeting
+
+## Board Meetings Setup
+
+To enable board meeting recording and notes:
+
+1. Run the board meeting SQL in [supabase/board_meetings.sql](./supabase/board_meetings.sql)
+2. Run the storage SQL in [supabase/storage_board_meetings.sql](./supabase/storage_board_meetings.sql)
+3. Open the new Board Meetings page from the top navigation
+
+The meeting tool works in the browser, so camera/mic permissions must be allowed on the device you use.
 
 ## License
 

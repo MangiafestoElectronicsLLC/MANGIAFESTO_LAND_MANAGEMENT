@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import SystemCheckPanel from '@/components/SystemCheckPanel';
+import BoardMeetingsStudio from '@/components/BoardMeetingsStudio';
 
-export default function SystemPage() {
+export default function MeetingsPage() {
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -32,7 +32,7 @@ export default function SystemPage() {
                     Role Directory
                 </Link>
                 <Link
-                    href="/dashboard/meetings"
+                    href="/dashboard/system"
                     style={{
                         padding: '0.35rem 0.65rem',
                         borderRadius: 6,
@@ -41,11 +41,11 @@ export default function SystemPage() {
                         textDecoration: 'none'
                     }}
                 >
-                    Board Meetings
+                    System Check
                 </Link>
             </div>
 
-            <SystemCheckPanel />
+            <BoardMeetingsStudio />
         </div>
     );
 }

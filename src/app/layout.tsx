@@ -1,6 +1,7 @@
 import './globals.css';
 import type { ReactNode } from 'react';
 import type { Metadata, Viewport } from 'next';
+import Link from 'next/link';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://mangiafesto-land-management.vercel.app';
 
@@ -43,18 +44,22 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     return (
         <html lang="en">
             <body
-                style={{
-                    margin: 0,
-                    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-                    background: '#0f172a',
-                    color: '#e5e7eb'
-                }}
+                style={{ margin: 0 }}
             >
-                <div style={{ maxWidth: 960, margin: '0 auto', padding: '1.5rem' }}>
-                    <h1 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>
-                        Family Land Board
-                    </h1>
-                    {children}
+                <div className="app-shell">
+                    <header className="app-header">
+                        <div className="app-brand">
+                            <h1>Family Land Board</h1>
+                            <p>Tickets, roles, meetings, and notes in one place.</p>
+                        </div>
+                        <nav className="app-nav" aria-label="Primary">
+                            <Link href="/dashboard">Dashboard</Link>
+                            <Link href="/dashboard/roles">Roles</Link>
+                            <Link href="/dashboard/meetings">Board Meetings</Link>
+                            <Link href="/dashboard/system">System Check</Link>
+                        </nav>
+                    </header>
+                    <main>{children}</main>
                 </div>
             </body>
         </html>
