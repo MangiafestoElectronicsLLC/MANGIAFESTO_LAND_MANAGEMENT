@@ -1,11 +1,26 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 
 export default function AuthConfirmPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="panel panel-pad" style={{ display: 'grid', gap: '0.5rem', maxWidth: 620 }}>
+                    <div style={{ fontWeight: 700 }}>Loading confirmation...</div>
+                    <div style={{ opacity: 0.78 }}>Preparing the secure email confirmation flow.</div>
+                </div>
+            }
+        >
+            <AuthConfirmPageContent />
+        </Suspense>
+    );
+}
+
+function AuthConfirmPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [loading, setLoading] = useState(true);

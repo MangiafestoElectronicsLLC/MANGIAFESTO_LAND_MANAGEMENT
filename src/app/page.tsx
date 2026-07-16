@@ -1,11 +1,28 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function AuthPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="panel panel-pad" style={{ maxWidth: 560, margin: '0 auto' }}>
+                    <div style={{ fontWeight: 700, marginBottom: '0.35rem' }}>Loading sign in...</div>
+                    <div style={{ opacity: 0.78, fontSize: '0.95rem' }}>
+                        Preparing the secure login view.
+                    </div>
+                </div>
+            }
+        >
+            <AuthPageContent />
+        </Suspense>
+    );
+}
+
+function AuthPageContent() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [mode, setMode] = useState<'signin' | 'signup'>('signin');
