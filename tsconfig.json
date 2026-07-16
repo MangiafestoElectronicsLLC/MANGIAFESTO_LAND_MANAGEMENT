@@ -15,7 +15,6 @@
         "module": "esnext",
         "moduleResolution": "bundler",
         "resolveJsonModule": true,
-        "baseUrl": ".",
         "isolatedModules": true,
         "incremental": true,
         "jsx": "preserve",
