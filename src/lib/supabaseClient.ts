@@ -9,9 +9,13 @@ const getSupabaseConfig = () => {
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!url || !anonKey) {
-        throw new Error(
+        console.warn(
             'Missing Supabase config. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local.'
         );
+        return {
+            url: 'https://invalid.supabase.co',
+            anonKey: 'missing-anon-key'
+        };
     }
 
     return { url, anonKey };

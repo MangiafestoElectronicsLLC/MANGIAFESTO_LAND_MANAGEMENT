@@ -17,6 +17,9 @@ export default function AuthPage() {
     const [checkingSession, setCheckingSession] = useState(true);
     const router = useRouter();
     const searchParams = useSearchParams();
+    const hasSupabaseConfig = Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    );
 
     const redirectTo = useMemo(() => {
         if (typeof window === 'undefined') {
@@ -63,6 +66,9 @@ export default function AuthPage() {
             return 'That email or password did not match. Check for spelling, caps lock, and extra spaces.';
         }
         if (lower.includes('missing supabase config')) {
+            return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
+        }
+        if (lower.includes('invalid supabase')) {
             return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
         }
         if (lower.includes('email rate limit exceeded')) {
@@ -208,6 +214,15 @@ export default function AuthPage() {
 
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
+            {!hasSupabaseConfig && (
+                <section className="panel panel-pad" style={{ display: 'grid', gap: '0.35rem', borderColor: '#7f1d1d' }}>
+                    <div style={{ fontWeight: 700, color: '#fecaca' }}>Supabase setup is missing</div>
+                    <div style={{ color: '#fecaca', lineHeight: 1.5 }}>
+                        This deployment does not have the Supabase URL and anon key. Add them in Vercel environment variables, then redeploy.
+                    </div>
+                </section>
+            )}
+
             <section className="panel panel-pad" style={{ display: 'grid', gap: '1rem' }}>
                 <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <Image src="/icon.svg" alt="Mangiafesto Electronics logo" width={64} height={64} priority />
