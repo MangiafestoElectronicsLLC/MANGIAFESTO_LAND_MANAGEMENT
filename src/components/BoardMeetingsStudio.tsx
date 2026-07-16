@@ -45,6 +45,20 @@ const formatDate = (value: string) =>
         timeStyle: 'short'
     });
 
+const humanizeMediaError = (err: any) => {
+    const name = String(err?.name || '').toLowerCase();
+    if (name === 'notallowederror' || name === 'securityerror') {
+        return 'Camera or microphone permission was denied. Allow browser media access, then try again.';
+    }
+    if (name === 'notfounderror' || name === 'devicesnotfounderror') {
+        return 'No usable camera or microphone was found on this device.';
+    }
+    if (name === 'notreadableerror' || name === 'trackstarterror') {
+        return 'Camera or microphone is busy in another app. Close other apps using media devices and retry.';
+    }
+    return err?.message || 'Could not access camera and microphone.';
+};
+
 export default function BoardMeetingsStudio() {
     const router = useRouter();
     const supabase = supabaseClient();
@@ -157,11 +171,66 @@ export default function BoardMeetingsStudio() {
         [supabase]
     );
 
+    const loadNotesForMeetings = useCallback(
+        async (meetingIds: string[]) => {
+            const validMeetingIds = Array.from(new Set(meetingIds.filter(Boolean)));
+            if (validMeetingIds.length === 0) return;
+
+            const { data, error: fetchError } = await supabase
+                .from('board_meeting_notes')
+                .select('id, meeting_id, note, note_time_seconds, created_by, created_at')
+                .in('meeting_id', validMeetingIds)
+                .order('created_at', { ascending: true });
+
+            if (fetchError) {
+                throw fetchError;
+            }
+
+            const grouped: Record<string, BoardMeetingNote[]> = {};
+            for (const meetingId of validMeetingIds) {
+                grouped[meetingId] = [];
+            }
+
+            for (const row of (data || []) as BoardMeetingNote[]) {
+                if (!grouped[row.meeting_id]) {
+                    grouped[row.meeting_id] = [];
+                }
+                grouped[row.meeting_id].push(row);
+            }
+
+            setNotesByMeeting(prev => ({
+                ...prev,
+                ...grouped
+            }));
+        },
+        [supabase]
+    );
+
+    const getMeetingMediaStream = async () => {
+        const constraints: MediaStreamConstraints[] = [
+            { video: true, audio: true },
+            { video: true, audio: false },
+            { video: false, audio: true }
+        ];
+
+        let lastError: any = null;
+        for (const nextConstraints of constraints) {
+            try {
+                return await navigator.mediaDevices.getUserMedia(nextConstraints);
+            } catch (err: any) {
+                lastError = err;
+            }
+        }
+
+        throw lastError || new Error('Could not access camera and microphone.');
+    };
+
     useEffect(() => {
         const bootstrap = async () => {
             try {
                 await ensureUser();
                 const nextMeetings = await loadMeetings();
+                await loadNotesForMeetings(nextMeetings.map(meeting => meeting.id));
 
                 if (nextMeetings[0]) {
                     setSelectedMeetingId(nextMeetings[0].id);
@@ -175,7 +244,7 @@ export default function BoardMeetingsStudio() {
         };
 
         bootstrap();
-    }, [ensureUser, loadMeetings, loadNotes]);
+    }, [ensureUser, loadMeetings, loadNotes, loadNotesForMeetings]);
 
     useEffect(() => {
         const channel = supabase
@@ -184,7 +253,10 @@ export default function BoardMeetingsStudio() {
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'board_meetings' },
                 () => {
-                    void loadMeetings();
+                    void (async () => {
+                        const updatedMeetings = await loadMeetings();
+                        await loadNotesForMeetings(updatedMeetings.map(meeting => meeting.id));
+                    })();
                 }
             )
             .on(
@@ -202,7 +274,7 @@ export default function BoardMeetingsStudio() {
         return () => {
             void supabase.removeChannel(channel);
         };
-    }, [loadMeetings, loadNotes, supabase]);
+    }, [loadMeetings, loadNotes, loadNotesForMeetings, supabase]);
 
     useEffect(() => {
         const video = videoRef.current;
@@ -221,13 +293,24 @@ export default function BoardMeetingsStudio() {
             video.srcObject = null;
             video.src = selectedMeeting.recording_url;
             video.load();
+            return;
         }
+
+        video.srcObject = null;
+        video.removeAttribute('src');
+        video.load();
     }, [liveStream, meetings, selectedMeetingId]);
 
     const selectedMeeting = useMemo(
         () => meetings.find(meeting => meeting.id === selectedMeetingId) || null,
         [meetings, selectedMeetingId]
     );
+
+    const liveMeetingLabel = liveMeetingId
+        ? `${liveTitle.trim() || 'Family Board Meeting'} • live`
+        : selectedMeeting
+            ? `${selectedMeeting.title} • ${selectedMeeting.status}`
+            : 'No meeting selected';
 
     const currentMeetingId = liveMeetingId || selectedMeeting?.id || meetings[0]?.id || '';
     const currentNotes = currentMeetingId ? notesByMeeting[currentMeetingId] || [] : [];
@@ -252,6 +335,7 @@ export default function BoardMeetingsStudio() {
     const startMeeting = async () => {
         setError(null);
         setStatusMessage(null);
+        let stream: MediaStream | null = null;
 
         try {
             const userId = await ensureUser();
@@ -263,7 +347,7 @@ export default function BoardMeetingsStudio() {
             }
 
             setIsStarting(true);
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            stream = await getMeetingMediaStream();
             const { data: meeting, error: createError } = await supabase
                 .from('board_meetings')
                 .insert({
@@ -355,13 +439,17 @@ export default function BoardMeetingsStudio() {
                     setLiveMeetingId(null);
                     setLiveStream(null);
                     await refreshAfterSave();
+                    setIsStopping(false);
                 })();
             };
 
             recorder.start(1000);
             setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
         } catch (err: any) {
-            setError(humanizeDbError(err?.message || 'Could not start the meeting.'));
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            setError(humanizeMediaError(err));
         } finally {
             setIsStarting(false);
         }
@@ -369,14 +457,20 @@ export default function BoardMeetingsStudio() {
 
     const stopMeeting = async () => {
         setError(null);
+        if (!liveMeetingIdRef.current && !recorderRef.current) {
+            setStatusMessage('No live meeting is running.');
+            return;
+        }
+
         setStatusMessage('Saving meeting...');
+        setIsStopping(true);
 
         try {
-            setIsStopping(true);
-
             if (recorderRef.current && recorderRef.current.state !== 'inactive') {
                 recorderRef.current.stop();
                 liveStream?.getTracks().forEach(track => track.stop());
+                setLiveStream(null);
+                setStatusMessage('Finalizing recording upload...');
                 return;
             }
 
@@ -403,7 +497,9 @@ export default function BoardMeetingsStudio() {
         } catch (err: any) {
             setError(humanizeDbError(err?.message || 'Could not stop the meeting.'));
         } finally {
-            setIsStopping(false);
+            if (!recorderRef.current || recorderRef.current.state === 'inactive') {
+                setIsStopping(false);
+            }
         }
     };
 
@@ -511,7 +607,7 @@ export default function BoardMeetingsStudio() {
                         </div>
                     </div>
                     <div style={{ opacity: 0.7, fontSize: '0.9rem' }}>
-                        {selectedMeeting ? `${selectedMeeting.title} • ${selectedMeeting.status}` : 'No meeting selected'}
+                        {liveMeetingLabel}
                     </div>
                 </div>
 

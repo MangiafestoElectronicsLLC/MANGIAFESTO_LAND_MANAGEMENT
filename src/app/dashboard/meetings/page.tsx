@@ -32,6 +32,18 @@ export default function MeetingsPage() {
                     Role Directory
                 </Link>
                 <Link
+                    href="/dashboard/tickets"
+                    style={{
+                        padding: '0.35rem 0.65rem',
+                        borderRadius: 6,
+                        border: '1px solid #334155',
+                        color: '#cbd5e1',
+                        textDecoration: 'none'
+                    }}
+                >
+                    Tickets
+                </Link>
+                <Link
                     href="/dashboard/system"
                     style={{
                         padding: '0.35rem 0.65rem',

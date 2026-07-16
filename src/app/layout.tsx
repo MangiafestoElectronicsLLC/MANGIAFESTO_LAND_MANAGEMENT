@@ -58,6 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         </div>
                         <nav className="app-nav" aria-label="Primary">
                             <Link href="/dashboard">Dashboard</Link>
+                            <Link href="/dashboard/tickets">Tickets</Link>
                             <Link href="/dashboard/roles">Roles</Link>
                             <Link href="/dashboard/meetings">Board Meetings</Link>
                             <Link href="/dashboard/system">System Check</Link>
