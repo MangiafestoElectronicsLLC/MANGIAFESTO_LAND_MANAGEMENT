@@ -21,6 +21,27 @@ export default function TicketForm({ roles, onCreated }: Props) {
 
     const supabase = supabaseClient();
 
+    const detectRoleId = (nextTitle: string, nextDescription: string) => {
+        const text = `${nextTitle} ${nextDescription}`.toLowerCase();
+        const groundsRole = roles.find(role => role.name.toLowerCase() === 'grounds')?.id || null;
+        const technologyRole = roles.find(role => role.name.toLowerCase() === 'technology')?.id || null;
+        const legalRole = roles.find(role => role.name.toLowerCase() === 'legal')?.id || null;
+
+        if (/(trail|pond|brush|bushwhack|tree|land|ground|maint|maintenance|driveway|gate|mow|weed|snow)/.test(text)) {
+            return groundsRole;
+        }
+
+        if (/(computer|wifi|internet|email|camera|login|password|website|server|tech|software|app|phone)/.test(text)) {
+            return technologyRole;
+        }
+
+        if (/(contract|permit|law|legal|deed|easement|insurance|liability)/.test(text)) {
+            return legalRole;
+        }
+
+        return null;
+    };
+
     const humanizeDbError = (message: string) => {
         const lower = message.toLowerCase();
         if (lower.includes("could not find the table 'public.tickets'") || lower.includes('schema cache')) {
@@ -83,7 +104,8 @@ export default function TicketForm({ roles, onCreated }: Props) {
             ? `${description}\n\n[attachment] ${uploadedImageUrl}`
             : description;
 
-        const safeRoleId = isUuid(roleId) ? roleId : null;
+        const detectedRoleId = detectRoleId(title, description);
+        const safeRoleId = isUuid(roleId) ? roleId : isUuid(detectedRoleId) ? detectedRoleId : null;
 
         const { data, error } = await supabase
             .from('tickets')

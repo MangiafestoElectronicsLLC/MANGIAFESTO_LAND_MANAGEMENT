@@ -63,10 +63,11 @@ const isMissingMeetingSetup = (message: string) => {
     const lower = message.toLowerCase();
     return (
         lower.includes("could not find the table 'public.board_meetings'") ||
-        lower.includes("could not find the table 'public.board_meeting_notes'") ||
-        lower.includes('schema cache')
+        lower.includes("could not find the table 'public.board_meeting_notes'")
     );
 };
+
+const toMeetingRoomName = (meetingId: string) => `family-land-board-${meetingId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 48)}`;
 
 const humanizeMediaError = (err: any) => {
     const name = String(err?.name || '').toLowerCase();
@@ -373,6 +374,10 @@ export default function BoardMeetingsStudio() {
         [meetings, selectedMeetingId]
     );
 
+    const activeRoomMeetingId = liveMeetingId || selectedMeeting?.id || '';
+    const activeRoomName = activeRoomMeetingId ? toMeetingRoomName(activeRoomMeetingId) : '';
+    const activeRoomUrl = activeRoomName ? `https://meet.jit.si/${activeRoomName}` : '';
+
     const liveMeetingLabel = liveMeetingId
         ? `${liveTitle.trim() || 'Family Board Meeting'} • live`
         : selectedMeeting
@@ -405,6 +410,63 @@ export default function BoardMeetingsStudio() {
             saveLocalMeetings(next);
             return next;
         });
+    };
+
+    const retrySupabaseMode = async () => {
+        setError(null);
+        setSetupNotice(null);
+        setStatusMessage('Retrying Supabase board meetings mode...');
+
+        try {
+            const { data: nextMeetingsData, error: meetingsError } = await supabase
+                .from('board_meetings')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (meetingsError) {
+                throw meetingsError;
+            }
+
+            const nextMeetings = (nextMeetingsData || []) as BoardMeeting[];
+            const meetingIds = nextMeetings.map(meeting => meeting.id);
+
+            const { data: notesData, error: notesError } = meetingIds.length
+                ? await supabase
+                    .from('board_meeting_notes')
+                    .select('id, meeting_id, note, note_time_seconds, created_by, created_at')
+                    .in('meeting_id', meetingIds)
+                    .order('created_at', { ascending: true })
+                : { data: [], error: null as any };
+
+            if (notesError) {
+                throw notesError;
+            }
+
+            const grouped: Record<string, BoardMeetingNote[]> = {};
+            for (const meetingId of meetingIds) {
+                grouped[meetingId] = [];
+            }
+
+            for (const row of (notesData || []) as BoardMeetingNote[]) {
+                if (!grouped[row.meeting_id]) {
+                    grouped[row.meeting_id] = [];
+                }
+                grouped[row.meeting_id].push(row);
+            }
+
+            setStorageMode('supabase');
+            setMeetings(nextMeetings);
+            setNotesByMeeting(grouped);
+            if (nextMeetings[0]) {
+                setSelectedMeetingId(nextMeetings[0].id);
+            }
+            setStatusMessage('Supabase mode restored.');
+        } catch (err: any) {
+            const message = String(err?.message || 'Supabase mode still unavailable.');
+            setStorageMode('local');
+            setSetupNotice('Supabase board meeting tables are still unavailable. Keep using local mode or run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then retry.');
+            setError(message);
+        }
     };
 
     const startMeeting = async () => {
@@ -548,6 +610,8 @@ export default function BoardMeetingsStudio() {
                             }));
                             setStatusMessage('Meeting saved in local mode. Replay works now on this page.');
                         }
+
+                        setSelectedMeetingId(meetingId);
                     }
 
                     recorderRef.current = null;
@@ -727,10 +791,20 @@ export default function BoardMeetingsStudio() {
                             borderRadius: 10,
                             background: 'rgba(120, 53, 15, 0.38)',
                             padding: '0.7rem 0.8rem',
-                            color: '#fde68a'
+                            color: '#fde68a',
+                            display: 'grid',
+                            gap: '0.5rem'
                         }}
                     >
-                        {setupNotice}
+                        <div>{setupNotice}</div>
+                        <button
+                            type="button"
+                            onClick={retrySupabaseMode}
+                            className="soft-button"
+                            style={{ width: 'fit-content', borderColor: '#f59e0b', color: '#fde68a' }}
+                        >
+                            Retry Supabase mode
+                        </button>
                     </div>
                 )}
 
@@ -757,6 +831,43 @@ export default function BoardMeetingsStudio() {
                 {statusMessage && <div style={{ color: '#86efac', lineHeight: 1.5 }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5', lineHeight: 1.5 }}>{error}</div>}
             </section>
+
+            {activeRoomUrl && (
+                <section className="panel panel-pad meetings-room-panel" style={{ display: 'grid', gap: '0.75rem' }}>
+                    <div style={{ display: 'grid', gap: '0.2rem' }}>
+                        <div style={{ fontWeight: 700 }}>Family live call room (multi-user)</div>
+                        <div style={{ opacity: 0.8, fontSize: '0.92rem' }}>
+                            Share this room link with your family so everyone can join the same live call.
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                        <a href={activeRoomUrl} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none', borderColor: '#22c55e', color: '#bbf7d0' }}>
+                            Open call room
+                        </a>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                try {
+                                    await navigator.clipboard.writeText(activeRoomUrl);
+                                    setStatusMessage('Live call room link copied.');
+                                } catch {
+                                    setStatusMessage(`Copy this room link: ${activeRoomUrl}`);
+                                }
+                            }}
+                            className="soft-button"
+                            style={{ borderColor: '#38bdf8', color: '#bfdbfe' }}
+                        >
+                            Copy room link
+                        </button>
+                    </div>
+                    <iframe
+                        src={activeRoomUrl}
+                        title="Family live call room"
+                        style={{ width: '100%', minHeight: 420, borderRadius: 14, border: '1px solid #334155', background: '#020617' }}
+                        allow="camera; microphone; fullscreen; display-capture"
+                    />
+                </section>
+            )}
 
             <section className="panel panel-pad meetings-video-panel" style={{ display: 'grid', gap: '0.85rem' }}>
                 <div className="meetings-video-head" style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>

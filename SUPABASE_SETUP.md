@@ -151,9 +151,9 @@ ALTER TABLE property_maps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE property_map_features ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for PROFILES
-CREATE POLICY "Users can view their own profile"
+CREATE POLICY "Authenticated users can view profiles"
   ON profiles FOR SELECT
-  USING (auth.uid() = id);
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Users can insert their own profile"
   ON profiles FOR INSERT
@@ -290,6 +290,7 @@ CREATE POLICY "Authenticated users can delete property map features"
 3. Add them to your `.env.local` file (see README.md)
 
 4. Run these additional SQL scripts in Supabase SQL Editor:
+  - `supabase/profiles_directory_policy.sql`
   - `supabase/ticket_numbers.sql`
   - `supabase/board_meetings.sql`
   - `supabase/property_maps.sql`

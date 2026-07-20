@@ -79,13 +79,17 @@ export default function SystemCheckPanel() {
             });
         } else {
             const message = (ticketNumberColumnError.message || '').toLowerCase();
-            const missingColumn = message.includes('column') && message.includes('does not exist');
+            const missingColumn =
+                (message.includes('column') && message.includes('does not exist')) ||
+                (message.includes('schema cache') && message.includes('ticket_number'));
 
             items.push({
                 key: 'column:tickets.ticket_number',
                 label: 'Column: tickets.ticket_number',
                 state: missingColumn ? 'missing' : 'warning',
-                detail: ticketNumberColumnError.message
+                detail: missingColumn
+                    ? `${ticketNumberColumnError.message} Run supabase/ticket_numbers.sql in your Supabase SQL Editor.`
+                    : ticketNumberColumnError.message
             });
         }
 
@@ -251,7 +255,7 @@ export default function SystemCheckPanel() {
                     <div style={{ fontWeight: 600 }}>Setup required before full board use</div>
                     <div>1. Open Supabase SQL Editor for your active project.</div>
                     <div>2. Run SQL from SUPABASE_SETUP.md.</div>
-                    <div>3. Run SQL from supabase/ticket_numbers.sql.</div>
+                    <div>3. Run SQL from supabase/profiles_directory_policy.sql and supabase/ticket_numbers.sql.</div>
                     <div>4. Run SQL from supabase/board_meetings.sql and supabase/property_maps.sql.</div>
                     <div>5. Run SQL from supabase/storage_ticket_images.sql, supabase/storage_board_meetings.sql, and supabase/storage_property_maps.sql.</div>
                     <div>6. Back here, click Run check again.</div>

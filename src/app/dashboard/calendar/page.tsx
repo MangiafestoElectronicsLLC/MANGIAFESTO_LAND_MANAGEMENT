@@ -143,6 +143,10 @@ export default function CalendarPage() {
 
     const huntingCount = filtered.filter(item => item.type === 'hunting').length;
     const fishingCount = filtered.filter(item => item.type === 'fishing').length;
+    const huntingStatusByMonth = SEASONS.filter(item => item.type === 'hunting').map(item => ({
+        ...item,
+        inSeason: item.openMonths.includes(month)
+    }));
 
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
@@ -215,7 +219,21 @@ export default function CalendarPage() {
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.8rem', flexWrap: 'wrap' }}>
                             <div style={{ fontWeight: 700 }}>{entry.species}</div>
-                            <div style={{ textTransform: 'capitalize', opacity: 0.82 }}>{entry.type}</div>
+                            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                <span style={{ textTransform: 'capitalize', opacity: 0.82 }}>{entry.type}</span>
+                                <span
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        borderRadius: 999,
+                                        padding: '0.12rem 0.45rem',
+                                        border: '1px solid #22c55e',
+                                        background: 'rgba(22, 163, 74, 0.25)',
+                                        color: '#bbf7d0'
+                                    }}
+                                >
+                                    In season now
+                                </span>
+                            </div>
                         </div>
                         <div style={{ opacity: 0.85 }}>{entry.location}</div>
                         <div style={{ fontSize: '0.9rem', opacity: 0.78 }}>{entry.notes}</div>
@@ -224,6 +242,37 @@ export default function CalendarPage() {
                         </div>
                     </div>
                 ))}
+            </section>
+
+            <section className="panel panel-pad" style={{ display: 'grid', gap: '0.65rem' }}>
+                <div style={{ fontWeight: 700 }}>Hunting quick status for {MONTHS[month - 1]}</div>
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                    {huntingStatusByMonth.map(entry => (
+                        <div
+                            key={`${entry.id}-status`}
+                            style={{
+                                border: `1px solid ${entry.inSeason ? '#22c55e' : '#64748b'}`,
+                                borderRadius: 10,
+                                padding: '0.55rem 0.7rem',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                gap: '0.75rem',
+                                flexWrap: 'wrap',
+                                background: entry.inSeason ? 'rgba(21, 128, 61, 0.2)' : 'rgba(51, 65, 85, 0.2)'
+                            }}
+                        >
+                            <span style={{ fontWeight: 600 }}>{entry.species}</span>
+                            <span
+                                style={{
+                                    fontSize: '0.8rem',
+                                    color: entry.inSeason ? '#bbf7d0' : '#cbd5e1'
+                                }}
+                            >
+                                {entry.inSeason ? 'IN SEASON' : 'CLOSED THIS MONTH'}
+                            </span>
+                        </div>
+                    ))}
+                </div>
             </section>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.65rem' }}>

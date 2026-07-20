@@ -8,11 +8,25 @@ const LAST_SEEN_KEY = 'land_last_seen_history_at';
 
 type Props = {
     title?: string;
+    maxItems?: number;
+    maxHeight?: number;
 };
 
-export default function ActivityFeed({ title = 'Notifications & Activity' }: Props) {
+type ActivityItem = TicketHistoryEvent & {
+    actorName: string;
+    actorEmail: string;
+    ticketCreatedByName: string;
+    ticketCreatedByEmail: string;
+    ticketTitle: string;
+};
+
+export default function ActivityFeed({
+    title = 'Notifications & Activity',
+    maxItems = 30,
+    maxHeight = 520
+}: Props) {
     const supabase = supabaseClient();
-    const [events, setEvents] = useState<TicketHistoryEvent[]>([]);
+    const [events, setEvents] = useState<ActivityItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const lastNotifiedEventId = useRef<string | null>(null);
@@ -28,23 +42,87 @@ export default function ActivityFeed({ title = 'Notifications & Activity' }: Pro
             if (fetchError) throw fetchError;
 
             const safe = ((data || []) as TicketHistoryEvent[]).filter(e => e && e.id);
-            setEvents(safe);
+
+            const actorIds = Array.from(new Set(safe.map(event => event.performed_by).filter(Boolean))) as string[];
+            const ticketIds = Array.from(new Set(safe.map(event => event.ticket_id).filter(Boolean)));
+
+            const [{ data: actorProfiles }, { data: tickets }] = await Promise.all([
+                actorIds.length
+                    ? supabase
+                        .from('profiles')
+                        .select('id, full_name')
+                        .in('id', actorIds)
+                    : Promise.resolve({ data: [] as any[] }),
+                ticketIds.length
+                    ? supabase
+                        .from('tickets')
+                        .select('id, created_by, title')
+                        .in('id', ticketIds)
+                    : Promise.resolve({ data: [] as any[] })
+            ]);
+
+            const ticketCreatorIds = Array.from(
+                new Set(((tickets || []) as any[]).map(ticket => ticket.created_by).filter(Boolean))
+            ) as string[];
+
+            const { data: ticketCreators } = ticketCreatorIds.length
+                ? await supabase
+                    .from('profiles')
+                    .select('id, full_name')
+                    .in('id', ticketCreatorIds)
+                : { data: [] as any[] };
+
+            const actorNameById = new Map<string, string>();
+            for (const profile of (actorProfiles || []) as Array<{ id: string; full_name: string | null }>) {
+                actorNameById.set(profile.id, profile.full_name || `User ${profile.id.slice(0, 8)}`);
+            }
+
+            const ticketCreatorById = new Map<string, { name: string; email: string }>();
+            for (const profile of (ticketCreators || []) as Array<{ id: string; full_name: string | null }>) {
+                ticketCreatorById.set(profile.id, {
+                    name: profile.full_name || `User ${profile.id.slice(0, 8)}`,
+                    email: ''
+                });
+            }
+
+            const ticketById = new Map<string, { createdBy: string | null; title: string | null }>();
+            for (const ticket of (tickets || []) as Array<{ id: string; created_by: string | null; title: string | null }>) {
+                ticketById.set(ticket.id, {
+                    createdBy: ticket.created_by,
+                    title: ticket.title || null
+                });
+            }
+
+            const enriched: ActivityItem[] = safe.map(event => {
+                const ticketMeta = ticketById.get(event.ticket_id);
+                const creatorProfile = ticketMeta?.createdBy ? ticketCreatorById.get(ticketMeta.createdBy) : null;
+                return {
+                    ...event,
+                    actorName: event.performed_by ? actorNameById.get(event.performed_by) || `User ${event.performed_by.slice(0, 8)}` : 'System',
+                    actorEmail: '',
+                    ticketCreatedByName: creatorProfile?.name || 'Unknown creator',
+                    ticketCreatedByEmail: creatorProfile?.email || '',
+                    ticketTitle: ticketMeta?.title || 'Untitled ticket'
+                };
+            });
+
+            setEvents(enriched);
 
             if (
                 typeof window !== 'undefined' &&
                 'Notification' in window &&
                 Notification.permission === 'granted' &&
-                safe.length > 0 &&
+                enriched.length > 0 &&
                 lastNotifiedEventId.current &&
-                safe[0].id !== lastNotifiedEventId.current
+                enriched[0].id !== lastNotifiedEventId.current
             ) {
                 new Notification('Family Land Board update', {
-                    body: `New action: ${safe[0].action}`
+                    body: `New action: ${enriched[0].action}`
                 });
             }
 
-            if (safe.length > 0) {
-                lastNotifiedEventId.current = safe[0].id;
+            if (enriched.length > 0) {
+                lastNotifiedEventId.current = enriched[0].id;
             }
 
             setError(null);
@@ -131,8 +209,8 @@ export default function ActivityFeed({ title = 'Notifications & Activity' }: Pro
                 <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>No recent activity yet.</div>
             )}
 
-            <div style={{ display: 'grid', gap: '0.4rem' }}>
-                {events.slice(0, 10).map(event => (
+            <div style={{ display: 'grid', gap: '0.4rem', maxHeight, overflowY: 'auto', paddingRight: '0.25rem' }}>
+                {events.slice(0, maxItems).map(event => (
                     <div
                         key={event.id}
                         style={{
@@ -145,6 +223,10 @@ export default function ActivityFeed({ title = 'Notifications & Activity' }: Pro
                         <div style={{ fontWeight: 600 }}>{event.action}</div>
                         <div style={{ opacity: 0.78 }}>
                             Ticket: {event.ticket_id.slice(0, 8)} • {new Date(event.created_at).toLocaleString()}
+                        </div>
+                        <div style={{ opacity: 0.82 }}>Title: {event.ticketTitle}</div>
+                        <div style={{ opacity: 0.82 }}>
+                            By: {event.actorName} • Creator: {event.ticketCreatedByName}
                         </div>
                         {(event.from_status || event.to_status) && (
                             <div style={{ opacity: 0.78 }}>

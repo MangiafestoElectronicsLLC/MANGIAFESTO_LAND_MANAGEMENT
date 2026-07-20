@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 
+type StorageMode = 'supabase' | 'local';
+
 type PropertyMap = {
     id: string;
     name: string;
@@ -36,11 +38,30 @@ type PropertyMapFeature = {
 };
 
 const DEFAULT_ADDRESS = '825 West Ave, Brockport, NY';
-const DEFAULT_LAT = 43.2137;
-const DEFAULT_LNG = -77.9417;
+const DEFAULT_LAT = 43.2180558;
+const DEFAULT_LNG = -77.9778462;
 
 const FEATURE_TYPES = ['build', 'trail', 'gate', 'road', 'utility', 'water', 'note'];
 const FEATURE_STATUS = ['planned', 'active', 'completed', 'blocked'];
+const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
+const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
+
+const parseJson = <T,>(raw: string | null, fallback: T) => {
+    if (!raw) return fallback;
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        return fallback;
+    }
+};
+
+const isMissingPropertyMapSetup = (message: string) => {
+    const lower = message.toLowerCase();
+    return (
+        lower.includes("could not find the table 'public.property_maps'") ||
+        lower.includes("could not find the table 'public.property_map_features'")
+    );
+};
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
 
@@ -49,6 +70,8 @@ export default function PropertyMapPage() {
     const supabase = supabaseClient();
 
     const [profileId, setProfileId] = useState<string | null>(null);
+    const [storageMode, setStorageMode] = useState<StorageMode>('supabase');
+    const [setupNotice, setSetupNotice] = useState<string | null>(null);
     const [maps, setMaps] = useState<PropertyMap[]>([]);
     const [selectedMapId, setSelectedMapId] = useState<string>('');
     const [features, setFeatures] = useState<PropertyMapFeature[]>([]);
@@ -85,9 +108,29 @@ export default function PropertyMapPage() {
         [features, selectedFeatureId]
     );
 
+    const readLocalMaps = () =>
+        parseJson<PropertyMap[]>(window.localStorage.getItem(LOCAL_PROPERTY_MAPS_KEY), []);
+
+    const readLocalFeatures = () =>
+        parseJson<PropertyMapFeature[]>(window.localStorage.getItem(LOCAL_PROPERTY_MAP_FEATURES_KEY), []);
+
+    const saveLocalMaps = (nextMaps: PropertyMap[]) => {
+        window.localStorage.setItem(LOCAL_PROPERTY_MAPS_KEY, JSON.stringify(nextMaps));
+    };
+
+    const saveLocalFeatures = (nextFeatures: PropertyMapFeature[]) => {
+        window.localStorage.setItem(LOCAL_PROPERTY_MAP_FEATURES_KEY, JSON.stringify(nextFeatures));
+    };
+
     const loadFeatures = async (mapId: string) => {
         if (!mapId) {
             setFeatures([]);
+            return;
+        }
+
+        if (storageMode === 'local') {
+            const localFeatures = readLocalFeatures().filter(feature => feature.map_id === mapId);
+            setFeatures(localFeatures);
             return;
         }
 
@@ -105,6 +148,20 @@ export default function PropertyMapPage() {
     };
 
     const loadMaps = async () => {
+        if (storageMode === 'local') {
+            const localMaps = readLocalMaps();
+            setMaps(localMaps);
+
+            const nextSelectedMapId = selectedMapId || localMaps[0]?.id || '';
+            setSelectedMapId(nextSelectedMapId);
+            if (nextSelectedMapId) {
+                await loadFeatures(nextSelectedMapId);
+            } else {
+                setFeatures([]);
+            }
+            return;
+        }
+
         const { data, error: fetchError } = await supabase
             .from('property_maps')
             .select('*')
@@ -141,7 +198,19 @@ export default function PropertyMapPage() {
                 setProfileId(user.id);
                 await loadMaps();
             } catch (err: any) {
-                setError(err?.message || 'Could not load property maps. Run Supabase setup SQL for property maps.');
+                const message = String(err?.message || 'Could not load property maps.');
+                if (isMissingPropertyMapSetup(message)) {
+                    setStorageMode('local');
+                    setSetupNotice('Supabase property map tables are missing. Local property map mode is active for this browser. Run supabase/property_maps.sql and supabase/storage_property_maps.sql, then refresh to return to Supabase mode.');
+                    const localMaps = readLocalMaps();
+                    const localFeatures = readLocalFeatures();
+                    setMaps(localMaps);
+                    const nextSelectedMapId = localMaps[0]?.id || '';
+                    setSelectedMapId(nextSelectedMapId);
+                    setFeatures(localFeatures.filter(feature => feature.map_id === nextSelectedMapId));
+                } else {
+                    setError(message);
+                }
             } finally {
                 setLoading(false);
             }
@@ -179,6 +248,11 @@ export default function PropertyMapPage() {
     }, [selectedFeature]);
 
     const mapCenterHref = useMemo(() => {
+        const addressQuery = mapAddress.trim();
+        if (addressQuery) {
+            return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
+        }
+
         const lat = Number(mapLat);
         const lng = Number(mapLng);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -187,6 +261,15 @@ export default function PropertyMapPage() {
 
         return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
     }, [mapAddress, mapLat, mapLng]);
+
+    const mapCoordinatesHref = useMemo(() => {
+        const lat = Number(mapLat);
+        const lng = Number(mapLng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(DEFAULT_ADDRESS)}`;
+        }
+        return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    }, [mapLat, mapLng]);
 
     const saveMap = async (e: FormEvent) => {
         e.preventDefault();
@@ -207,7 +290,7 @@ export default function PropertyMapPage() {
             let nextImageUrl = selectedMap?.base_image_url || null;
             let nextImagePath = selectedMap?.base_image_path || null;
 
-            if (mapImageFile && profileId) {
+            if (mapImageFile && profileId && storageMode === 'supabase') {
                 const extension = mapImageFile.name.split('.').pop() || 'jpg';
                 const filePath = `${profileId}/${Date.now()}-property-map.${extension}`;
 
@@ -225,6 +308,48 @@ export default function PropertyMapPage() {
 
                 nextImagePath = filePath;
                 nextImageUrl = publicData.publicUrl;
+            } else if (mapImageFile && storageMode === 'local') {
+                nextImageUrl = URL.createObjectURL(mapImageFile);
+                nextImagePath = null;
+            }
+
+            if (storageMode === 'local') {
+                const nowIso = new Date().toISOString();
+                const nextMap: PropertyMap = selectedMap
+                    ? {
+                        ...selectedMap,
+                        name: mapName.trim() || 'Family Property Map',
+                        address: mapAddress.trim() || DEFAULT_ADDRESS,
+                        center_lat: lat,
+                        center_lng: lng,
+                        base_image_url: nextImageUrl,
+                        base_image_path: nextImagePath,
+                        updated_at: nowIso
+                    }
+                    : {
+                        id: `local-map-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                        name: mapName.trim() || 'Family Property Map',
+                        address: mapAddress.trim() || DEFAULT_ADDRESS,
+                        center_lat: lat,
+                        center_lng: lng,
+                        base_image_url: nextImageUrl,
+                        base_image_path: nextImagePath,
+                        created_by: profileId,
+                        created_at: nowIso,
+                        updated_at: nowIso
+                    };
+
+                const nextMaps = selectedMap
+                    ? maps.map(map => (map.id === selectedMap.id ? nextMap : map))
+                    : [nextMap, ...maps];
+
+                setMaps(nextMaps);
+                saveLocalMaps(nextMaps);
+                setSelectedMapId(nextMap.id);
+                setStatusMessage(selectedMap ? 'Property map updated in local mode.' : 'Property map created in local mode.');
+                setMapImageFile(null);
+                setSavingMap(false);
+                return;
             }
 
             if (!selectedMap?.id) {
@@ -322,6 +447,38 @@ export default function PropertyMapPage() {
                 updated_by: profileId
             };
 
+            if (storageMode === 'local') {
+                const nowIso = new Date().toISOString();
+                const nextFeatures = selectedFeature
+                    ? readLocalFeatures().map(feature =>
+                        feature.id === selectedFeature.id
+                            ? {
+                                ...feature,
+                                ...payload,
+                                id: feature.id,
+                                created_at: feature.created_at,
+                                updated_at: nowIso
+                            }
+                            : feature
+                    )
+                    : [
+                        ...readLocalFeatures(),
+                        {
+                            id: `local-feature-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                            ...payload,
+                            created_at: nowIso,
+                            updated_at: nowIso
+                        } as PropertyMapFeature
+                    ];
+
+                saveLocalFeatures(nextFeatures);
+                setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMap.id));
+                setSelectedFeatureId('');
+                setStatusMessage(selectedFeature ? 'Feature updated in local mode.' : 'Feature added in local mode.');
+                setSavingFeature(false);
+                return;
+            }
+
             if (selectedFeature?.id) {
                 const { error: updateError } = await supabase
                     .from('property_map_features')
@@ -362,6 +519,15 @@ export default function PropertyMapPage() {
 
         setError(null);
         setStatusMessage(null);
+
+        if (storageMode === 'local') {
+            const nextFeatures = readLocalFeatures().filter(feature => feature.id !== selectedFeature.id);
+            saveLocalFeatures(nextFeatures);
+            setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMap.id));
+            setSelectedFeatureId('');
+            setStatusMessage('Feature deleted in local mode.');
+            return;
+        }
 
         const { error: deleteError } = await supabase
             .from('property_map_features')
@@ -407,6 +573,19 @@ export default function PropertyMapPage() {
 
                 {statusMessage && <div style={{ color: '#86efac' }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5' }}>{error}</div>}
+                {setupNotice && (
+                    <div
+                        style={{
+                            border: '1px solid #d97706',
+                            borderRadius: 10,
+                            background: 'rgba(120, 53, 15, 0.38)',
+                            padding: '0.65rem 0.8rem',
+                            color: '#fde68a'
+                        }}
+                    >
+                        {setupNotice}
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
                     {maps.map(map => (
@@ -454,7 +633,10 @@ export default function PropertyMapPage() {
                             {savingMap ? 'Saving map...' : selectedMap ? 'Update map' : 'Create map'}
                         </button>
                         <a href={mapCenterHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
-                            Open center in Google Maps
+                            Open address in Google Maps
+                        </a>
+                        <a href={mapCoordinatesHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
+                            Open lat/lng in Google Maps
                         </a>
                     </div>
                 </form>

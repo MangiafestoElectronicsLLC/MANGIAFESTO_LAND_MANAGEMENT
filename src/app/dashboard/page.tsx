@@ -506,7 +506,6 @@ export default function DashboardPage() {
             </div>
 
             <TicketForm roles={roles} onCreated={refreshTickets} />
-            <ActivityFeed />
             {boardMode === 'kanban' ? (
                 <KanbanBoard
                     tickets={searchedTickets}
@@ -520,6 +519,7 @@ export default function DashboardPage() {
                     onChanged={refreshTickets}
                 />
             )}
+            <ActivityFeed maxItems={60} maxHeight={620} />
         </div>
     );
 }
