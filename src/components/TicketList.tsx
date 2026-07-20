@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
-import type { Role, Ticket, TicketHistoryEvent } from '@/lib/boardTypes';
+import { isUuid, type Role, type Ticket, type TicketHistoryEvent } from '@/lib/boardTypes';
 import { getTicketNumber } from '@/lib/ticketNumber';
 
 type Props = {
@@ -29,14 +29,27 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
     const [historyOpen, setHistoryOpen] = useState<Record<string, boolean>>({});
     const [historyByTicket, setHistoryByTicket] = useState<Record<string, TicketHistoryEvent[]>>({});
     const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null);
+    const [savingTicketId, setSavingTicketId] = useState<string | null>(null);
+    const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+    const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+    const [editMessage, setEditMessage] = useState<string | null>(null);
+    const [editError, setEditError] = useState<string | null>(null);
 
     const roleNameMap = new Map(roles.map(r => [r.id, r.name]));
 
     const updateStatus = async (ticket: Ticket, status: string) => {
+        setEditError(null);
+        setEditMessage(null);
+        setStatusUpdatingId(ticket.id);
+
         const {
             data: { user }
         } = await supabase.auth.getUser();
-        if (!user) return;
+        if (!user) {
+            setStatusUpdatingId(null);
+            setEditError('Your session expired. Sign in again and retry.');
+            return;
+        }
 
         const { data: profile } = await supabase
             .from('profiles')
@@ -44,10 +57,16 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             .eq('id', user.id)
             .single();
 
-        await supabase
+        const { error: updateError } = await supabase
             .from('tickets')
             .update({ status, updated_at: new Date().toISOString() })
             .eq('id', ticket.id);
+
+        if (updateError) {
+            setStatusUpdatingId(null);
+            setEditError(updateError.message || 'Could not update ticket status.');
+            return;
+        }
 
         await supabase.from('ticket_history').insert({
             ticket_id: ticket.id,
@@ -57,10 +76,53 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             to_status: status
         });
 
+        setStatusUpdatingId(null);
+        setEditMessage('Status updated.');
         onChanged();
     };
 
+    const formatStatusLabel = (status: string) => {
+        if (status === 'in_progress') return 'In Progress';
+        if (status === 'closed') return 'Closed';
+        return 'Open';
+    };
+
+    const formatPriorityLabel = (priority: string) => {
+        if (priority === 'high') return 'High';
+        if (priority === 'low') return 'Low';
+        return 'Normal';
+    };
+
+    const statusBadgeStyle = (status: string) => {
+        if (status === 'closed') {
+            return { border: '1px solid #22c55e', background: 'rgba(6, 95, 70, 0.35)', color: '#bbf7d0' };
+        }
+        if (status === 'in_progress') {
+            return { border: '1px solid #facc15', background: 'rgba(146, 64, 14, 0.3)', color: '#fde68a' };
+        }
+        return { border: '1px solid #60a5fa', background: 'rgba(30, 64, 175, 0.35)', color: '#bfdbfe' };
+    };
+
+    const priorityBadgeStyle = (priority: string) => {
+        if (priority === 'high') {
+            return { border: '1px solid #f97373', background: 'rgba(127, 29, 29, 0.32)', color: '#fecaca' };
+        }
+        if (priority === 'low') {
+            return { border: '1px solid #34d399', background: 'rgba(6, 95, 70, 0.32)', color: '#bbf7d0' };
+        }
+        return { border: '1px solid #a78bfa', background: 'rgba(76, 29, 149, 0.3)', color: '#ddd6fe' };
+    };
+
+    const toggleDescription = (ticketId: string) => {
+        setExpandedDescriptions(prev => ({
+            ...prev,
+            [ticketId]: !prev[ticketId]
+        }));
+    };
+
     const startEdit = (ticket: Ticket) => {
+        setEditError(null);
+        setEditMessage(null);
         setEditingTicketId(ticket.id);
         setDraftTitle(ticket.title);
         setDraftDescription(ticket.description || '');
@@ -77,10 +139,24 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
     };
 
     const saveEdit = async (ticket: Ticket) => {
+        setEditError(null);
+        setEditMessage(null);
+
+        if (draftRoleId && !isUuid(draftRoleId)) {
+            setEditError('Role setup is incomplete, so this ticket cannot be assigned to that role yet. Run the missing Supabase role setup SQL and try again.');
+            return;
+        }
+
+        setSavingTicketId(ticket.id);
+
         const {
             data: { user }
         } = await supabase.auth.getUser();
-        if (!user) return;
+        if (!user) {
+            setSavingTicketId(null);
+            setEditError('Your session expired. Sign in again and retry.');
+            return;
+        }
 
         const { data: profile } = await supabase
             .from('profiles')
@@ -99,7 +175,11 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             })
             .eq('id', ticket.id);
 
-        if (error) return;
+        if (error) {
+            setSavingTicketId(null);
+            setEditError(error.message || 'Could not save ticket changes.');
+            return;
+        }
 
         await supabase.from('ticket_history').insert({
             ticket_id: ticket.id,
@@ -110,6 +190,8 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
         });
 
         cancelEdit();
+        setSavingTicketId(null);
+        setEditMessage('Ticket updated.');
         onChanged();
     };
 
@@ -161,12 +243,20 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                 background: '#020617'
             }}
         >
-            <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Tickets</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                <h3 style={{ margin: 0 }}>Tickets</h3>
+                <div style={{ fontSize: '0.84rem', opacity: 0.8 }}>{tickets.length} in this view</div>
+            </div>
+            {editError && <div style={{ color: '#fca5a5', fontSize: '0.84rem', marginBottom: '0.6rem' }}>{editError}</div>}
+            {editMessage && <div style={{ color: '#86efac', fontSize: '0.84rem', marginBottom: '0.6rem' }}>{editMessage}</div>}
             <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {tickets.map(t => (
                     (() => {
                         const attachment = extractAttachment(t.description);
                         const ticketNumber = getTicketNumber(t);
+                        const isExpanded = Boolean(expandedDescriptions[t.id]);
+                        const textLength = (attachment.cleanText || '').length;
+                        const canExpand = textLength > 180;
 
                         return (
                             <div
@@ -179,6 +269,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                 }}
                             >
                                 <div
+                                    className="ticket-item-row"
                                     style={{
                                         display: 'flex',
                                         justifyContent: 'space-between',
@@ -226,17 +317,19 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                                     <button
                                                         onClick={() => saveEdit(t)}
+                                                        disabled={savingTicketId === t.id}
                                                         style={{
                                                             padding: '0.25rem 0.5rem',
                                                             borderRadius: 4,
                                                             border: '1px solid #34d399',
                                                             background: 'transparent',
                                                             color: '#34d399',
-                                                            cursor: 'pointer',
+                                                            cursor: savingTicketId === t.id ? 'not-allowed' : 'pointer',
+                                                            opacity: savingTicketId === t.id ? 0.65 : 1,
                                                             fontSize: '0.75rem'
                                                         }}
                                                     >
-                                                        Save
+                                                        {savingTicketId === t.id ? 'Saving...' : 'Save'}
                                                     </button>
                                                     <button
                                                         onClick={cancelEdit}
@@ -270,16 +363,61 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                                 >
                                                     {ticketNumber}
                                                 </div>
-                                                <div style={{ fontWeight: 600 }}>{t.title}</div>
+                                                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                    <div style={{ fontWeight: 600 }}>{t.title}</div>
+                                                    <span
+                                                        style={{
+                                                            fontSize: '0.7rem',
+                                                            borderRadius: 999,
+                                                            padding: '0.16rem 0.42rem',
+                                                            ...statusBadgeStyle(t.status)
+                                                        }}
+                                                    >
+                                                        {formatStatusLabel(t.status)}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            fontSize: '0.7rem',
+                                                            borderRadius: 999,
+                                                            padding: '0.16rem 0.42rem',
+                                                            ...priorityBadgeStyle(t.priority)
+                                                        }}
+                                                    >
+                                                        {formatPriorityLabel(t.priority)} priority
+                                                    </span>
+                                                </div>
                                                 <div
                                                     style={{
                                                         fontSize: '0.85rem',
                                                         opacity: 0.8,
-                                                        whiteSpace: 'pre-wrap'
+                                                        whiteSpace: 'pre-wrap',
+                                                        overflow: 'hidden',
+                                                        display: isExpanded ? 'block' : '-webkit-box',
+                                                        WebkitLineClamp: isExpanded ? 'unset' : 4,
+                                                        WebkitBoxOrient: 'vertical'
                                                     }}
                                                 >
                                                     {attachment.cleanText || 'No description'}
                                                 </div>
+                                                {canExpand && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleDescription(t.id)}
+                                                        style={{
+                                                            marginTop: '0.35rem',
+                                                            padding: '0.2rem 0.4rem',
+                                                            borderRadius: 4,
+                                                            border: '1px solid #475569',
+                                                            background: 'transparent',
+                                                            color: '#cbd5e1',
+                                                            cursor: 'pointer',
+                                                            fontSize: '0.72rem',
+                                                            width: 'fit-content'
+                                                        }}
+                                                    >
+                                                        {isExpanded ? 'Show less' : 'Show more'}
+                                                    </button>
+                                                )}
                                             </>
                                         )}
 
@@ -317,7 +455,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                             }}
                                         >
                                             <div>
-                                                Status: {t.status} • Priority: {t.priority}
+                                                Status: {formatStatusLabel(t.status)} • Priority: {formatPriorityLabel(t.priority)}
                                             </div>
                                             <div>
                                                 Role: {t.role_id ? roleNameMap.get(t.role_id) || 'Unknown role' : 'No role'}
@@ -330,13 +468,15 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                         <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                             <button
                                                 onClick={() => startEdit(t)}
+                                                disabled={Boolean(savingTicketId)}
                                                 style={{
                                                     padding: '0.25rem 0.5rem',
                                                     borderRadius: 4,
                                                     border: '1px solid #38bdf8',
                                                     background: 'transparent',
                                                     color: '#7dd3fc',
-                                                    cursor: 'pointer',
+                                                    cursor: savingTicketId ? 'not-allowed' : 'pointer',
+                                                    opacity: savingTicketId ? 0.65 : 1,
                                                     fontSize: '0.75rem'
                                                 }}
                                             >
@@ -390,6 +530,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                     </div>
 
                                     <div
+                                        className="ticket-status-actions"
                                         style={{
                                             display: 'flex',
                                             flexDirection: 'column',
@@ -398,27 +539,31 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                     >
                                         <button
                                             onClick={() => updateStatus(t, 'open')}
+                                            disabled={statusUpdatingId === t.id || t.status === 'open'}
                                             style={{
                                                 padding: '0.25rem 0.5rem',
                                                 borderRadius: 4,
                                                 border: '1px solid #6b7280',
                                                 background: 'transparent',
                                                 color: '#e5e7eb',
-                                                cursor: 'pointer',
+                                                cursor: statusUpdatingId === t.id || t.status === 'open' ? 'not-allowed' : 'pointer',
+                                                opacity: statusUpdatingId === t.id || t.status === 'open' ? 0.6 : 1,
                                                 fontSize: '0.75rem'
                                             }}
                                         >
-                                            Open
+                                            {statusUpdatingId === t.id && t.status !== 'open' ? 'Updating...' : 'Open'}
                                         </button>
                                         <button
                                             onClick={() => updateStatus(t, 'in_progress')}
+                                            disabled={statusUpdatingId === t.id || t.status === 'in_progress'}
                                             style={{
                                                 padding: '0.25rem 0.5rem',
                                                 borderRadius: 4,
                                                 border: '1px solid #facc15',
                                                 background: 'transparent',
                                                 color: '#facc15',
-                                                cursor: 'pointer',
+                                                cursor: statusUpdatingId === t.id || t.status === 'in_progress' ? 'not-allowed' : 'pointer',
+                                                opacity: statusUpdatingId === t.id || t.status === 'in_progress' ? 0.6 : 1,
                                                 fontSize: '0.75rem'
                                             }}
                                         >
@@ -426,13 +571,15 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                         </button>
                                         <button
                                             onClick={() => updateStatus(t, 'closed')}
+                                            disabled={statusUpdatingId === t.id || t.status === 'closed'}
                                             style={{
                                                 padding: '0.25rem 0.5rem',
                                                 borderRadius: 4,
                                                 border: '1px solid #22c55e',
                                                 background: 'transparent',
                                                 color: '#22c55e',
-                                                cursor: 'pointer',
+                                                cursor: statusUpdatingId === t.id || t.status === 'closed' ? 'not-allowed' : 'pointer',
+                                                opacity: statusUpdatingId === t.id || t.status === 'closed' ? 0.6 : 1,
                                                 fontSize: '0.75rem'
                                             }}
                                         >

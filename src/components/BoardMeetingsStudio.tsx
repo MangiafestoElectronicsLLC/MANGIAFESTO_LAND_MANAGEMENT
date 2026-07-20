@@ -98,6 +98,7 @@ export default function BoardMeetingsStudio() {
     const [email, setEmail] = useState('');
     const [meetings, setMeetings] = useState<BoardMeeting[]>([]);
     const [notesByMeeting, setNotesByMeeting] = useState<Record<string, BoardMeetingNote[]>>({});
+    const [playbackUrls, setPlaybackUrls] = useState<Record<string, string>>({});
     const [selectedMeetingId, setSelectedMeetingId] = useState<string>('');
     const [liveMeetingId, setLiveMeetingId] = useState<string | null>(null);
     const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
@@ -112,6 +113,31 @@ export default function BoardMeetingsStudio() {
     const [error, setError] = useState<string | null>(null);
 
     const isSupabaseMode = storageMode === 'supabase';
+
+    const resolvePlaybackUrl = useCallback(
+        async (meeting: BoardMeeting) => {
+            if (!meeting?.id) {
+                return null;
+            }
+
+            if (!isSupabaseMode) {
+                return meeting.recording_url || null;
+            }
+
+            if (meeting.recording_path) {
+                const { data, error: signedUrlError } = await supabase.storage
+                    .from('board-meetings')
+                    .createSignedUrl(meeting.recording_path, 60 * 60 * 24 * 7);
+
+                if (!signedUrlError && data?.signedUrl) {
+                    return data.signedUrl;
+                }
+            }
+
+            return meeting.recording_url || null;
+        },
+        [isSupabaseMode, supabase]
+    );
 
     const readLocalMeetings = () => {
         const localMeetings = parseJson<BoardMeeting[]>(window.localStorage.getItem(LOCAL_MEETINGS_KEY), []);
@@ -345,6 +371,30 @@ export default function BoardMeetingsStudio() {
     }, [isSupabaseMode, loadMeetings, loadNotes, loadNotesForMeetings, supabase]);
 
     useEffect(() => {
+        void (async () => {
+            const nextUrls: Record<string, string> = {};
+
+            for (const meeting of meetings) {
+                if (!meeting.recording_url && !meeting.recording_path) {
+                    continue;
+                }
+
+                const url = await resolvePlaybackUrl(meeting);
+                if (url) {
+                    nextUrls[meeting.id] = url;
+                }
+            }
+
+            if (Object.keys(nextUrls).length > 0) {
+                setPlaybackUrls(prev => ({
+                    ...prev,
+                    ...nextUrls
+                }));
+            }
+        })();
+    }, [meetings, resolvePlaybackUrl]);
+
+    useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
 
@@ -357,9 +407,11 @@ export default function BoardMeetingsStudio() {
         }
 
         const selectedMeeting = meetings.find(meeting => meeting.id === selectedMeetingId) || null;
-        if (selectedMeeting?.recording_url) {
+        const playbackUrl = selectedMeeting ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url : null;
+
+        if (playbackUrl) {
             video.srcObject = null;
-            video.src = selectedMeeting.recording_url;
+            video.src = playbackUrl;
             video.load();
             return;
         }
@@ -367,7 +419,7 @@ export default function BoardMeetingsStudio() {
         video.srcObject = null;
         video.removeAttribute('src');
         video.load();
-    }, [liveStream, meetings, selectedMeetingId]);
+    }, [liveStream, meetings, playbackUrls, selectedMeetingId]);
 
     const selectedMeeting = useMemo(
         () => meetings.find(meeting => meeting.id === selectedMeetingId) || null,
@@ -876,7 +928,7 @@ export default function BoardMeetingsStudio() {
                         <div style={{ opacity: 0.75, fontSize: '0.92rem' }}>
                             {liveMeetingId
                                 ? 'Live camera preview is active.'
-                                : selectedMeeting?.recording_url
+                                : selectedMeeting && (playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url)
                                     ? 'Playback the selected saved meeting.'
                                     : 'Start a live meeting or select a saved recording below.'}
                         </div>
@@ -895,9 +947,9 @@ export default function BoardMeetingsStudio() {
                     style={{ width: '100%', maxHeight: 420, borderRadius: 18, background: '#020617', border: '1px solid #334155' }}
                 />
 
-                {selectedMeeting?.recording_url && !liveMeetingId && (
+                {(selectedMeeting ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url : null) && !liveMeetingId && (
                     <a
-                        href={selectedMeeting.recording_url}
+                        href={playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url || '#'}
                         download={`${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.webm`}
                         className="soft-button"
                         style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe' }}
@@ -954,6 +1006,15 @@ export default function BoardMeetingsStudio() {
                                     if (isSupabaseMode) {
                                         await loadNotes(meeting.id);
                                     }
+
+                                    const url = await resolvePlaybackUrl(meeting);
+                                    if (url) {
+                                        setPlaybackUrls(prev => ({
+                                            ...prev,
+                                            [meeting.id]: url
+                                        }));
+                                    }
+
                                     setStatusMessage(`Selected ${meeting.title}.`);
                                 }}
                                 className="meetings-card"

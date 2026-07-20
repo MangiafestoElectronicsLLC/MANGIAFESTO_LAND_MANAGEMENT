@@ -201,6 +201,29 @@ canvas {
         width: 100%;
     }
 
+    .auth-form {
+        max-width: 100% !important;
+    }
+
+    .auth-form input,
+    .auth-form button {
+        min-height: 46px;
+    }
+
+    .ticket-item-row {
+        flex-direction: column;
+    }
+
+    .ticket-status-actions {
+        width: 100%;
+        flex-direction: row !important;
+        flex-wrap: wrap;
+    }
+
+    .ticket-status-actions button {
+        flex: 1 1 110px;
+    }
+
     .meetings-studio,
     .meetings-hero,
     .meetings-video-panel,

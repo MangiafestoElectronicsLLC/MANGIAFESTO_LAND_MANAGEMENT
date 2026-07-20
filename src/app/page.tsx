@@ -98,7 +98,7 @@ function AuthPageContent() {
     };
 
     const sendFallbackEmail = async (kind: 'magic' | 'reset') => {
-        const nextEmail = email.trim();
+        const nextEmail = email.trim().toLowerCase();
         if (!nextEmail) {
             setError('Enter your email first.');
             return;
@@ -178,7 +178,7 @@ function AuthPageContent() {
         e.preventDefault();
         setError(null);
         setInfo(null);
-        const nextEmail = email.trim();
+        const nextEmail = email.trim().toLowerCase();
 
         try {
             const supabase = supabaseClient();
@@ -265,6 +265,9 @@ function AuthPageContent() {
                             onChange={e => setEmail(e.target.value)}
                             autoComplete="email"
                             inputMode="email"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
                             required
                             style={{ padding: '0.85rem 0.95rem' }}
                         />
