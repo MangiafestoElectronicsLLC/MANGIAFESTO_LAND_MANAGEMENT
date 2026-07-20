@@ -40,6 +40,7 @@ CREATE TABLE profiles (
 -- Create TICKETS table
 CREATE TABLE tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticket_number TEXT UNIQUE,
   title TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'open',  -- open | in_progress | closed
@@ -61,6 +62,24 @@ CREATE TABLE ticket_history (
   to_status TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Add persisted ticket numbers (TKT-<year>-<sequence>)
+CREATE SEQUENCE IF NOT EXISTS ticket_number_seq START 1000;
+
+CREATE OR REPLACE FUNCTION set_ticket_number()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.ticket_number IS NULL OR btrim(NEW.ticket_number) = '' THEN
+    NEW.ticket_number := 'TKT-' || to_char(COALESCE(NEW.created_at, NOW()), 'YYYY') || '-' || lpad(nextval('ticket_number_seq')::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS tickets_set_ticket_number ON tickets;
+CREATE TRIGGER tickets_set_ticket_number
+BEFORE INSERT ON tickets
+FOR EACH ROW EXECUTE FUNCTION set_ticket_number();
 
 -- Create BOARD MEETINGS tables
 CREATE TABLE board_meetings (
@@ -87,12 +106,49 @@ CREATE TABLE board_meeting_notes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Create PROPERTY MAP tables
+CREATE TABLE property_maps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL DEFAULT 'Family Property Map',
+  address TEXT NOT NULL DEFAULT '825 West Ave, Brockport, NY',
+  center_lat DOUBLE PRECISION NOT NULL DEFAULT 43.2137,
+  center_lng DOUBLE PRECISION NOT NULL DEFAULT -77.9417,
+  base_image_url TEXT,
+  base_image_path TEXT,
+  created_by UUID REFERENCES profiles(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE property_map_features (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  map_id UUID NOT NULL REFERENCES property_maps(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  feature_type TEXT NOT NULL DEFAULT 'note',
+  status TEXT NOT NULL DEFAULT 'planned',
+  description TEXT,
+  x_percent DOUBLE PRECISION NOT NULL DEFAULT 50,
+  y_percent DOUBLE PRECISION NOT NULL DEFAULT 50,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  created_by UUID REFERENCES profiles(id),
+  updated_by UUID REFERENCES profiles(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT property_map_feature_type_chk
+    CHECK (feature_type IN ('build', 'trail', 'gate', 'road', 'utility', 'water', 'note')),
+  CONSTRAINT property_map_feature_status_chk
+    CHECK (status IN ('planned', 'active', 'completed', 'blocked'))
+);
+
 -- Enable Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ticket_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE board_meetings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE board_meeting_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE property_maps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE property_map_features ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for PROFILES
 CREATE POLICY "Users can view their own profile"
@@ -149,6 +205,38 @@ CREATE POLICY "Authenticated users can view meeting notes"
 CREATE POLICY "Authenticated users can insert meeting notes"
   ON board_meeting_notes FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can view property maps"
+  ON property_maps FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can create property maps"
+  ON property_maps FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can update property maps"
+  ON property_maps FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can delete property maps"
+  ON property_maps FOR DELETE
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can view property map features"
+  ON property_map_features FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can create property map features"
+  ON property_map_features FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can update property map features"
+  ON property_map_features FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can delete property map features"
+  ON property_map_features FOR DELETE
+  USING (auth.role() = 'authenticated');
 ```
 
 ---
@@ -163,6 +251,10 @@ CREATE POLICY "Authenticated users can insert meeting notes"
 | `profiles` | User profiles linked to authentication |
 | `tickets` | Tasks/issues with status, priority, and timestamps |
 | `ticket_history` | Audit trail of all ticket changes |
+| `board_meetings` | Meeting recordings and metadata |
+| `board_meeting_notes` | Timestamp notes for meetings |
+| `property_maps` | Property map metadata and base image URL |
+| `property_map_features` | Build/trail markers and planning data |
 
 ### Roles
 
@@ -197,7 +289,15 @@ CREATE POLICY "Authenticated users can insert meeting notes"
 
 3. Add them to your `.env.local` file (see README.md)
 
-4. Run `npm run dev` and test the app!
+4. Run these additional SQL scripts in Supabase SQL Editor:
+  - `supabase/ticket_numbers.sql`
+  - `supabase/board_meetings.sql`
+  - `supabase/property_maps.sql`
+  - `supabase/storage_ticket_images.sql`
+  - `supabase/storage_board_meetings.sql`
+  - `supabase/storage_property_maps.sql`
+
+5. Run `npm run dev` and test the app!
 
 ---
 

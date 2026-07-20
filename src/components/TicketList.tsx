@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
 import type { Role, Ticket, TicketHistoryEvent } from '@/lib/boardTypes';
+import { getTicketNumber } from '@/lib/ticketNumber';
 
 type Props = {
     tickets: Ticket[];
@@ -165,6 +166,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                 {tickets.map(t => (
                     (() => {
                         const attachment = extractAttachment(t.description);
+                        const ticketNumber = getTicketNumber(t);
 
                         return (
                             <div
@@ -254,6 +256,20 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                             </div>
                                         ) : (
                                             <>
+                                                <div
+                                                    style={{
+                                                        width: 'fit-content',
+                                                        marginBottom: '0.3rem',
+                                                        fontSize: '0.69rem',
+                                                        padding: '0.18rem 0.42rem',
+                                                        borderRadius: 999,
+                                                        border: '1px solid #60a5fa',
+                                                        color: '#bfdbfe',
+                                                        background: 'rgba(30, 64, 175, 0.35)'
+                                                    }}
+                                                >
+                                                    {ticketNumber}
+                                                </div>
                                                 <div style={{ fontWeight: 600 }}>{t.title}</div>
                                                 <div
                                                     style={{

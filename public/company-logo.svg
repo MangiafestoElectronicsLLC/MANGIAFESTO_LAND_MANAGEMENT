@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 250" role="img" aria-label="Mangiafesto Electronics logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="250" rx="28" fill="url(#bg)"/>
+  <circle cx="125" cy="125" r="84" fill="none" stroke="url(#ring)" stroke-width="7"/>
+
+  <path d="M82 165V89l43 36 43-36v76" fill="none" stroke="#e2e8f0" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="77" y="104" width="10" height="24" rx="4" fill="#e2e8f0"/>
+  <rect x="162" y="104" width="10" height="24" rx="4" fill="#e2e8f0"/>
+
+  <g fill="#e2e8f0" font-family="'Segoe UI', 'Trebuchet MS', sans-serif" letter-spacing="2">
+    <text x="260" y="113" font-size="32" font-weight="700">MANGIAFESTO</text>
+    <text x="260" y="155" font-size="30" font-weight="400">ELECTRONICS</text>
+  </g>
+</svg>

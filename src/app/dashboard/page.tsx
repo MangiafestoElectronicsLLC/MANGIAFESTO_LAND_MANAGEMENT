@@ -9,6 +9,7 @@ import TicketList from '@/components/TicketList';
 import KanbanBoard from '@/components/KanbanBoard';
 import ActivityFeed from '@/components/ActivityFeed';
 import { loadRolesWithFallback } from '@/lib/roleData';
+import { getTicketNumber } from '@/lib/ticketNumber';
 import {
     STATUS_OPTIONS,
     roleNameToSlug,
@@ -24,6 +25,7 @@ export default function DashboardPage() {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedRoleId, setSelectedRoleId] = useState<string>('all');
     const [selectedStatus, setSelectedStatus] = useState<string>('all');
+    const [ticketSearch, setTicketSearch] = useState<string>('');
     const [boardMode, setBoardMode] = useState<'kanban' | 'list'>('kanban');
     const [pageError, setPageError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -104,6 +106,10 @@ export default function DashboardPage() {
                     .filter(t => t && typeof t.id === 'string')
                     .map(t => ({
                         ...t,
+                        ticket_number:
+                            typeof (t as any).ticket_number === 'string' || (t as any).ticket_number === null
+                                ? (t as any).ticket_number
+                                : null,
                         title: typeof t.title === 'string' ? t.title : 'Untitled ticket',
                         description:
                             typeof t.description === 'string' || t.description === null
@@ -211,12 +217,23 @@ export default function DashboardPage() {
         });
     }, [tickets, selectedRoleId]);
 
-    const statusFilteredTickets = useMemo(() => {
-        if (selectedStatus === 'all') return roleFilteredTickets;
-        return roleFilteredTickets.filter(t => t.status === selectedStatus);
-    }, [roleFilteredTickets, selectedStatus]);
+    const searchedTickets = useMemo(() => {
+        const query = ticketSearch.trim().toLowerCase();
+        if (!query) return roleFilteredTickets;
 
-    const showingCount = boardMode === 'kanban' ? roleFilteredTickets.length : statusFilteredTickets.length;
+        return roleFilteredTickets.filter(ticket => {
+            const ticketNumber = getTicketNumber(ticket).toLowerCase();
+            const haystack = `${ticket.title} ${ticket.description || ''}`.toLowerCase();
+            return haystack.includes(query) || ticketNumber.includes(query);
+        });
+    }, [roleFilteredTickets, ticketSearch]);
+
+    const statusFilteredTickets = useMemo(() => {
+        if (selectedStatus === 'all') return searchedTickets;
+        return searchedTickets.filter(t => t.status === selectedStatus);
+    }, [searchedTickets, selectedStatus]);
+
+    const showingCount = boardMode === 'kanban' ? searchedTickets.length : statusFilteredTickets.length;
 
     const ticketCounts = useMemo(() => {
         return {
@@ -338,6 +355,20 @@ export default function DashboardPage() {
                     >
                         Open System Check
                     </Link>
+                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <Link
+                        href="/dashboard/property-map"
+                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                    >
+                        Open Property Map
+                    </Link>
+                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <Link
+                        href="/dashboard/calendar"
+                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                    >
+                        Open Hunting/Fishing Calendar
+                    </Link>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <button
@@ -426,6 +457,16 @@ export default function DashboardPage() {
                     ))}
                 </div>
 
+                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.86rem' }}>Find tickets by title, notes, or ticket number</div>
+                    <input
+                        value={ticketSearch}
+                        onChange={e => setTicketSearch(e.target.value)}
+                        placeholder="Search tickets or enter a ticket number like TKT-2026-12345"
+                        style={{ padding: '0.55rem 0.7rem', maxWidth: 460 }}
+                    />
+                </div>
+
                 <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.85rem', opacity: 0.9 }}>
                     <span>All: {ticketCounts.all}</span>
                     <span>Open: {ticketCounts.open}</span>
@@ -468,7 +509,7 @@ export default function DashboardPage() {
             <ActivityFeed />
             {boardMode === 'kanban' ? (
                 <KanbanBoard
-                    tickets={roleFilteredTickets}
+                    tickets={searchedTickets}
                     roles={roles}
                     onChanged={refreshTickets}
                 />

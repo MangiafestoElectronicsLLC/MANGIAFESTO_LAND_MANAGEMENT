@@ -67,7 +67,7 @@ canvas {
 }
 
 .app-shell {
-    width: min(1200px, calc(100% - 1.5rem));
+    width: min(1380px, calc(100% - 1.2rem));
     margin: 0 auto;
     padding: 1rem 0 2rem;
 }
@@ -93,8 +93,10 @@ canvas {
 }
 
 .app-brand-row img {
-    border-radius: 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.24);
+    background: #312e81;
 }
 
 .app-brand h1 {
@@ -176,7 +178,7 @@ canvas {
 
 @media (max-width: 760px) {
     .app-shell {
-        width: min(100% - 0.9rem, 1200px);
+        width: min(100% - 0.8rem, 1380px);
         padding-top: 0.75rem;
     }
 

@@ -16,6 +16,7 @@ export type TicketStatus = 'open' | 'in_progress' | 'closed';
 
 export type Ticket = {
     id: string;
+    ticket_number: string | null;
     title: string;
     description: string | null;
     status: TicketStatus;

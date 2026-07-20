@@ -12,7 +12,16 @@ type CheckItem = {
     detail?: string;
 };
 
-const REQUIRED_TABLES = ['roles', 'profiles', 'tickets', 'ticket_history', 'board_meetings', 'board_meeting_notes'];
+const REQUIRED_TABLES = [
+    'roles',
+    'profiles',
+    'tickets',
+    'ticket_history',
+    'board_meetings',
+    'board_meeting_notes',
+    'property_maps',
+    'property_map_features'
+];
 
 const statusColor = (state: CheckState) => {
     if (state === 'ok') return '#22c55e';
@@ -55,6 +64,28 @@ export default function SystemCheckPanel() {
                 label: `Table: ${tableName}`,
                 state: missingTable ? 'missing' : 'warning',
                 detail: error.message
+            });
+        }
+
+        const { error: ticketNumberColumnError } = await supabase
+            .from('tickets')
+            .select('ticket_number', { count: 'exact', head: true });
+
+        if (!ticketNumberColumnError) {
+            items.push({
+                key: 'column:tickets.ticket_number',
+                label: 'Column: tickets.ticket_number',
+                state: 'ok'
+            });
+        } else {
+            const message = (ticketNumberColumnError.message || '').toLowerCase();
+            const missingColumn = message.includes('column') && message.includes('does not exist');
+
+            items.push({
+                key: 'column:tickets.ticket_number',
+                label: 'Column: tickets.ticket_number',
+                state: missingColumn ? 'missing' : 'warning',
+                detail: ticketNumberColumnError.message
             });
         }
 
@@ -103,6 +134,30 @@ export default function SystemCheckPanel() {
                 label: 'Storage bucket: board-meetings',
                 state: missingBucket ? 'missing' : 'warning',
                 detail: meetingsBucketError.message
+            });
+        }
+
+        const { error: propertyMapsBucketError } = await supabase.storage
+            .from('property-maps')
+            .list('', { limit: 1 });
+
+        if (!propertyMapsBucketError) {
+            items.push({
+                key: 'bucket:property-maps',
+                label: 'Storage bucket: property-maps',
+                state: 'ok'
+            });
+        } else {
+            const message = (propertyMapsBucketError.message || '').toLowerCase();
+            const missingBucket =
+                message.includes('bucket not found') ||
+                message.includes('not found');
+
+            items.push({
+                key: 'bucket:property-maps',
+                label: 'Storage bucket: property-maps',
+                state: missingBucket ? 'missing' : 'warning',
+                detail: propertyMapsBucketError.message
             });
         }
 
@@ -193,12 +248,13 @@ export default function SystemCheckPanel() {
                         gap: '0.35rem'
                     }}
                 >
-                    <div style={{ fontWeight: 600 }}>Setup required before ticket creation</div>
+                    <div style={{ fontWeight: 600 }}>Setup required before full board use</div>
                     <div>1. Open Supabase SQL Editor for your active project.</div>
                     <div>2. Run SQL from SUPABASE_SETUP.md.</div>
-                    <div>3. Run SQL from supabase/storage_ticket_images.sql.</div>
-                    <div>4. Run the board meeting SQL files if you want meetings and notes.</div>
-                    <div>5. Back here, click Run check again.</div>
+                    <div>3. Run SQL from supabase/ticket_numbers.sql.</div>
+                    <div>4. Run SQL from supabase/board_meetings.sql and supabase/property_maps.sql.</div>
+                    <div>5. Run SQL from supabase/storage_ticket_images.sql, supabase/storage_board_meetings.sql, and supabase/storage_property_maps.sql.</div>
+                    <div>6. Back here, click Run check again.</div>
                 </div>
             )}
         </div>

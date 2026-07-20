@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 
+type StorageMode = 'supabase' | 'local';
+
 type BoardMeeting = {
     id: string;
     title: string;
@@ -28,6 +30,9 @@ type BoardMeetingNote = {
     created_at: string;
 };
 
+const LOCAL_MEETINGS_KEY = 'family-land-local-meetings';
+const LOCAL_NOTES_KEY = 'family-land-local-meeting-notes';
+
 const SUPPORTED_MIME_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
 const formatSeconds = (totalSeconds: number | null | undefined) => {
@@ -44,6 +49,24 @@ const formatDate = (value: string) =>
         dateStyle: 'medium',
         timeStyle: 'short'
     });
+
+const parseJson = <T,>(raw: string | null, fallback: T) => {
+    if (!raw) return fallback;
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        return fallback;
+    }
+};
+
+const isMissingMeetingSetup = (message: string) => {
+    const lower = message.toLowerCase();
+    return (
+        lower.includes("could not find the table 'public.board_meetings'") ||
+        lower.includes("could not find the table 'public.board_meeting_notes'") ||
+        lower.includes('schema cache')
+    );
+};
 
 const humanizeMediaError = (err: any) => {
     const name = String(err?.name || '').toLowerCase();
@@ -68,6 +91,8 @@ export default function BoardMeetingsStudio() {
     const liveMeetingIdRef = useRef<string | null>(null);
     const liveStartedAtRef = useRef<number>(0);
 
+    const [storageMode, setStorageMode] = useState<StorageMode>('supabase');
+    const [setupNotice, setSetupNotice] = useState<string | null>(null);
     const [profileId, setProfileId] = useState<string | null>(null);
     const [email, setEmail] = useState('');
     const [meetings, setMeetings] = useState<BoardMeeting[]>([]);
@@ -85,18 +110,24 @@ export default function BoardMeetingsStudio() {
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    const humanizeDbError = (message: string) => {
-        const lower = message.toLowerCase();
-        if (lower.includes("could not find the table 'public.board_meetings'")) {
-            return 'Board meetings tables are missing. Run the board meeting SQL setup first.';
-        }
-        if (lower.includes("could not find the table 'public.board_meeting_notes'")) {
-            return 'Meeting notes table is missing. Run the board meeting SQL setup first.';
-        }
-        if (lower.includes('bucket not found') || lower.includes('storage')) {
-            return 'Board meeting storage is missing. Run the storage SQL so videos can be saved.';
-        }
-        return message;
+    const isSupabaseMode = storageMode === 'supabase';
+
+    const readLocalMeetings = () => {
+        const localMeetings = parseJson<BoardMeeting[]>(window.localStorage.getItem(LOCAL_MEETINGS_KEY), []);
+        return localMeetings.filter(meeting => meeting && typeof meeting.id === 'string');
+    };
+
+    const readLocalNotes = () => {
+        const localNotes = parseJson<Record<string, BoardMeetingNote[]>>(window.localStorage.getItem(LOCAL_NOTES_KEY), {});
+        return localNotes || {};
+    };
+
+    const saveLocalMeetings = (nextMeetings: BoardMeeting[]) => {
+        window.localStorage.setItem(LOCAL_MEETINGS_KEY, JSON.stringify(nextMeetings));
+    };
+
+    const saveLocalNotes = (nextNotes: Record<string, BoardMeetingNote[]>) => {
+        window.localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(nextNotes));
     };
 
     const ensureUser = useCallback(async () => {
@@ -130,6 +161,15 @@ export default function BoardMeetingsStudio() {
     }, [router, supabase]);
 
     const loadMeetings = useCallback(async () => {
+        if (!isSupabaseMode) {
+            const localMeetings = readLocalMeetings();
+            setMeetings(localMeetings);
+            if (!selectedMeetingId && localMeetings[0]) {
+                setSelectedMeetingId(localMeetings[0].id);
+            }
+            return localMeetings;
+        }
+
         const { data, error: fetchError } = await supabase
             .from('board_meetings')
             .select('*')
@@ -147,11 +187,17 @@ export default function BoardMeetingsStudio() {
         }
 
         return nextMeetings;
-    }, [selectedMeetingId, supabase]);
+    }, [isSupabaseMode, selectedMeetingId, supabase]);
 
     const loadNotes = useCallback(
         async (meetingId: string) => {
             if (!meetingId) return;
+
+            if (!isSupabaseMode) {
+                const localNotes = readLocalNotes();
+                setNotesByMeeting(localNotes);
+                return;
+            }
 
             const { data, error: fetchError } = await supabase
                 .from('board_meeting_notes')
@@ -168,13 +214,19 @@ export default function BoardMeetingsStudio() {
                 [meetingId]: (data || []) as BoardMeetingNote[]
             }));
         },
-        [supabase]
+        [isSupabaseMode, supabase]
     );
 
     const loadNotesForMeetings = useCallback(
         async (meetingIds: string[]) => {
             const validMeetingIds = Array.from(new Set(meetingIds.filter(Boolean)));
             if (validMeetingIds.length === 0) return;
+
+            if (!isSupabaseMode) {
+                const localNotes = readLocalNotes();
+                setNotesByMeeting(localNotes);
+                return;
+            }
 
             const { data, error: fetchError } = await supabase
                 .from('board_meeting_notes')
@@ -203,7 +255,7 @@ export default function BoardMeetingsStudio() {
                 ...grouped
             }));
         },
-        [supabase]
+        [isSupabaseMode, supabase]
     );
 
     const getMeetingMediaStream = async () => {
@@ -237,7 +289,20 @@ export default function BoardMeetingsStudio() {
                     await loadNotes(nextMeetings[0].id);
                 }
             } catch (err: any) {
-                setError(humanizeDbError(err?.message || 'Board meetings failed to load.'));
+                const message = String(err?.message || 'Board meetings failed to load.');
+                if (isMissingMeetingSetup(message)) {
+                    setStorageMode('local');
+                    setSetupNotice('Supabase board meeting tables are missing, so this page is now running in local browser mode. Run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then refresh to return to full Supabase mode.');
+                    const localMeetings = readLocalMeetings();
+                    const localNotes = readLocalNotes();
+                    setMeetings(localMeetings);
+                    setNotesByMeeting(localNotes);
+                    if (localMeetings[0]) {
+                        setSelectedMeetingId(localMeetings[0].id);
+                    }
+                } else {
+                    setError(message);
+                }
             } finally {
                 setIsLoading(false);
             }
@@ -247,6 +312,8 @@ export default function BoardMeetingsStudio() {
     }, [ensureUser, loadMeetings, loadNotes, loadNotesForMeetings]);
 
     useEffect(() => {
+        if (!isSupabaseMode) return;
+
         const channel = supabase
             .channel('board-meetings-live')
             .on(
@@ -274,7 +341,7 @@ export default function BoardMeetingsStudio() {
         return () => {
             void supabase.removeChannel(channel);
         };
-    }, [loadMeetings, loadNotes, loadNotesForMeetings, supabase]);
+    }, [isSupabaseMode, loadMeetings, loadNotes, loadNotesForMeetings, supabase]);
 
     useEffect(() => {
         const video = videoRef.current;
@@ -332,6 +399,14 @@ export default function BoardMeetingsStudio() {
         }
     };
 
+    const upsertLocalMeeting = (meetingId: string, updater: (meeting: BoardMeeting) => BoardMeeting) => {
+        setMeetings(prev => {
+            const next = prev.map(meeting => (meeting.id === meetingId ? updater(meeting) : meeting));
+            saveLocalMeetings(next);
+            return next;
+        });
+    };
+
     const startMeeting = async () => {
         setError(null);
         setStatusMessage(null);
@@ -348,32 +423,61 @@ export default function BoardMeetingsStudio() {
 
             setIsStarting(true);
             stream = await getMeetingMediaStream();
-            const { data: meeting, error: createError } = await supabase
-                .from('board_meetings')
-                .insert({
+
+            const nowIso = new Date().toISOString();
+            let meeting: BoardMeeting;
+
+            if (isSupabaseMode) {
+                const { data: createdMeeting, error: createError } = await supabase
+                    .from('board_meetings')
+                    .insert({
+                        title: liveTitle.trim() || 'Family Board Meeting',
+                        description: liveDescription.trim() || null,
+                        status: 'live',
+                        started_at: nowIso,
+                        created_by: userId
+                    })
+                    .select('*')
+                    .single();
+
+                if (createError) {
+                    stream.getTracks().forEach(track => track.stop());
+                    throw createError;
+                }
+
+                meeting = createdMeeting as BoardMeeting;
+            } else {
+                meeting = {
+                    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                     title: liveTitle.trim() || 'Family Board Meeting',
                     description: liveDescription.trim() || null,
                     status: 'live',
-                    started_at: new Date().toISOString(),
-                    created_by: userId
-                })
-                .select('*')
-                .single();
+                    started_at: nowIso,
+                    ended_at: null,
+                    recording_url: null,
+                    recording_path: null,
+                    duration_seconds: null,
+                    created_by: userId,
+                    created_at: nowIso,
+                    updated_at: nowIso
+                };
 
-            if (createError) {
-                stream.getTracks().forEach(track => track.stop());
-                throw createError;
+                setMeetings(prev => {
+                    const nextMeetings = [meeting, ...prev.filter(item => item.id !== meeting.id)];
+                    saveLocalMeetings(nextMeetings);
+                    return nextMeetings;
+                });
             }
 
-            liveMeetingIdRef.current = (meeting as BoardMeeting).id;
+            liveMeetingIdRef.current = meeting.id;
             liveStartedAtRef.current = Date.now();
-            setLiveMeetingId((meeting as BoardMeeting).id);
+            setLiveMeetingId(meeting.id);
             setLiveStream(stream);
-            setSelectedMeetingId((meeting as BoardMeeting).id);
-            setMeetings(prev => [(meeting as BoardMeeting), ...prev.filter(item => item.id !== (meeting as BoardMeeting).id)]);
+            setSelectedMeetingId(meeting.id);
+            setMeetings(prev => [meeting, ...prev.filter(item => item.id !== meeting.id)]);
 
             if (!window.MediaRecorder) {
-                setStatusMessage('Live meeting started, but this browser cannot record video. Notes will still save in Supabase.');
+                setStatusMessage('Live meeting started, but this browser cannot record video. Notes still work.');
                 setIsStarting(false);
                 return;
             }
@@ -400,36 +504,49 @@ export default function BoardMeetingsStudio() {
                     chunksRef.current = [];
 
                     if (meetingId && blob.size > 0) {
-                        const filePath = `${userId}/${meetingId}.webm`;
-                        const { error: uploadError } = await supabase.storage
-                            .from('board-meetings')
-                            .upload(filePath, blob, {
-                                contentType: blob.type,
-                                upsert: true
-                            });
+                        if (isSupabaseMode) {
+                            const filePath = `${userId}/${meetingId}.webm`;
+                            const { error: uploadError } = await supabase.storage
+                                .from('board-meetings')
+                                .upload(filePath, blob, {
+                                    contentType: blob.type,
+                                    upsert: true
+                                });
 
-                        let recordingUrl: string | null = null;
-                        if (!uploadError) {
-                            const { data } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
-                            recordingUrl = data.publicUrl;
-                        }
+                            let recordingUrl: string | null = null;
+                            if (!uploadError) {
+                                const { data } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
+                                recordingUrl = data.publicUrl;
+                            }
 
-                        await supabase
-                            .from('board_meetings')
-                            .update({
-                                status: recordingUrl ? 'recorded' : 'completed',
+                            await supabase
+                                .from('board_meetings')
+                                .update({
+                                    status: recordingUrl ? 'recorded' : 'completed',
+                                    ended_at: new Date().toISOString(),
+                                    recording_path: filePath,
+                                    recording_url: recordingUrl,
+                                    duration_seconds: recordedSeconds,
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('id', meetingId);
+
+                            if (uploadError) {
+                                setStatusMessage('Meeting saved, but recording upload failed. Run storage_board_meetings.sql and try again.');
+                            } else {
+                                setStatusMessage('Meeting recording saved. You can play it back and add notes now.');
+                            }
+                        } else {
+                            const localPlaybackUrl = URL.createObjectURL(blob);
+                            upsertLocalMeeting(meetingId, meetingRecord => ({
+                                ...meetingRecord,
+                                status: 'recorded',
                                 ended_at: new Date().toISOString(),
-                                recording_path: filePath,
-                                recording_url: recordingUrl,
+                                recording_url: localPlaybackUrl,
                                 duration_seconds: recordedSeconds,
                                 updated_at: new Date().toISOString()
-                            })
-                            .eq('id', meetingId);
-
-                        if (uploadError) {
-                            setStatusMessage('Meeting saved locally in Supabase, but the recording upload needs the board-meetings storage bucket.');
-                        } else {
-                            setStatusMessage('Meeting recording saved. You can play it back and add notes now.');
+                            }));
+                            setStatusMessage('Meeting saved in local mode. Replay works now on this page.');
                         }
                     }
 
@@ -470,32 +587,43 @@ export default function BoardMeetingsStudio() {
                 recorderRef.current.stop();
                 liveStream?.getTracks().forEach(track => track.stop());
                 setLiveStream(null);
-                setStatusMessage('Finalizing recording upload...');
+                setStatusMessage('Finalizing recording...');
                 return;
             }
 
             if (liveMeetingIdRef.current) {
                 liveStream?.getTracks().forEach(track => track.stop());
 
-                await supabase
-                    .from('board_meetings')
-                    .update({
+                if (isSupabaseMode) {
+                    await supabase
+                        .from('board_meetings')
+                        .update({
+                            status: 'completed',
+                            ended_at: new Date().toISOString(),
+                            duration_seconds: Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000)),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', liveMeetingIdRef.current);
+                } else {
+                    const liveId = liveMeetingIdRef.current;
+                    upsertLocalMeeting(liveId, meetingRecord => ({
+                        ...meetingRecord,
                         status: 'completed',
                         ended_at: new Date().toISOString(),
                         duration_seconds: Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000)),
                         updated_at: new Date().toISOString()
-                    })
-                    .eq('id', liveMeetingIdRef.current);
+                    }));
+                }
 
                 liveMeetingIdRef.current = null;
                 liveStartedAtRef.current = 0;
                 setLiveMeetingId(null);
                 setLiveStream(null);
                 await refreshAfterSave();
-                setStatusMessage('Live meeting ended. Add notes or upload a recording later if needed.');
+                setStatusMessage('Live meeting ended. Add notes or start another recording.');
             }
         } catch (err: any) {
-            setError(humanizeDbError(err?.message || 'Could not stop the meeting.'));
+            setError(String(err?.message || 'Could not stop the meeting.'));
         } finally {
             if (!recorderRef.current || recorderRef.current.state === 'inactive') {
                 setIsStopping(false);
@@ -513,22 +641,44 @@ export default function BoardMeetingsStudio() {
 
         try {
             const noteTime = getPlaybackTime();
-            const { error: insertError } = await supabase.from('board_meeting_notes').insert({
-                meeting_id: meetingId,
-                note: trimmedNote,
-                note_time_seconds: noteTime,
-                created_by: profileId
-            });
 
-            if (insertError) {
-                throw insertError;
+            if (isSupabaseMode) {
+                const { error: insertError } = await supabase.from('board_meeting_notes').insert({
+                    meeting_id: meetingId,
+                    note: trimmedNote,
+                    note_time_seconds: noteTime,
+                    created_by: profileId
+                });
+
+                if (insertError) {
+                    throw insertError;
+                }
+
+                await loadNotes(meetingId);
+            } else {
+                const localNote: BoardMeetingNote = {
+                    id: `local-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    meeting_id: meetingId,
+                    note: trimmedNote,
+                    note_time_seconds: noteTime,
+                    created_by: profileId,
+                    created_at: new Date().toISOString()
+                };
+
+                setNotesByMeeting(prev => {
+                    const nextNotes: Record<string, BoardMeetingNote[]> = {
+                        ...prev,
+                        [meetingId]: [...(prev[meetingId] || []), localNote]
+                    };
+                    saveLocalNotes(nextNotes);
+                    return nextNotes;
+                });
             }
 
             setNoteDraft('');
-            await loadNotes(meetingId);
             setStatusMessage(`Note saved at ${formatSeconds(noteTime)}.`);
         } catch (err: any) {
-            setError(humanizeDbError(err?.message || 'Could not save the note.'));
+            setError(String(err?.message || 'Could not save the note.'));
         } finally {
             setIsSavingNote(false);
         }
@@ -561,7 +711,7 @@ export default function BoardMeetingsStudio() {
                             Live meeting capture and replay
                         </h2>
                         <div style={{ opacity: 0.78, maxWidth: 800 }}>
-                            Start a live session, record it, save it to Supabase storage, and add timestamped notes while live or later during playback.
+                            Start a live session, record it, and add timestamped notes while live or later during playback.
                         </div>
                     </div>
                     <div className="meetings-signin" style={{ display: 'grid', gap: '0.35rem', textAlign: 'right' }}>
@@ -569,6 +719,20 @@ export default function BoardMeetingsStudio() {
                         <div style={{ fontWeight: 700 }}>{email || 'Family Member'}</div>
                     </div>
                 </div>
+
+                {setupNotice && (
+                    <div
+                        style={{
+                            border: '1px solid #d97706',
+                            borderRadius: 10,
+                            background: 'rgba(120, 53, 15, 0.38)',
+                            padding: '0.7rem 0.8rem',
+                            color: '#fde68a'
+                        }}
+                    >
+                        {setupNotice}
+                    </div>
+                )}
 
                 <div className="meetings-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <button onClick={startMeeting} disabled={isStarting || isStopping} className="soft-button" style={{ borderColor: '#2563eb', color: '#dbeafe' }}>
@@ -620,6 +784,17 @@ export default function BoardMeetingsStudio() {
                     style={{ width: '100%', maxHeight: 420, borderRadius: 18, background: '#020617', border: '1px solid #334155' }}
                 />
 
+                {selectedMeeting?.recording_url && !liveMeetingId && (
+                    <a
+                        href={selectedMeeting.recording_url}
+                        download={`${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.webm`}
+                        className="soft-button"
+                        style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe' }}
+                    >
+                        Download recording
+                    </a>
+                )}
+
                 <div className="meetings-notes-compose" style={{ display: 'grid', gap: '0.5rem' }}>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Add a timestamp note</span>
@@ -665,7 +840,9 @@ export default function BoardMeetingsStudio() {
                                 type="button"
                                 onClick={async () => {
                                     setSelectedMeetingId(meeting.id);
-                                    await loadNotes(meeting.id);
+                                    if (isSupabaseMode) {
+                                        await loadNotes(meeting.id);
+                                    }
                                     setStatusMessage(`Selected ${meeting.title}.`);
                                 }}
                                 className="meetings-card"

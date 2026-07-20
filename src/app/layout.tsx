@@ -50,7 +50,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <div className="app-shell">
                     <header className="app-header">
                         <div className="app-brand app-brand-row">
-                            <Image src="/icon.svg" alt="Mangiafesto Electronics logo" width={52} height={52} priority />
+                            <Image src="/company-logo.svg" alt="Mangiafesto Electronics logo" width={180} height={56} priority />
                             <div>
                                 <h1>Family Land Board</h1>
                                 <p>Tickets, roles, meetings, and notes in one place.</p>
@@ -59,6 +59,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         <nav className="app-nav" aria-label="Primary">
                             <Link href="/dashboard">Dashboard</Link>
                             <Link href="/dashboard/tickets">Tickets</Link>
+                            <Link href="/dashboard/property-map">Property Map</Link>
+                            <Link href="/dashboard/calendar">Hunting/Fishing Calendar</Link>
                             <Link href="/dashboard/roles">Roles</Link>
                             <Link href="/dashboard/meetings">Board Meetings</Link>
                             <Link href="/dashboard/system">System Check</Link>

@@ -43,6 +43,18 @@ export default function SystemPage() {
                 >
                     Board Meetings
                 </Link>
+                <Link
+                    href="/dashboard/property-map"
+                    style={{
+                        padding: '0.35rem 0.65rem',
+                        borderRadius: 6,
+                        border: '1px solid #334155',
+                        color: '#cbd5e1',
+                        textDecoration: 'none'
+                    }}
+                >
+                    Property Map
+                </Link>
             </div>
 
             <SystemCheckPanel />

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
 import type { Role, Ticket, TicketStatus } from '@/lib/boardTypes';
+import { getTicketNumber } from '@/lib/ticketNumber';
 
 type Props = {
     tickets: Ticket[];
@@ -11,9 +12,9 @@ type Props = {
 };
 
 const COLUMNS: Array<{ key: TicketStatus; label: string; border: string; bg: string }> = [
-    { key: 'open', label: 'Open', border: '#60a5fa', bg: '#0b2545' },
-    { key: 'in_progress', label: 'In Progress', border: '#facc15', bg: '#3f2e00' },
-    { key: 'closed', label: 'Closed', border: '#34d399', bg: '#0f2f1f' }
+    { key: 'open', label: 'Open', border: '#60a5fa', bg: 'rgba(30, 64, 175, 0.3)' },
+    { key: 'in_progress', label: 'In Progress', border: '#facc15', bg: 'rgba(146, 64, 14, 0.35)' },
+    { key: 'closed', label: 'Closed', border: '#34d399', bg: 'rgba(6, 95, 70, 0.34)' }
 ];
 
 const extractAttachment = (description: string | null) => {
@@ -230,7 +231,7 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))' }}>
+            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
                 {COLUMNS.map(column => (
                     <div
                         key={column.key}
@@ -244,22 +245,25 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                             await updateStatus(ticket, column.key);
                         }}
                         style={{
-                            minHeight: 220,
+                            minHeight: 320,
                             borderRadius: 8,
                             border: `1px solid ${column.border}`,
                             background: column.bg,
-                            padding: '0.6rem'
+                            padding: '0.6rem',
+                            display: 'grid',
+                            gap: '0.5rem'
                         }}
                     >
                         <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
                             {column.label} ({grouped[column.key].length})
                         </div>
 
-                        <div style={{ display: 'grid', gap: '0.5rem' }}>
+                        <div style={{ display: 'grid', gap: '0.5rem', maxHeight: 580, overflowY: 'auto', paddingRight: '0.2rem' }}>
                             {grouped[column.key].map(ticket => {
                                 const attachment = extractAttachment(ticket.description);
                                 const isActive = ticket.id === activeTicketId;
                                 const isSelected = ticket.id === selectedTicketId;
+                                const ticketNumber = getTicketNumber(ticket);
 
                                 return (
                                     <div
@@ -274,13 +278,38 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                                         style={{
                                             borderRadius: 8,
                                             border: isActive || isSelected ? '1px solid #38bdf8' : '1px solid #334155',
-                                            background: '#0b1220',
-                                            padding: '0.55rem',
+                                            background: '#111b30',
+                                            padding: '0.65rem',
                                             cursor: 'grab'
                                         }}
                                     >
+                                        <div style={{ marginBottom: '0.2rem' }}>
+                                            <span
+                                                style={{
+                                                    fontSize: '0.69rem',
+                                                    padding: '0.15rem 0.4rem',
+                                                    borderRadius: 999,
+                                                    border: '1px solid #60a5fa',
+                                                    color: '#bfdbfe',
+                                                    background: 'rgba(30, 64, 175, 0.35)'
+                                                }}
+                                            >
+                                                {ticketNumber}
+                                            </span>
+                                        </div>
                                         <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{ticket.title}</div>
-                                        <div style={{ marginTop: '0.25rem', fontSize: '0.78rem', opacity: 0.82 }}>
+                                        <div
+                                            style={{
+                                                marginTop: '0.25rem',
+                                                fontSize: '0.8rem',
+                                                opacity: 0.92,
+                                                lineHeight: 1.45,
+                                                overflow: 'hidden',
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 3,
+                                                WebkitBoxOrient: 'vertical'
+                                            }}
+                                        >
                                             {attachment.cleanText || 'No description'}
                                         </div>
                                         {attachment.url && (
@@ -290,17 +319,17 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                                                 style={{
                                                     marginTop: '0.45rem',
                                                     width: '100%',
-                                                    maxHeight: 120,
+                                                    maxHeight: 150,
                                                     objectFit: 'cover',
                                                     borderRadius: 6,
                                                     border: '1px solid #334155'
                                                 }}
                                             />
                                         )}
-                                        <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', opacity: 0.76 }}>
+                                        <div style={{ marginTop: '0.4rem', fontSize: '0.74rem', opacity: 0.9 }}>
                                             Priority: {ticket.priority}
                                         </div>
-                                        <div style={{ fontSize: '0.72rem', opacity: 0.76 }}>
+                                        <div style={{ fontSize: '0.74rem', opacity: 0.9 }}>
                                             Role: {ticket.role_id ? roleNameMap.get(ticket.role_id) || 'Unknown role' : 'No role'}
                                         </div>
                                     </div>
