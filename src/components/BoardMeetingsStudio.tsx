@@ -578,6 +578,9 @@ export default function BoardMeetingsStudio() {
             setIsStarting(true);
             stream = await getMeetingMediaStream();
 
+            const audioTracks = stream.getAudioTracks();
+            const hasAudioTrack = audioTracks.length > 0;
+
             const nowIso = new Date().toISOString();
             let meeting: BoardMeeting;
 
@@ -717,7 +720,11 @@ export default function BoardMeetingsStudio() {
             };
 
             recorder.start(1000);
-            setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
+            if (hasAudioTrack) {
+                setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
+            } else {
+                setStatusMessage('Live meeting started, but no microphone audio track was detected. Allow microphone access and restart the meeting if you need audio in recordings.');
+            }
         } catch (err: any) {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
