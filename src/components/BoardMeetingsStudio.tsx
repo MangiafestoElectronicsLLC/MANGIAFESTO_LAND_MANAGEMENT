@@ -466,6 +466,12 @@ export default function BoardMeetingsStudio() {
 
     const currentMeetingId = liveMeetingId || selectedMeeting?.id || meetings[0]?.id || '';
     const currentNotes = currentMeetingId ? notesByMeeting[currentMeetingId] || [] : [];
+    const selectedPlaybackUrl = selectedMeeting
+        ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url || null
+        : null;
+    const selectedDownloadName = selectedMeeting
+        ? `${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.webm`
+        : 'meeting.webm';
 
     const getPlaybackTime = () => {
         if (liveMeetingIdRef.current) {
@@ -990,10 +996,10 @@ export default function BoardMeetingsStudio() {
                     style={{ width: '100%', maxHeight: 420, borderRadius: 18, background: '#020617', border: '1px solid #334155' }}
                 />
 
-                {(selectedMeeting ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url : null) && !liveMeetingId && (
+                {selectedPlaybackUrl && !liveMeetingId && (
                     <a
-                        href={playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url || '#'}
-                        download={`${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.webm`}
+                        href={selectedPlaybackUrl}
+                        download={selectedDownloadName}
                         className="soft-button"
                         style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe' }}
                     >
