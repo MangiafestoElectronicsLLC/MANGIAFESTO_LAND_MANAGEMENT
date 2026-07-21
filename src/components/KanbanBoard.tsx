@@ -31,6 +31,8 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
     const [workNote, setWorkNote] = useState('');
     const [savingNote, setSavingNote] = useState(false);
+    const [actionMessage, setActionMessage] = useState<string | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
     const roleNameMap = useMemo(() => new Map(roles.map(r => [r.id, r.name])), [roles]);
 
     const grouped = useMemo(() => {
@@ -41,33 +43,60 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
         };
     }, [tickets]);
 
+    const insertHistoryEvent = async (payload: {
+        ticket_id: string;
+        action: string;
+        performed_by: string | null;
+        from_status: string;
+        to_status: string;
+    }) => {
+        const { error } = await supabase.from('ticket_history').insert(payload);
+        return !error;
+    };
+
     const updateStatus = async (ticket: Ticket, status: TicketStatus) => {
         if (ticket.status === status) return;
+
+        setActionError(null);
+        setActionMessage(null);
 
         const {
             data: { user }
         } = await supabase.auth.getUser();
-        if (!user) return;
+        if (!user) {
+            setActionError('Your session expired. Sign in again and retry.');
+            return;
+        }
 
         const { data: profile } = await supabase
             .from('profiles')
             .select('id')
             .eq('id', user.id)
-            .single();
+            .maybeSingle();
 
-        await supabase
+        const { error: updateError } = await supabase
             .from('tickets')
             .update({ status, updated_at: new Date().toISOString() })
             .eq('id', ticket.id);
 
-        await supabase.from('ticket_history').insert({
+        if (updateError) {
+            setActionError(updateError.message || 'Could not update ticket status.');
+            return;
+        }
+
+        const wroteHistory = await insertHistoryEvent({
             ticket_id: ticket.id,
             action: 'status_changed',
-            performed_by: profile?.id,
+            performed_by: profile?.id || null,
             from_status: ticket.status,
             to_status: status
         });
 
+        setActionMessage(
+            wroteHistory
+                ? `Status updated to ${status.replace('_', ' ')}.`
+                : `Status updated to ${status.replace('_', ' ')}, but history logging is unavailable right now.`
+        );
         onChanged();
     };
 
@@ -82,7 +111,7 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
             .from('profiles')
             .select('id')
             .eq('id', user.id)
-            .single();
+            .maybeSingle();
 
         return profile?.id || null;
     };
@@ -100,30 +129,45 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
         const note = workNote.trim();
         if (!ticket || !note) return;
 
+        setActionError(null);
+        setActionMessage(null);
         setSavingNote(true);
-        const profileId = await getProfileId();
 
-        const nextDescription = appendWorkEntry(ticket.description, 'work update', note);
+        try {
+            const profileId = await getProfileId();
+            const nextDescription = appendWorkEntry(ticket.description, 'work update', note);
 
-        await supabase
-            .from('tickets')
-            .update({
-                description: nextDescription,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', ticket.id);
+            const { error: updateError } = await supabase
+                .from('tickets')
+                .update({
+                    description: nextDescription,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', ticket.id);
 
-        await supabase.from('ticket_history').insert({
-            ticket_id: ticket.id,
-            action: `work_update: ${note}`,
-            performed_by: profileId,
-            from_status: ticket.status,
-            to_status: ticket.status
-        });
+            if (updateError) {
+                setActionError(updateError.message || 'Could not save work update.');
+                return;
+            }
 
-        setWorkNote('');
-        setSavingNote(false);
-        onChanged();
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: ticket.id,
+                action: `work_update: ${note}`,
+                performed_by: profileId,
+                from_status: ticket.status,
+                to_status: ticket.status
+            });
+
+            setWorkNote('');
+            setActionMessage(
+                wroteHistory
+                    ? 'Work update saved.'
+                    : 'Work update saved, but history logging is unavailable right now.'
+            );
+            onChanged();
+        } finally {
+            setSavingNote(false);
+        }
     };
 
     const completeWithNotes = async () => {
@@ -131,31 +175,46 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
         const note = workNote.trim();
         if (!ticket || !note) return;
 
+        setActionError(null);
+        setActionMessage(null);
         setSavingNote(true);
-        const profileId = await getProfileId();
 
-        const nextDescription = appendWorkEntry(ticket.description, 'finished', note);
+        try {
+            const profileId = await getProfileId();
+            const nextDescription = appendWorkEntry(ticket.description, 'finished', note);
 
-        await supabase
-            .from('tickets')
-            .update({
-                description: nextDescription,
-                status: 'closed',
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', ticket.id);
+            const { error: updateError } = await supabase
+                .from('tickets')
+                .update({
+                    description: nextDescription,
+                    status: 'closed',
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', ticket.id);
 
-        await supabase.from('ticket_history').insert({
-            ticket_id: ticket.id,
-            action: `completed_note: ${note}`,
-            performed_by: profileId,
-            from_status: ticket.status,
-            to_status: 'closed'
-        });
+            if (updateError) {
+                setActionError(updateError.message || 'Could not complete ticket with notes.');
+                return;
+            }
 
-        setWorkNote('');
-        setSavingNote(false);
-        onChanged();
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: ticket.id,
+                action: `completed_note: ${note}`,
+                performed_by: profileId,
+                from_status: ticket.status,
+                to_status: 'closed'
+            });
+
+            setWorkNote('');
+            setActionMessage(
+                wroteHistory
+                    ? 'Ticket completed with notes.'
+                    : 'Ticket completed, but history logging is unavailable right now.'
+            );
+            onChanged();
+        } finally {
+            setSavingNote(false);
+        }
     };
 
     const getTicketById = (ticketId: string) => tickets.find(t => t.id === ticketId);
@@ -172,6 +231,8 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
             }}
         >
             <div style={{ marginBottom: '0.8rem', fontWeight: 600 }}>Kanban Board (drag and drop)</div>
+            {actionError && <div style={{ color: '#fca5a5', fontSize: '0.84rem', marginBottom: '0.65rem' }}>{actionError}</div>}
+            {actionMessage && <div style={{ color: '#86efac', fontSize: '0.84rem', marginBottom: '0.65rem' }}>{actionMessage}</div>}
 
             <div
                 style={{

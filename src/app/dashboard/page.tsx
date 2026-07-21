@@ -10,6 +10,7 @@ import KanbanBoard from '@/components/KanbanBoard';
 import ActivityFeed from '@/components/ActivityFeed';
 import { loadRolesWithFallback } from '@/lib/roleData';
 import { getTicketNumber } from '@/lib/ticketNumber';
+import { isMissingTableSetupError } from '@/lib/supabaseErrors';
 import {
     STATUS_OPTIONS,
     roleNameToSlug,
@@ -34,10 +35,10 @@ export default function DashboardPage() {
     const supabase = supabaseClient();
 
     const humanizeDbError = (message: string) => {
-        const lower = message.toLowerCase();
-        if (lower.includes("could not find the table 'public.tickets'") || lower.includes('schema cache')) {
+        if (isMissingTableSetupError({ message }, ['tickets'])) {
             return 'Database setup missing: run SUPABASE_SETUP.md SQL in this Supabase project, then refresh.';
         }
+        const lower = message.toLowerCase();
         if (lower.includes("could not find the table 'public.roles'")) {
             return 'roles table missing: run SUPABASE_SETUP.md SQL, then refresh.';
         }

@@ -83,14 +83,21 @@ export default function SystemCheckPanel() {
                 (message.includes('column') && message.includes('does not exist')) ||
                 (message.includes('schema cache') && message.includes('ticket_number'));
 
-            items.push({
-                key: 'column:tickets.ticket_number',
-                label: 'Column: tickets.ticket_number',
-                state: missingColumn ? 'missing' : 'warning',
-                detail: missingColumn
-                    ? `${ticketNumberColumnError.message} Run supabase/ticket_numbers.sql in your Supabase SQL Editor.`
-                    : ticketNumberColumnError.message
-            });
+            if (missingColumn) {
+                items.push({
+                    key: 'column:tickets.ticket_number',
+                    label: 'Column: tickets.ticket_number (optional)',
+                    state: 'ok',
+                    detail: 'Optional column is not installed. Client-side fallback ticket numbers are active. Run supabase/ticket_numbers.sql only if you want DB-enforced ticket numbers.'
+                });
+            } else {
+                items.push({
+                    key: 'column:tickets.ticket_number',
+                    label: 'Column: tickets.ticket_number',
+                    state: 'warning',
+                    detail: ticketNumberColumnError.message
+                });
+            }
         }
 
         const { error: bucketError } = await supabase.storage

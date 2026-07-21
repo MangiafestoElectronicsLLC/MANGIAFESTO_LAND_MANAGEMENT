@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
+import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
 
 type StorageMode = 'supabase' | 'local';
 
@@ -55,13 +56,7 @@ const parseJson = <T,>(raw: string | null, fallback: T) => {
     }
 };
 
-const isMissingPropertyMapSetup = (message: string) => {
-    const lower = message.toLowerCase();
-    return (
-        lower.includes("could not find the table 'public.property_maps'") ||
-        lower.includes("could not find the table 'public.property_map_features'")
-    );
-};
+const PROPERTY_MAP_TABLES = ['property_maps', 'property_map_features'];
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
 
@@ -198,8 +193,8 @@ export default function PropertyMapPage() {
                 setProfileId(user.id);
                 await loadMaps();
             } catch (err: any) {
-                const message = String(err?.message || 'Could not load property maps.');
-                if (isMissingPropertyMapSetup(message)) {
+                const message = getSupabaseErrorMessage(err, 'Could not load property maps.');
+                if (isMissingTableSetupError(err, PROPERTY_MAP_TABLES)) {
                     setStorageMode('local');
                     setSetupNotice('Supabase property map tables are missing. Local property map mode is active for this browser. Run supabase/property_maps.sql and supabase/storage_property_maps.sql, then refresh to return to Supabase mode.');
                     const localMaps = readLocalMaps();
@@ -218,6 +213,58 @@ export default function PropertyMapPage() {
 
         bootstrap();
     }, []);
+
+    const retrySupabaseMode = async () => {
+        setError(null);
+        setStatusMessage('Retrying Supabase property map mode...');
+
+        try {
+            const { data: nextMapsData, error: mapsError } = await supabase
+                .from('property_maps')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (mapsError) {
+                throw mapsError;
+            }
+
+            const nextMaps = (nextMapsData || []) as PropertyMap[];
+            const nextSelectedMapId = nextMaps[0]?.id || '';
+
+            let nextFeatures: PropertyMapFeature[] = [];
+            if (nextSelectedMapId) {
+                const { data: nextFeaturesData, error: featuresError } = await supabase
+                    .from('property_map_features')
+                    .select('*')
+                    .eq('map_id', nextSelectedMapId)
+                    .order('created_at', { ascending: true });
+
+                if (featuresError) {
+                    throw featuresError;
+                }
+
+                nextFeatures = (nextFeaturesData || []) as PropertyMapFeature[];
+            }
+
+            setStorageMode('supabase');
+            setSetupNotice(null);
+            setMaps(nextMaps);
+            setSelectedMapId(nextSelectedMapId);
+            setSelectedFeatureId('');
+            setFeatures(nextFeatures);
+            setStatusMessage('Supabase mode restored.');
+        } catch (err: any) {
+            const message = getSupabaseErrorMessage(err, 'Supabase property map mode is still unavailable.');
+            if (isMissingTableSetupError(err, PROPERTY_MAP_TABLES)) {
+                setStorageMode('local');
+                setSetupNotice('Supabase property map tables are still unavailable. Keep using local mode or run supabase/property_maps.sql and supabase/storage_property_maps.sql, then retry.');
+            } else {
+                setStorageMode('supabase');
+                setSetupNotice(null);
+            }
+            setError(message);
+        }
+    };
 
     useEffect(() => {
         if (!selectedMap) return;
@@ -580,10 +627,20 @@ export default function PropertyMapPage() {
                             borderRadius: 10,
                             background: 'rgba(120, 53, 15, 0.38)',
                             padding: '0.65rem 0.8rem',
-                            color: '#fde68a'
+                            color: '#fde68a',
+                            display: 'grid',
+                            gap: '0.5rem'
                         }}
                     >
-                        {setupNotice}
+                        <div>{setupNotice}</div>
+                        <button
+                            type="button"
+                            onClick={retrySupabaseMode}
+                            className="soft-button"
+                            style={{ width: 'fit-content', borderColor: '#f59e0b', color: '#fde68a' }}
+                        >
+                            Retry Supabase mode
+                        </button>
                     </div>
                 )}
 

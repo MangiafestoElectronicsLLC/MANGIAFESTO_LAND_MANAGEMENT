@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
+import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
 
 type StorageMode = 'supabase' | 'local';
 
@@ -59,13 +60,7 @@ const parseJson = <T,>(raw: string | null, fallback: T) => {
     }
 };
 
-const isMissingMeetingSetup = (message: string) => {
-    const lower = message.toLowerCase();
-    return (
-        lower.includes("could not find the table 'public.board_meetings'") ||
-        lower.includes("could not find the table 'public.board_meeting_notes'")
-    );
-};
+const BOARD_MEETING_TABLES = ['board_meetings', 'board_meeting_notes'];
 
 const toMeetingRoomName = (meetingId: string) => `family-land-board-${meetingId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 48)}`;
 
@@ -316,8 +311,8 @@ export default function BoardMeetingsStudio() {
                     await loadNotes(nextMeetings[0].id);
                 }
             } catch (err: any) {
-                const message = String(err?.message || 'Board meetings failed to load.');
-                if (isMissingMeetingSetup(message)) {
+                const message = getSupabaseErrorMessage(err, 'Board meetings failed to load.');
+                if (isMissingTableSetupError(err, BOARD_MEETING_TABLES)) {
                     setStorageMode('local');
                     setSetupNotice('Supabase board meeting tables are missing, so this page is now running in local browser mode. Run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then refresh to return to full Supabase mode.');
                     const localMeetings = readLocalMeetings();
@@ -514,9 +509,14 @@ export default function BoardMeetingsStudio() {
             }
             setStatusMessage('Supabase mode restored.');
         } catch (err: any) {
-            const message = String(err?.message || 'Supabase mode still unavailable.');
-            setStorageMode('local');
-            setSetupNotice('Supabase board meeting tables are still unavailable. Keep using local mode or run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then retry.');
+            const message = getSupabaseErrorMessage(err, 'Supabase mode still unavailable.');
+            if (isMissingTableSetupError(err, BOARD_MEETING_TABLES)) {
+                setStorageMode('local');
+                setSetupNotice('Supabase board meeting tables are still unavailable. Keep using local mode or run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then retry.');
+            } else {
+                setStorageMode('supabase');
+                setSetupNotice(null);
+            }
             setError(message);
         }
     };

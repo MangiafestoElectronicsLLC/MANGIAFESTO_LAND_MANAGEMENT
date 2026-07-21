@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { isUuid, type Role } from '@/lib/boardTypes';
+import { isMissingTableSetupError } from '@/lib/supabaseErrors';
 
 type Props = {
     roles: Role[];
@@ -43,10 +44,10 @@ export default function TicketForm({ roles, onCreated }: Props) {
     };
 
     const humanizeDbError = (message: string) => {
-        const lower = message.toLowerCase();
-        if (lower.includes("could not find the table 'public.tickets'") || lower.includes('schema cache')) {
+        if (isMissingTableSetupError({ message }, ['tickets'])) {
             return 'Database setup is incomplete in this Supabase project. Run the SQL in SUPABASE_SETUP.md, then refresh.';
         }
+        const lower = message.toLowerCase();
         if (lower.includes("could not find the table 'public.ticket_history'")) {
             return 'ticket_history table is missing. Run the SQL in SUPABASE_SETUP.md, then refresh.';
         }

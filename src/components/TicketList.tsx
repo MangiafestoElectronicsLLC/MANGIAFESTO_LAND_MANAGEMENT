@@ -37,6 +37,17 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
 
     const roleNameMap = new Map(roles.map(r => [r.id, r.name]));
 
+    const insertHistoryEvent = async (payload: {
+        ticket_id: string;
+        action: string;
+        performed_by: string | null;
+        from_status?: string | null;
+        to_status?: string | null;
+    }) => {
+        const { error } = await supabase.from('ticket_history').insert(payload);
+        return !error;
+    };
+
     const updateStatus = async (ticket: Ticket, status: string) => {
         setEditError(null);
         setEditMessage(null);
@@ -55,7 +66,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             .from('profiles')
             .select('id')
             .eq('id', user.id)
-            .single();
+            .maybeSingle();
 
         const { error: updateError } = await supabase
             .from('tickets')
@@ -68,16 +79,16 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             return;
         }
 
-        await supabase.from('ticket_history').insert({
+        const wroteHistory = await insertHistoryEvent({
             ticket_id: ticket.id,
             action: 'status_changed',
-            performed_by: profile?.id,
+            performed_by: profile?.id || null,
             from_status: ticket.status,
             to_status: status
         });
 
         setStatusUpdatingId(null);
-        setEditMessage('Status updated.');
+        setEditMessage(wroteHistory ? 'Status updated.' : 'Status updated, but history logging is unavailable right now.');
         onChanged();
     };
 
@@ -162,7 +173,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             .from('profiles')
             .select('id')
             .eq('id', user.id)
-            .single();
+            .maybeSingle();
 
         const { error } = await supabase
             .from('tickets')
@@ -181,17 +192,17 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             return;
         }
 
-        await supabase.from('ticket_history').insert({
+        const wroteHistory = await insertHistoryEvent({
             ticket_id: ticket.id,
             action: 'updated',
-            performed_by: profile?.id,
+            performed_by: profile?.id || null,
             from_status: ticket.status,
             to_status: ticket.status
         });
 
         cancelEdit();
         setSavingTicketId(null);
-        setEditMessage('Ticket updated.');
+        setEditMessage(wroteHistory ? 'Ticket updated.' : 'Ticket updated, but history logging is unavailable right now.');
         onChanged();
     };
 
