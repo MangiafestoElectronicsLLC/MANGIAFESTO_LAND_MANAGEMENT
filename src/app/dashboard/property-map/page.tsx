@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
-import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
+import { getSupabaseErrorCode, getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
+import ConnectionDiagnostics from '@/components/ConnectionDiagnostics';
 
 type StorageMode = 'supabase' | 'local';
 
@@ -92,6 +93,10 @@ export default function PropertyMapPage() {
     const [savingFeature, setSavingFeature] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [diagnosticLastOperation, setDiagnosticLastOperation] = useState('Startup checks');
+    const [diagnosticLastUpdatedAt, setDiagnosticLastUpdatedAt] = useState<string | null>(null);
+    const [diagnosticErrorCode, setDiagnosticErrorCode] = useState<string | null>(null);
+    const [diagnosticErrorMessage, setDiagnosticErrorMessage] = useState<string | null>(null);
 
     const selectedMap = useMemo(
         () => maps.find(map => map.id === selectedMapId) || null,
@@ -102,6 +107,23 @@ export default function PropertyMapPage() {
         () => features.find(feature => feature.id === selectedFeatureId) || null,
         [features, selectedFeatureId]
     );
+
+    const setDiagnosticSuccess = (operation: string) => {
+        setDiagnosticLastOperation(operation);
+        setDiagnosticLastUpdatedAt(new Date().toISOString());
+        setDiagnosticErrorCode(null);
+        setDiagnosticErrorMessage(null);
+    };
+
+    const setDiagnosticFailure = (operation: string, err: unknown, fallbackMessage: string) => {
+        const message = getSupabaseErrorMessage(err, fallbackMessage);
+        const code = getSupabaseErrorCode(err);
+        setDiagnosticLastOperation(operation);
+        setDiagnosticLastUpdatedAt(new Date().toISOString());
+        setDiagnosticErrorCode(code);
+        setDiagnosticErrorMessage(message);
+        return message;
+    };
 
     const readLocalMaps = () =>
         parseJson<PropertyMap[]>(window.localStorage.getItem(LOCAL_PROPERTY_MAPS_KEY), []);
@@ -192,8 +214,9 @@ export default function PropertyMapPage() {
 
                 setProfileId(user.id);
                 await loadMaps();
+                setDiagnosticSuccess('Load maps and features');
             } catch (err: any) {
-                const message = getSupabaseErrorMessage(err, 'Could not load property maps.');
+                const message = setDiagnosticFailure('Load maps and features', err, 'Could not load property maps.');
                 if (isMissingTableSetupError(err, PROPERTY_MAP_TABLES)) {
                     setStorageMode('local');
                     setSetupNotice('Supabase property map tables are missing. Local property map mode is active for this browser. Run supabase/property_maps.sql and supabase/storage_property_maps.sql, then refresh to return to Supabase mode.');
@@ -252,9 +275,10 @@ export default function PropertyMapPage() {
             setSelectedMapId(nextSelectedMapId);
             setSelectedFeatureId('');
             setFeatures(nextFeatures);
+            setDiagnosticSuccess('Retry Supabase mode');
             setStatusMessage('Supabase mode restored.');
         } catch (err: any) {
-            const message = getSupabaseErrorMessage(err, 'Supabase property map mode is still unavailable.');
+            const message = setDiagnosticFailure('Retry Supabase mode', err, 'Supabase property map mode is still unavailable.');
             if (isMissingTableSetupError(err, PROPERTY_MAP_TABLES)) {
                 setStorageMode('local');
                 setSetupNotice('Supabase property map tables are still unavailable. Keep using local mode or run supabase/property_maps.sql and supabase/storage_property_maps.sql, then retry.');
@@ -620,6 +644,14 @@ export default function PropertyMapPage() {
 
                 {statusMessage && <div style={{ color: '#86efac' }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5' }}>{error}</div>}
+                <ConnectionDiagnostics
+                    mode={storageMode}
+                    contextLabel="Property map"
+                    lastOperation={diagnosticLastOperation}
+                    lastUpdatedAt={diagnosticLastUpdatedAt}
+                    errorCode={diagnosticErrorCode}
+                    errorMessage={diagnosticErrorMessage}
+                />
                 {setupNotice && (
                     <div
                         style={{

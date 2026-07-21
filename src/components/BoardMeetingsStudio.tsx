@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
-import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
+import { getSupabaseErrorCode, getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
+import ConnectionDiagnostics from '@/components/ConnectionDiagnostics';
 
 type StorageMode = 'supabase' | 'local';
 
@@ -106,8 +107,29 @@ export default function BoardMeetingsStudio() {
     const [isSavingNote, setIsSavingNote] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [diagnosticLastOperation, setDiagnosticLastOperation] = useState('Startup checks');
+    const [diagnosticLastUpdatedAt, setDiagnosticLastUpdatedAt] = useState<string | null>(null);
+    const [diagnosticErrorCode, setDiagnosticErrorCode] = useState<string | null>(null);
+    const [diagnosticErrorMessage, setDiagnosticErrorMessage] = useState<string | null>(null);
 
     const isSupabaseMode = storageMode === 'supabase';
+
+    const setDiagnosticSuccess = (operation: string) => {
+        setDiagnosticLastOperation(operation);
+        setDiagnosticLastUpdatedAt(new Date().toISOString());
+        setDiagnosticErrorCode(null);
+        setDiagnosticErrorMessage(null);
+    };
+
+    const setDiagnosticFailure = (operation: string, err: unknown, fallbackMessage: string) => {
+        const message = getSupabaseErrorMessage(err, fallbackMessage);
+        const code = getSupabaseErrorCode(err);
+        setDiagnosticLastOperation(operation);
+        setDiagnosticLastUpdatedAt(new Date().toISOString());
+        setDiagnosticErrorCode(code);
+        setDiagnosticErrorMessage(message);
+        return message;
+    };
 
     const resolvePlaybackUrl = useCallback(
         async (meeting: BoardMeeting) => {
@@ -305,13 +327,14 @@ export default function BoardMeetingsStudio() {
                 await ensureUser();
                 const nextMeetings = await loadMeetings();
                 await loadNotesForMeetings(nextMeetings.map(meeting => meeting.id));
+                setDiagnosticSuccess('Load meetings and notes');
 
                 if (nextMeetings[0]) {
                     setSelectedMeetingId(nextMeetings[0].id);
                     await loadNotes(nextMeetings[0].id);
                 }
             } catch (err: any) {
-                const message = getSupabaseErrorMessage(err, 'Board meetings failed to load.');
+                const message = setDiagnosticFailure('Load meetings and notes', err, 'Board meetings failed to load.');
                 if (isMissingTableSetupError(err, BOARD_MEETING_TABLES)) {
                     setStorageMode('local');
                     setSetupNotice('Supabase board meeting tables are missing, so this page is now running in local browser mode. Run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then refresh to return to full Supabase mode.');
@@ -504,12 +527,13 @@ export default function BoardMeetingsStudio() {
             setStorageMode('supabase');
             setMeetings(nextMeetings);
             setNotesByMeeting(grouped);
+            setDiagnosticSuccess('Retry Supabase mode');
             if (nextMeetings[0]) {
                 setSelectedMeetingId(nextMeetings[0].id);
             }
             setStatusMessage('Supabase mode restored.');
         } catch (err: any) {
-            const message = getSupabaseErrorMessage(err, 'Supabase mode still unavailable.');
+            const message = setDiagnosticFailure('Retry Supabase mode', err, 'Supabase mode still unavailable.');
             if (isMissingTableSetupError(err, BOARD_MEETING_TABLES)) {
                 setStorageMode('local');
                 setSetupNotice('Supabase board meeting tables are still unavailable. Keep using local mode or run supabase/board_meetings.sql and supabase/storage_board_meetings.sql, then retry.');
@@ -882,6 +906,15 @@ export default function BoardMeetingsStudio() {
 
                 {statusMessage && <div style={{ color: '#86efac', lineHeight: 1.5 }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5', lineHeight: 1.5 }}>{error}</div>}
+
+                <ConnectionDiagnostics
+                    mode={storageMode}
+                    contextLabel="Board meetings"
+                    lastOperation={diagnosticLastOperation}
+                    lastUpdatedAt={diagnosticLastUpdatedAt}
+                    errorCode={diagnosticErrorCode}
+                    errorMessage={diagnosticErrorMessage}
+                />
             </section>
 
             {activeRoomUrl && (

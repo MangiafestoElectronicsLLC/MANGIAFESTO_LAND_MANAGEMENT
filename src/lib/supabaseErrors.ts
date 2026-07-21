@@ -31,6 +31,17 @@ export const getSupabaseErrorMessage = (error: unknown, fallback = 'Unknown Supa
     return fallback;
 };
 
+export const getSupabaseErrorCode = (error: unknown) => {
+    if (!error || typeof error !== 'object') return null;
+
+    const code = (error as SupabaseLikeError).code;
+    if (typeof code === 'string' && code.trim()) {
+        return code;
+    }
+
+    return null;
+};
+
 export const isMissingTableSetupError = (error: unknown, tables: string[]) => {
     const message = getSupabaseErrorMessage(error, '').toLowerCase();
     const code = String((error as SupabaseLikeError | undefined)?.code || '').toUpperCase();
