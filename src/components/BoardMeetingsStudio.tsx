@@ -366,8 +366,12 @@ export default function BoardMeetingsStudio() {
                 { event: '*', schema: 'public', table: 'board_meetings' },
                 () => {
                     void (async () => {
-                        const updatedMeetings = await loadMeetings();
-                        await loadNotesForMeetings(updatedMeetings.map(meeting => meeting.id));
+                        try {
+                            const updatedMeetings = await loadMeetings();
+                            await loadNotesForMeetings(updatedMeetings.map(meeting => meeting.id));
+                        } catch (err: any) {
+                            setError(String(err?.message || 'Realtime board meeting sync failed.'));
+                        }
                     })();
                 }
             )
@@ -377,7 +381,13 @@ export default function BoardMeetingsStudio() {
                 payload => {
                     const meetingId = payload.new && 'meeting_id' in payload.new ? String(payload.new.meeting_id) : '';
                     if (meetingId) {
-                        void loadNotes(meetingId);
+                        void (async () => {
+                            try {
+                                await loadNotes(meetingId);
+                            } catch (err: any) {
+                                setError(String(err?.message || 'Realtime meeting notes sync failed.'));
+                            }
+                        })();
                     }
                 }
             )
@@ -1075,7 +1085,10 @@ export default function BoardMeetingsStudio() {
                                     </div>
                                 </div>
                                 <div style={{ marginTop: '0.55rem', fontSize: '0.88rem', opacity: 0.8 }}>
-                                    {meeting.recording_url ? 'Recording available for replay.' : 'No uploaded recording yet.'} {meetingNotes.length} notes.
+                                    {meeting.recording_url || meeting.recording_path || playbackUrls[meeting.id]
+                                        ? 'Recording available for replay.'
+                                        : 'No uploaded recording yet.'}{' '}
+                                    {meetingNotes.length} notes.
                                 </div>
                             </button>
                         );

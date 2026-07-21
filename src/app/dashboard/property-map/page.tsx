@@ -498,8 +498,22 @@ export default function PropertyMapPage() {
         try {
             const xPercent = Number(featureX);
             const yPercent = Number(featureY);
+            const parsedLat = featureLat.trim() ? Number(featureLat) : null;
+            const parsedLng = featureLng.trim() ? Number(featureLng) : null;
             if (!Number.isFinite(xPercent) || !Number.isFinite(yPercent)) {
                 setError('Marker X/Y percentages must be valid numbers.');
+                setSavingFeature(false);
+                return;
+            }
+
+            if (parsedLat !== null && !Number.isFinite(parsedLat)) {
+                setError('Feature latitude must be a valid number when provided.');
+                setSavingFeature(false);
+                return;
+            }
+
+            if (parsedLng !== null && !Number.isFinite(parsedLng)) {
+                setError('Feature longitude must be a valid number when provided.');
                 setSavingFeature(false);
                 return;
             }
@@ -512,8 +526,8 @@ export default function PropertyMapPage() {
                 description: featureDescription.trim() || null,
                 x_percent: Math.min(100, Math.max(0, xPercent)),
                 y_percent: Math.min(100, Math.max(0, yPercent)),
-                lat: featureLat.trim() ? Number(featureLat) : null,
-                lng: featureLng.trim() ? Number(featureLng) : null,
+                lat: parsedLat,
+                lng: parsedLng,
                 created_by: profileId,
                 updated_by: profileId
             };

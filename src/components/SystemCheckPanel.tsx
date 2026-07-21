@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
+import { isMissingTableSetupError } from '@/lib/supabaseErrors';
 
 type CheckState = 'ok' | 'missing' | 'warning' | 'checking';
 
@@ -53,11 +54,7 @@ export default function SystemCheckPanel() {
                 continue;
             }
 
-            const message = (error.message || '').toLowerCase();
-            const missingTable =
-                message.includes('does not exist') ||
-                message.includes('schema cache') ||
-                message.includes('could not find the table');
+            const missingTable = isMissingTableSetupError(error, [tableName]);
 
             items.push({
                 key: `table:${tableName}`,
@@ -81,7 +78,8 @@ export default function SystemCheckPanel() {
             const message = (ticketNumberColumnError.message || '').toLowerCase();
             const missingColumn =
                 (message.includes('column') && message.includes('does not exist')) ||
-                (message.includes('schema cache') && message.includes('ticket_number'));
+                (message.includes('schema cache') && message.includes('ticket_number')) ||
+                (message.includes('could not find') && message.includes('ticket_number'));
 
             if (missingColumn) {
                 items.push({

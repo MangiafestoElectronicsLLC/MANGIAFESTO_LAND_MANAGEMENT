@@ -19,6 +19,12 @@ const extractAttachment = (description: string | null) => {
     return { url, cleanText };
 };
 
+const attachDescription = (descriptionText: string, attachmentUrl: string | null) => {
+    const clean = descriptionText.trim();
+    if (!attachmentUrl) return clean;
+    return clean ? `${clean}\n\n[attachment] ${attachmentUrl}` : `[attachment] ${attachmentUrl}`;
+};
+
 export default function TicketList({ tickets, roles, onChanged }: Props) {
     const supabase = supabaseClient();
     const [editingTicketId, setEditingTicketId] = useState<string | null>(null);
@@ -53,43 +59,46 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
         setEditMessage(null);
         setStatusUpdatingId(ticket.id);
 
-        const {
-            data: { user }
-        } = await supabase.auth.getUser();
-        if (!user) {
+        try {
+            const {
+                data: { user }
+            } = await supabase.auth.getUser();
+            if (!user) {
+                setEditError('Your session expired. Sign in again and retry.');
+                return;
+            }
+
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('id', user.id)
+                .maybeSingle();
+
+            const { error: updateError } = await supabase
+                .from('tickets')
+                .update({ status, updated_at: new Date().toISOString() })
+                .eq('id', ticket.id);
+
+            if (updateError) {
+                setEditError(updateError.message || 'Could not update ticket status.');
+                return;
+            }
+
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: ticket.id,
+                action: 'status_changed',
+                performed_by: profile?.id || null,
+                from_status: ticket.status,
+                to_status: status
+            });
+
+            setEditMessage(wroteHistory ? 'Status updated.' : 'Status updated, but history logging is unavailable right now.');
+            onChanged();
+        } catch (err: any) {
+            setEditError(err?.message || 'Could not update ticket status.');
+        } finally {
             setStatusUpdatingId(null);
-            setEditError('Your session expired. Sign in again and retry.');
-            return;
         }
-
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', user.id)
-            .maybeSingle();
-
-        const { error: updateError } = await supabase
-            .from('tickets')
-            .update({ status, updated_at: new Date().toISOString() })
-            .eq('id', ticket.id);
-
-        if (updateError) {
-            setStatusUpdatingId(null);
-            setEditError(updateError.message || 'Could not update ticket status.');
-            return;
-        }
-
-        const wroteHistory = await insertHistoryEvent({
-            ticket_id: ticket.id,
-            action: 'status_changed',
-            performed_by: profile?.id || null,
-            from_status: ticket.status,
-            to_status: status
-        });
-
-        setStatusUpdatingId(null);
-        setEditMessage(wroteHistory ? 'Status updated.' : 'Status updated, but history logging is unavailable right now.');
-        onChanged();
     };
 
     const formatStatusLabel = (status: string) => {
@@ -136,7 +145,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
         setEditMessage(null);
         setEditingTicketId(ticket.id);
         setDraftTitle(ticket.title);
-        setDraftDescription(ticket.description || '');
+        setDraftDescription(extractAttachment(ticket.description).cleanText);
         setDraftPriority(ticket.priority || 'normal');
         setDraftRoleId(ticket.role_id || '');
     };
@@ -160,66 +169,79 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
 
         setSavingTicketId(ticket.id);
 
-        const {
-            data: { user }
-        } = await supabase.auth.getUser();
-        if (!user) {
+        try {
+            const {
+                data: { user }
+            } = await supabase.auth.getUser();
+            if (!user) {
+                setEditError('Your session expired. Sign in again and retry.');
+                return;
+            }
+
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('id', user.id)
+                .maybeSingle();
+
+            const existingAttachmentUrl = extractAttachment(ticket.description).url;
+
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    title: draftTitle.trim() || ticket.title,
+                    description: attachDescription(draftDescription, existingAttachmentUrl),
+                    priority: draftPriority,
+                    role_id: draftRoleId || null,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', ticket.id);
+
+            if (error) {
+                setEditError(error.message || 'Could not save ticket changes.');
+                return;
+            }
+
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: ticket.id,
+                action: 'updated',
+                performed_by: profile?.id || null,
+                from_status: ticket.status,
+                to_status: ticket.status
+            });
+
+            cancelEdit();
+            setEditMessage(wroteHistory ? 'Ticket updated.' : 'Ticket updated, but history logging is unavailable right now.');
+            onChanged();
+        } catch (err: any) {
+            setEditError(err?.message || 'Could not save ticket changes.');
+        } finally {
             setSavingTicketId(null);
-            setEditError('Your session expired. Sign in again and retry.');
-            return;
         }
-
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', user.id)
-            .maybeSingle();
-
-        const { error } = await supabase
-            .from('tickets')
-            .update({
-                title: draftTitle.trim() || ticket.title,
-                description: draftDescription,
-                priority: draftPriority,
-                role_id: draftRoleId || null,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', ticket.id);
-
-        if (error) {
-            setSavingTicketId(null);
-            setEditError(error.message || 'Could not save ticket changes.');
-            return;
-        }
-
-        const wroteHistory = await insertHistoryEvent({
-            ticket_id: ticket.id,
-            action: 'updated',
-            performed_by: profile?.id || null,
-            from_status: ticket.status,
-            to_status: ticket.status
-        });
-
-        cancelEdit();
-        setSavingTicketId(null);
-        setEditMessage(wroteHistory ? 'Ticket updated.' : 'Ticket updated, but history logging is unavailable right now.');
-        onChanged();
     };
 
     const loadHistory = async (ticketId: string) => {
         setHistoryLoadingId(ticketId);
-        const { data } = await supabase
-            .from('ticket_history')
-            .select('id, ticket_id, action, performed_by, from_status, to_status, created_at')
-            .eq('ticket_id', ticketId)
-            .order('created_at', { ascending: false })
-            .limit(25);
+        try {
+            const { data, error } = await supabase
+                .from('ticket_history')
+                .select('id, ticket_id, action, performed_by, from_status, to_status, created_at')
+                .eq('ticket_id', ticketId)
+                .order('created_at', { ascending: false })
+                .limit(25);
 
-        setHistoryByTicket(prev => ({
-            ...prev,
-            [ticketId]: (data || []) as TicketHistoryEvent[]
-        }));
-        setHistoryLoadingId(null);
+            if (error) {
+                setEditError(error.message || 'Could not load ticket history.');
+                return;
+            }
+
+            setHistoryByTicket(prev => ({
+                ...prev,
+                [ticketId]: (data || []) as TicketHistoryEvent[]
+            }));
+        } finally {
+            setHistoryLoadingId(null);
+        }
     };
 
     const toggleHistory = async (ticketId: string) => {

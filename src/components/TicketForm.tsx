@@ -22,6 +22,26 @@ export default function TicketForm({ roles, onCreated }: Props) {
 
     const supabase = supabaseClient();
 
+    const upsertProfileIfMissing = async (userId: string, userEmail: string | null) => {
+        const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (profileData?.id) {
+            return profileData.id;
+        }
+
+        await supabase.from('profiles').upsert({
+            id: userId,
+            full_name: userEmail,
+            role_id: null
+        });
+
+        return userId;
+    };
+
     const detectRoleId = (nextTitle: string, nextDescription: string) => {
         const text = `${nextTitle} ${nextDescription}`.toLowerCase();
         const groundsRole = roles.find(role => role.name.toLowerCase() === 'grounds')?.id || null;
@@ -63,85 +83,83 @@ export default function TicketForm({ roles, onCreated }: Props) {
         setError(null);
         setMessage(null);
 
-        const {
-            data: { user }
-        } = await supabase.auth.getUser();
-        if (!user) {
-            setError('Please sign in again.');
-            setLoading(false);
-            return;
-        }
-
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', user.id)
-            .single();
-
-        let uploadedImageUrl: string | null = null;
-
-        if (file) {
-            const extension = file.name.split('.').pop() || 'jpg';
-            const filePath = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
-
-            const { error: uploadError } = await supabase.storage
-                .from('ticket-images')
-                .upload(filePath, file, { upsert: false });
-
-            if (uploadError) {
-                // Keep ticket creation working even if optional image storage is not configured yet.
-                setMessage('Image upload skipped. Create Supabase bucket "ticket-images" to enable attachments.');
-                uploadedImageUrl = null;
-            } else {
-                const { data: publicData } = supabase.storage
-                    .from('ticket-images')
-                    .getPublicUrl(filePath);
-
-                uploadedImageUrl = publicData.publicUrl;
+        try {
+            const {
+                data: { user }
+            } = await supabase.auth.getUser();
+            if (!user) {
+                setError('Please sign in again.');
+                return;
             }
-        }
 
-        const finalDescription = uploadedImageUrl
-            ? `${description}\n\n[attachment] ${uploadedImageUrl}`
-            : description;
+            const profileId = await upsertProfileIfMissing(user.id, user.email || null);
+            let uploadedImageUrl: string | null = null;
 
-        const detectedRoleId = detectRoleId(title, description);
-        const safeRoleId = isUuid(roleId) ? roleId : isUuid(detectedRoleId) ? detectedRoleId : null;
+            if (file) {
+                const extension = file.name.split('.').pop() || 'jpg';
+                const filePath = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
 
-        const { data, error } = await supabase
-            .from('tickets')
-            .insert({
-                title,
-                description: finalDescription,
-                role_id: safeRoleId,
-                priority,
-                created_by: profile?.id
-            })
-            .select()
-            .single();
+                const { error: uploadError } = await supabase.storage
+                    .from('ticket-images')
+                    .upload(filePath, file, { upsert: false });
 
-        if (error) {
-            setError(humanizeDbError(error.message || 'Failed to create ticket.'));
+                if (uploadError) {
+                    // Keep ticket creation working even if optional image storage is not configured yet.
+                    setMessage('Image upload skipped. Create Supabase bucket "ticket-images" to enable attachments.');
+                    uploadedImageUrl = null;
+                } else {
+                    const { data: publicData } = supabase.storage
+                        .from('ticket-images')
+                        .getPublicUrl(filePath);
+
+                    uploadedImageUrl = publicData.publicUrl;
+                }
+            }
+
+            const finalDescription = uploadedImageUrl
+                ? `${description}\n\n[attachment] ${uploadedImageUrl}`
+                : description;
+
+            const detectedRoleId = detectRoleId(title, description);
+            const safeRoleId = isUuid(roleId) ? roleId : isUuid(detectedRoleId) ? detectedRoleId : null;
+
+            const { data, error } = await supabase
+                .from('tickets')
+                .insert({
+                    title: title.trim() || 'Untitled ticket',
+                    description: finalDescription,
+                    role_id: safeRoleId,
+                    priority,
+                    created_by: profileId
+                })
+                .select()
+                .single();
+
+            if (error) {
+                setError(humanizeDbError(error.message || 'Failed to create ticket.'));
+                return;
+            }
+
+            if (data) {
+                await supabase.from('ticket_history').insert({
+                    ticket_id: data.id,
+                    action: 'created',
+                    performed_by: profileId
+                });
+            }
+
+            setTitle('');
+            setDescription('');
+            setRoleId('');
+            setPriority('normal');
+            setFile(null);
+            setMessage('Ticket created successfully.');
+            onCreated();
+        } catch (err: any) {
+            setError(humanizeDbError(err?.message || 'Failed to create ticket.'));
+        } finally {
             setLoading(false);
-            return;
         }
-
-        if (data) {
-            await supabase.from('ticket_history').insert({
-                ticket_id: data.id,
-                action: 'created',
-                performed_by: profile?.id
-            });
-        }
-
-        setTitle('');
-        setDescription('');
-        setRoleId('');
-        setPriority('normal');
-        setFile(null);
-        setMessage('Ticket created successfully.');
-        setLoading(false);
-        onCreated();
     };
 
     return (
