@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
-import { isUuid, type Role, type Ticket, type TicketHistoryEvent } from '@/lib/boardTypes';
+import { isUuid, type Role, type Ticket, type TicketHistoryEvent, type TicketStatus } from '@/lib/boardTypes';
 import { getTicketNumber } from '@/lib/ticketNumber';
 
 type Props = {
@@ -11,18 +11,22 @@ type Props = {
     onChanged: () => void;
 };
 
-const extractAttachment = (description: string | null) => {
+const ATTACHMENT_REGEX = /\[attachment\]\s+(https?:\/\/\S+)/gi;
+
+const extractAttachments = (description: string | null) => {
     const raw = description || '';
-    const match = raw.match(/\[attachment\]\s+(https?:\/\/\S+)/i);
-    const url = match?.[1] || null;
-    const cleanText = raw.replace(/\[attachment\]\s+https?:\/\/\S+/i, '').trim();
-    return { url, cleanText };
+    const urls = Array.from(raw.matchAll(ATTACHMENT_REGEX))
+        .map(match => match[1]?.trim())
+        .filter((url): url is string => Boolean(url));
+    const cleanText = raw.replace(ATTACHMENT_REGEX, '').trim();
+    return { urls, cleanText };
 };
 
-const attachDescription = (descriptionText: string, attachmentUrl: string | null) => {
+const attachDescription = (descriptionText: string, attachmentUrls: string[]) => {
     const clean = descriptionText.trim();
-    if (!attachmentUrl) return clean;
-    return clean ? `${clean}\n\n[attachment] ${attachmentUrl}` : `[attachment] ${attachmentUrl}`;
+    const markers = attachmentUrls.map(url => `[attachment] ${url}`).join('\n');
+    if (!markers) return clean;
+    return clean ? `${clean}\n\n${markers}` : markers;
 };
 
 export default function TicketList({ tickets, roles, onChanged }: Props) {
@@ -31,7 +35,10 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
     const [draftTitle, setDraftTitle] = useState('');
     const [draftDescription, setDraftDescription] = useState('');
     const [draftPriority, setDraftPriority] = useState('normal');
+    const [draftStatus, setDraftStatus] = useState<TicketStatus>('open');
     const [draftRoleId, setDraftRoleId] = useState<string>('');
+    const [draftAttachmentUrls, setDraftAttachmentUrls] = useState<string[]>([]);
+    const [draftImageFile, setDraftImageFile] = useState<File | null>(null);
     const [historyOpen, setHistoryOpen] = useState<Record<string, boolean>>({});
     const [historyByTicket, setHistoryByTicket] = useState<Record<string, TicketHistoryEvent[]>>({});
     const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null);
@@ -40,6 +47,8 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
     const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
     const [editMessage, setEditMessage] = useState<string | null>(null);
     const [editError, setEditError] = useState<string | null>(null);
+
+    const assignableRoles = roles.filter(role => isUuid(role.id));
 
     const roleNameMap = new Map(roles.map(r => [r.id, r.name]));
 
@@ -145,8 +154,12 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
         setEditMessage(null);
         setEditingTicketId(ticket.id);
         setDraftTitle(ticket.title);
-        setDraftDescription(extractAttachment(ticket.description).cleanText);
+        const parsed = extractAttachments(ticket.description);
+        setDraftDescription(parsed.cleanText);
+        setDraftAttachmentUrls(parsed.urls);
+        setDraftImageFile(null);
         setDraftPriority(ticket.priority || 'normal');
+        setDraftStatus(ticket.status);
         setDraftRoleId(ticket.role_id || '');
     };
 
@@ -155,17 +168,35 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
         setDraftTitle('');
         setDraftDescription('');
         setDraftPriority('normal');
+        setDraftStatus('open');
         setDraftRoleId('');
+        setDraftAttachmentUrls([]);
+        setDraftImageFile(null);
+    };
+
+    const uploadImage = async (ticketId: string, userId: string, file: File) => {
+        const extension = file.name.split('.').pop() || 'jpg';
+        const filePath = `${userId}/${ticketId}-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from('ticket-images')
+            .upload(filePath, file, { upsert: false });
+
+        if (uploadError) {
+            throw new Error('Could not upload image. If this persists, create Supabase bucket "ticket-images" and retry.');
+        }
+
+        const { data: publicData } = supabase.storage.from('ticket-images').getPublicUrl(filePath);
+        return publicData.publicUrl;
+    };
+
+    const removeAttachmentUrl = (url: string) => {
+        setDraftAttachmentUrls(prev => prev.filter(existing => existing !== url));
     };
 
     const saveEdit = async (ticket: Ticket) => {
         setEditError(null);
         setEditMessage(null);
-
-        if (draftRoleId && !isUuid(draftRoleId)) {
-            setEditError('Role setup is incomplete, so this ticket cannot be assigned to that role yet. Run the missing Supabase role setup SQL and try again.');
-            return;
-        }
 
         setSavingTicketId(ticket.id);
 
@@ -184,15 +215,33 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                 .eq('id', user.id)
                 .maybeSingle();
 
-            const existingAttachmentUrl = extractAttachment(ticket.description).url;
+            let roleWarning = '';
+            let safeRoleId: string | null = null;
+            if (!draftRoleId) {
+                safeRoleId = null;
+            } else if (isUuid(draftRoleId)) {
+                safeRoleId = draftRoleId;
+            } else {
+                safeRoleId = isUuid(ticket.role_id || '') ? ticket.role_id : null;
+                roleWarning = ' Role assignment was skipped because role setup is incomplete.';
+            }
+
+            const nextAttachmentUrls = [...draftAttachmentUrls];
+            if (draftImageFile) {
+                const uploadedUrl = await uploadImage(ticket.id, user.id, draftImageFile);
+                nextAttachmentUrls.push(uploadedUrl);
+            }
+
+            const nextDescription = attachDescription(draftDescription, nextAttachmentUrls);
 
             const { error } = await supabase
                 .from('tickets')
                 .update({
                     title: draftTitle.trim() || ticket.title,
-                    description: attachDescription(draftDescription, existingAttachmentUrl),
+                    description: nextDescription,
                     priority: draftPriority,
-                    role_id: draftRoleId || null,
+                    status: draftStatus,
+                    role_id: safeRoleId,
                     updated_at: new Date().toISOString()
                 })
                 .eq('id', ticket.id);
@@ -207,11 +256,15 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                 action: 'updated',
                 performed_by: profile?.id || null,
                 from_status: ticket.status,
-                to_status: ticket.status
+                to_status: draftStatus
             });
 
             cancelEdit();
-            setEditMessage(wroteHistory ? 'Ticket updated.' : 'Ticket updated, but history logging is unavailable right now.');
+            if (wroteHistory) {
+                setEditMessage(`Ticket updated.${roleWarning}`.trim());
+            } else {
+                setEditMessage(`Ticket updated, but history logging is unavailable right now.${roleWarning}`.trim());
+            }
             onChanged();
         } catch (err: any) {
             setEditError(err?.message || 'Could not save ticket changes.');
@@ -285,7 +338,7 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
             <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {tickets.map(t => (
                     (() => {
-                        const attachment = extractAttachment(t.description);
+                        const attachment = extractAttachments(t.description);
                         const ticketNumber = getTicketNumber(t);
                         const isExpanded = Boolean(expandedDescriptions[t.id]);
                         const textLength = (attachment.cleanText || '').length;
@@ -307,59 +360,132 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                         display: 'flex',
                                         justifyContent: 'space-between',
                                         gap: '0.75rem',
-                                        alignItems: 'flex-start'
+                                        alignItems: 'flex-start',
+                                        flexDirection: editingTicketId === t.id ? 'column' : 'row'
                                     }}
                                 >
-                                    <div style={{ minWidth: 0 }}>
+                                    <div style={{ minWidth: 0, width: '100%' }}>
                                         {editingTicketId === t.id ? (
-                                            <div style={{ display: 'grid', gap: '0.45rem' }}>
+                                            <div style={{ display: 'grid', gap: '0.55rem' }}>
+                                                <div style={{ fontSize: '0.78rem', opacity: 0.82 }}>
+                                                    Edit ticket details, status, role, and image attachments.
+                                                </div>
                                                 <input
                                                     value={draftTitle}
                                                     onChange={e => setDraftTitle(e.target.value)}
-                                                    style={{ padding: '0.35rem', borderRadius: 4 }}
+                                                    style={{ padding: '0.5rem', borderRadius: 8 }}
                                                 />
                                                 <textarea
                                                     value={draftDescription}
                                                     onChange={e => setDraftDescription(e.target.value)}
-                                                    rows={3}
-                                                    style={{ padding: '0.35rem', borderRadius: 4 }}
+                                                    rows={6}
+                                                    style={{ padding: '0.5rem', borderRadius: 8, width: '100%' }}
                                                 />
                                                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                                     <select
                                                         value={draftRoleId}
                                                         onChange={e => setDraftRoleId(e.target.value)}
-                                                        style={{ padding: '0.35rem', borderRadius: 4 }}
+                                                        style={{ padding: '0.45rem', borderRadius: 8, minWidth: 170, flex: '1 1 180px' }}
                                                     >
                                                         <option value="">No role</option>
-                                                        {roles.map(r => (
+                                                        {assignableRoles.map(r => (
                                                             <option key={r.id} value={r.id}>
                                                                 {r.name}
                                                             </option>
                                                         ))}
                                                     </select>
                                                     <select
+                                                        value={draftStatus}
+                                                        onChange={e => setDraftStatus(e.target.value as TicketStatus)}
+                                                        style={{ padding: '0.45rem', borderRadius: 8, minWidth: 140, flex: '1 1 150px' }}
+                                                    >
+                                                        <option value="open">Open</option>
+                                                        <option value="in_progress">In progress</option>
+                                                        <option value="closed">Closed</option>
+                                                    </select>
+                                                    <select
                                                         value={draftPriority}
                                                         onChange={e => setDraftPriority(e.target.value)}
-                                                        style={{ padding: '0.35rem', borderRadius: 4 }}
+                                                        style={{ padding: '0.45rem', borderRadius: 8, minWidth: 140, flex: '1 1 150px' }}
                                                     >
                                                         <option value="low">Low</option>
                                                         <option value="normal">Normal</option>
                                                         <option value="high">High</option>
                                                     </select>
                                                 </div>
+                                                {roles.length > 0 && assignableRoles.length === 0 && (
+                                                    <div style={{ fontSize: '0.75rem', color: '#fca5a5' }}>
+                                                        Role assignment is unavailable until roles are created in Supabase.
+                                                    </div>
+                                                )}
+                                                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                                                    <label style={{ fontSize: '0.78rem', opacity: 0.84 }}>
+                                                        Add image attachment
+                                                    </label>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        onChange={e => setDraftImageFile(e.target.files?.[0] || null)}
+                                                        style={{ padding: '0.4rem', borderRadius: 8 }}
+                                                    />
+                                                    {draftImageFile && (
+                                                        <div style={{ fontSize: '0.75rem', opacity: 0.82 }}>
+                                                            Selected image: {draftImageFile.name}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {draftAttachmentUrls.length > 0 && (
+                                                    <div style={{ display: 'grid', gap: '0.45rem' }}>
+                                                        <div style={{ fontSize: '0.78rem', opacity: 0.84 }}>Current attachments</div>
+                                                        <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
+                                                            {draftAttachmentUrls.map(url => (
+                                                                <div
+                                                                    key={url}
+                                                                    style={{
+                                                                        border: '1px solid #334155',
+                                                                        borderRadius: 8,
+                                                                        padding: '0.45rem',
+                                                                        width: 'min(240px, 100%)'
+                                                                    }}
+                                                                >
+                                                                    <img
+                                                                        src={url}
+                                                                        alt="Attachment"
+                                                                        style={{ width: '100%', borderRadius: 6, marginBottom: '0.35rem' }}
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => removeAttachmentUrl(url)}
+                                                                        style={{
+                                                                            padding: '0.25rem 0.45rem',
+                                                                            borderRadius: 6,
+                                                                            border: '1px solid #f87171',
+                                                                            background: 'transparent',
+                                                                            color: '#fca5a5',
+                                                                            cursor: 'pointer',
+                                                                            fontSize: '0.72rem'
+                                                                        }}
+                                                                    >
+                                                                        Remove image
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                                     <button
                                                         onClick={() => saveEdit(t)}
                                                         disabled={savingTicketId === t.id}
                                                         style={{
-                                                            padding: '0.25rem 0.5rem',
-                                                            borderRadius: 4,
+                                                            padding: '0.4rem 0.7rem',
+                                                            borderRadius: 8,
                                                             border: '1px solid #34d399',
                                                             background: 'transparent',
                                                             color: '#34d399',
                                                             cursor: savingTicketId === t.id ? 'not-allowed' : 'pointer',
                                                             opacity: savingTicketId === t.id ? 0.65 : 1,
-                                                            fontSize: '0.75rem'
+                                                            fontSize: '0.8rem'
                                                         }}
                                                     >
                                                         {savingTicketId === t.id ? 'Saving...' : 'Save'}
@@ -367,13 +493,13 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                                     <button
                                                         onClick={cancelEdit}
                                                         style={{
-                                                            padding: '0.25rem 0.5rem',
-                                                            borderRadius: 4,
+                                                            padding: '0.4rem 0.7rem',
+                                                            borderRadius: 8,
                                                             border: '1px solid #64748b',
                                                             background: 'transparent',
                                                             color: '#cbd5e1',
                                                             cursor: 'pointer',
-                                                            fontSize: '0.75rem'
+                                                            fontSize: '0.8rem'
                                                         }}
                                                     >
                                                         Cancel
@@ -454,26 +580,31 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                             </>
                                         )}
 
-                                        {attachment.url && (
+                                        {attachment.urls.length > 0 && (
                                             <div style={{ marginTop: '0.6rem' }}>
-                                                <a
-                                                    href={attachment.url}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    style={{ color: '#93c5fd', fontSize: '0.8rem' }}
-                                                >
-                                                    Open attached image
-                                                </a>
-                                                <div style={{ marginTop: '0.4rem' }}>
-                                                    <img
-                                                        src={attachment.url}
-                                                        alt="Ticket attachment"
-                                                        style={{
-                                                            width: 'min(320px, 100%)',
-                                                            borderRadius: 8,
-                                                            border: '1px solid #334155'
-                                                        }}
-                                                    />
+                                                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                                                    <div style={{ fontSize: '0.78rem', opacity: 0.84 }}>Attachments</div>
+                                                    <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
+                                                        {attachment.urls.map(url => (
+                                                            <a
+                                                                key={url}
+                                                                href={url}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                style={{ width: 'min(220px, 100%)', textDecoration: 'none' }}
+                                                            >
+                                                                <img
+                                                                    src={url}
+                                                                    alt="Ticket attachment"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        borderRadius: 8,
+                                                                        border: '1px solid #334155'
+                                                                    }}
+                                                                />
+                                                            </a>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
@@ -562,63 +693,65 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
                                         )}
                                     </div>
 
-                                    <div
-                                        className="ticket-status-actions"
-                                        style={{
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: '0.25rem'
-                                        }}
-                                    >
-                                        <button
-                                            onClick={() => updateStatus(t, 'open')}
-                                            disabled={statusUpdatingId === t.id || t.status === 'open'}
+                                    {editingTicketId !== t.id && (
+                                        <div
+                                            className="ticket-status-actions"
                                             style={{
-                                                padding: '0.25rem 0.5rem',
-                                                borderRadius: 4,
-                                                border: '1px solid #6b7280',
-                                                background: 'transparent',
-                                                color: '#e5e7eb',
-                                                cursor: statusUpdatingId === t.id || t.status === 'open' ? 'not-allowed' : 'pointer',
-                                                opacity: statusUpdatingId === t.id || t.status === 'open' ? 0.6 : 1,
-                                                fontSize: '0.75rem'
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '0.25rem'
                                             }}
                                         >
-                                            {statusUpdatingId === t.id && t.status !== 'open' ? 'Updating...' : 'Open'}
-                                        </button>
-                                        <button
-                                            onClick={() => updateStatus(t, 'in_progress')}
-                                            disabled={statusUpdatingId === t.id || t.status === 'in_progress'}
-                                            style={{
-                                                padding: '0.25rem 0.5rem',
-                                                borderRadius: 4,
-                                                border: '1px solid #facc15',
-                                                background: 'transparent',
-                                                color: '#facc15',
-                                                cursor: statusUpdatingId === t.id || t.status === 'in_progress' ? 'not-allowed' : 'pointer',
-                                                opacity: statusUpdatingId === t.id || t.status === 'in_progress' ? 0.6 : 1,
-                                                fontSize: '0.75rem'
-                                            }}
-                                        >
-                                            In progress
-                                        </button>
-                                        <button
-                                            onClick={() => updateStatus(t, 'closed')}
-                                            disabled={statusUpdatingId === t.id || t.status === 'closed'}
-                                            style={{
-                                                padding: '0.25rem 0.5rem',
-                                                borderRadius: 4,
-                                                border: '1px solid #22c55e',
-                                                background: 'transparent',
-                                                color: '#22c55e',
-                                                cursor: statusUpdatingId === t.id || t.status === 'closed' ? 'not-allowed' : 'pointer',
-                                                opacity: statusUpdatingId === t.id || t.status === 'closed' ? 0.6 : 1,
-                                                fontSize: '0.75rem'
-                                            }}
-                                        >
-                                            Closed
-                                        </button>
-                                    </div>
+                                            <button
+                                                onClick={() => updateStatus(t, 'open')}
+                                                disabled={statusUpdatingId === t.id || t.status === 'open'}
+                                                style={{
+                                                    padding: '0.25rem 0.5rem',
+                                                    borderRadius: 4,
+                                                    border: '1px solid #6b7280',
+                                                    background: 'transparent',
+                                                    color: '#e5e7eb',
+                                                    cursor: statusUpdatingId === t.id || t.status === 'open' ? 'not-allowed' : 'pointer',
+                                                    opacity: statusUpdatingId === t.id || t.status === 'open' ? 0.6 : 1,
+                                                    fontSize: '0.75rem'
+                                                }}
+                                            >
+                                                {statusUpdatingId === t.id && t.status !== 'open' ? 'Updating...' : 'Open'}
+                                            </button>
+                                            <button
+                                                onClick={() => updateStatus(t, 'in_progress')}
+                                                disabled={statusUpdatingId === t.id || t.status === 'in_progress'}
+                                                style={{
+                                                    padding: '0.25rem 0.5rem',
+                                                    borderRadius: 4,
+                                                    border: '1px solid #facc15',
+                                                    background: 'transparent',
+                                                    color: '#facc15',
+                                                    cursor: statusUpdatingId === t.id || t.status === 'in_progress' ? 'not-allowed' : 'pointer',
+                                                    opacity: statusUpdatingId === t.id || t.status === 'in_progress' ? 0.6 : 1,
+                                                    fontSize: '0.75rem'
+                                                }}
+                                            >
+                                                In progress
+                                            </button>
+                                            <button
+                                                onClick={() => updateStatus(t, 'closed')}
+                                                disabled={statusUpdatingId === t.id || t.status === 'closed'}
+                                                style={{
+                                                    padding: '0.25rem 0.5rem',
+                                                    borderRadius: 4,
+                                                    border: '1px solid #22c55e',
+                                                    background: 'transparent',
+                                                    color: '#22c55e',
+                                                    cursor: statusUpdatingId === t.id || t.status === 'closed' ? 'not-allowed' : 'pointer',
+                                                    opacity: statusUpdatingId === t.id || t.status === 'closed' ? 0.6 : 1,
+                                                    fontSize: '0.75rem'
+                                                }}
+                                            >
+                                                Closed
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         );

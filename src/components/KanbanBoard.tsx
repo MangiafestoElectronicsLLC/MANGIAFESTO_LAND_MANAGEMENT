@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabaseClient } from '@/lib/supabaseClient';
-import type { Role, Ticket, TicketStatus } from '@/lib/boardTypes';
+import { isUuid, type Role, type Ticket, type TicketStatus } from '@/lib/boardTypes';
 import { getTicketNumber } from '@/lib/ticketNumber';
 
 type Props = {
@@ -17,12 +17,22 @@ const COLUMNS: Array<{ key: TicketStatus; label: string; border: string; bg: str
     { key: 'closed', label: 'Closed', border: '#34d399', bg: 'rgba(6, 95, 70, 0.34)' }
 ];
 
-const extractAttachment = (description: string | null) => {
+const ATTACHMENT_REGEX = /\[attachment\]\s+(https?:\/\/\S+)/gi;
+
+const extractAttachments = (description: string | null) => {
     const raw = description || '';
-    const match = raw.match(/\[attachment\]\s+(https?:\/\/\S+)/i);
-    const url = match?.[1] || null;
-    const cleanText = raw.replace(/\[attachment\]\s+https?:\/\/\S+/i, '').trim();
-    return { url, cleanText };
+    const urls = Array.from(raw.matchAll(ATTACHMENT_REGEX))
+        .map(match => match[1]?.trim())
+        .filter((url): url is string => Boolean(url));
+    const cleanText = raw.replace(ATTACHMENT_REGEX, '').trim();
+    return { urls, cleanText };
+};
+
+const attachDescription = (descriptionText: string, attachmentUrls: string[]) => {
+    const clean = descriptionText.trim();
+    const markers = attachmentUrls.map(url => `[attachment] ${url}`).join('\n');
+    if (!markers) return clean;
+    return clean ? `${clean}\n\n${markers}` : markers;
 };
 
 export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
@@ -30,10 +40,16 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
     const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
     const [workNote, setWorkNote] = useState('');
+    const [selectedRoleId, setSelectedRoleId] = useState('');
+    const [selectedPriority, setSelectedPriority] = useState('normal');
+    const [selectedStatus, setSelectedStatus] = useState<TicketStatus>('open');
+    const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+    const [metaSaving, setMetaSaving] = useState(false);
     const [savingNote, setSavingNote] = useState(false);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const roleNameMap = useMemo(() => new Map(roles.map(r => [r.id, r.name])), [roles]);
+    const assignableRoles = useMemo(() => roles.filter(role => isUuid(role.id)), [roles]);
 
     const grouped = useMemo(() => {
         return {
@@ -98,6 +114,22 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                 : `Status updated to ${status.replace('_', ' ')}, but history logging is unavailable right now.`
         );
         onChanged();
+    };
+
+    const uploadImage = async (ticketId: string, userId: string, file: File) => {
+        const extension = file.name.split('.').pop() || 'jpg';
+        const filePath = `${userId}/${ticketId}-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from('ticket-images')
+            .upload(filePath, file, { upsert: false });
+
+        if (uploadError) {
+            throw new Error('Could not upload image. If this persists, create Supabase bucket "ticket-images" and retry.');
+        }
+
+        const { data: publicData } = supabase.storage.from('ticket-images').getPublicUrl(filePath);
+        return publicData.publicUrl;
     };
 
     const getProfileId = async () => {
@@ -221,6 +253,131 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
 
     const selectedTicket = selectedTicketId ? tickets.find(t => t.id === selectedTicketId) || null : null;
 
+    useEffect(() => {
+        if (!selectedTicket) {
+            setSelectedRoleId('');
+            setSelectedPriority('normal');
+            setSelectedStatus('open');
+            setSelectedImageFile(null);
+            return;
+        }
+
+        setSelectedRoleId(selectedTicket.role_id || '');
+        setSelectedPriority(selectedTicket.priority || 'normal');
+        setSelectedStatus(selectedTicket.status);
+        setSelectedImageFile(null);
+    }, [selectedTicket?.id, selectedTicket?.priority, selectedTicket?.role_id, selectedTicket?.status]);
+
+    const saveSelectedTicketDetails = async () => {
+        if (!selectedTicket) return;
+
+        setActionError(null);
+        setActionMessage(null);
+        setMetaSaving(true);
+
+        try {
+            const profileId = await getProfileId();
+
+            let roleWarning = '';
+            let safeRoleId: string | null = null;
+            if (!selectedRoleId) {
+                safeRoleId = null;
+            } else if (isUuid(selectedRoleId)) {
+                safeRoleId = selectedRoleId;
+            } else {
+                safeRoleId = isUuid(selectedTicket.role_id || '') ? selectedTicket.role_id : null;
+                roleWarning = ' Role assignment was skipped because roles are not fully set up in Supabase.';
+            }
+
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    role_id: safeRoleId,
+                    priority: selectedPriority,
+                    status: selectedStatus,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', selectedTicket.id);
+
+            if (error) {
+                setActionError(error.message || 'Could not save ticket details.');
+                return;
+            }
+
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: selectedTicket.id,
+                action: 'updated',
+                performed_by: profileId,
+                from_status: selectedTicket.status,
+                to_status: selectedStatus
+            });
+
+            if (wroteHistory) {
+                setActionMessage(`Ticket details saved.${roleWarning}`.trim());
+            } else {
+                setActionMessage(`Ticket details saved, but history logging is unavailable right now.${roleWarning}`.trim());
+            }
+
+            onChanged();
+        } catch (err: any) {
+            setActionError(err?.message || 'Could not save ticket details.');
+        } finally {
+            setMetaSaving(false);
+        }
+    };
+
+    const addImageToSelectedTicket = async () => {
+        if (!selectedTicket || !selectedImageFile) return;
+
+        setActionError(null);
+        setActionMessage(null);
+        setMetaSaving(true);
+
+        try {
+            const {
+                data: { user }
+            } = await supabase.auth.getUser();
+            if (!user) {
+                setActionError('Your session expired. Sign in again and retry.');
+                return;
+            }
+
+            const profileId = await getProfileId();
+            const parsed = extractAttachments(selectedTicket.description);
+            const uploadedUrl = await uploadImage(selectedTicket.id, user.id, selectedImageFile);
+            const nextDescription = attachDescription(parsed.cleanText, [...parsed.urls, uploadedUrl]);
+
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    description: nextDescription,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', selectedTicket.id);
+
+            if (error) {
+                setActionError(error.message || 'Could not add image to ticket.');
+                return;
+            }
+
+            const wroteHistory = await insertHistoryEvent({
+                ticket_id: selectedTicket.id,
+                action: `attachment_added: ${selectedImageFile.name}`,
+                performed_by: profileId,
+                from_status: selectedTicket.status,
+                to_status: selectedTicket.status
+            });
+
+            setSelectedImageFile(null);
+            setActionMessage(wroteHistory ? 'Image attached to ticket.' : 'Image attached, but history logging is unavailable right now.');
+            onChanged();
+        } catch (err: any) {
+            setActionError(err?.message || 'Could not add image to ticket.');
+        } finally {
+            setMetaSaving(false);
+        }
+    };
+
     return (
         <div
             style={{
@@ -248,6 +405,146 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                 <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
                     {selectedTicket ? `Selected: ${selectedTicket.title}` : 'Select a ticket card to add progress or finish notes'}
                 </div>
+                {selectedTicket && (
+                    <div style={{ display: 'grid', gap: '0.45rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                onClick={() => updateStatus(selectedTicket, 'open')}
+                                disabled={metaSaving || savingNote || selectedTicket.status === 'open'}
+                                style={{
+                                    padding: '0.3rem 0.65rem',
+                                    borderRadius: 6,
+                                    border: '1px solid #6b7280',
+                                    background: 'transparent',
+                                    color: '#e5e7eb',
+                                    cursor: metaSaving || savingNote || selectedTicket.status === 'open' ? 'not-allowed' : 'pointer',
+                                    opacity: metaSaving || savingNote || selectedTicket.status === 'open' ? 0.65 : 1,
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                Move to Open
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => updateStatus(selectedTicket, 'in_progress')}
+                                disabled={metaSaving || savingNote || selectedTicket.status === 'in_progress'}
+                                style={{
+                                    padding: '0.3rem 0.65rem',
+                                    borderRadius: 6,
+                                    border: '1px solid #facc15',
+                                    background: 'transparent',
+                                    color: '#facc15',
+                                    cursor: metaSaving || savingNote || selectedTicket.status === 'in_progress' ? 'not-allowed' : 'pointer',
+                                    opacity: metaSaving || savingNote || selectedTicket.status === 'in_progress' ? 0.65 : 1,
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                Move to In progress
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => updateStatus(selectedTicket, 'closed')}
+                                disabled={metaSaving || savingNote || selectedTicket.status === 'closed'}
+                                style={{
+                                    padding: '0.3rem 0.65rem',
+                                    borderRadius: 6,
+                                    border: '1px solid #22c55e',
+                                    background: 'transparent',
+                                    color: '#4ade80',
+                                    cursor: metaSaving || savingNote || selectedTicket.status === 'closed' ? 'not-allowed' : 'pointer',
+                                    opacity: metaSaving || savingNote || selectedTicket.status === 'closed' ? 0.65 : 1,
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                Move to Closed
+                            </button>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <select
+                                value={selectedRoleId}
+                                onChange={e => setSelectedRoleId(e.target.value)}
+                                style={{ padding: '0.42rem', borderRadius: 6, minWidth: 170, flex: '1 1 180px' }}
+                                disabled={metaSaving || savingNote}
+                            >
+                                <option value="">No role</option>
+                                {assignableRoles.map(role => (
+                                    <option key={role.id} value={role.id}>
+                                        {role.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <select
+                                value={selectedPriority}
+                                onChange={e => setSelectedPriority(e.target.value)}
+                                style={{ padding: '0.42rem', borderRadius: 6, minWidth: 130, flex: '1 1 140px' }}
+                                disabled={metaSaving || savingNote}
+                            >
+                                <option value="low">Low</option>
+                                <option value="normal">Normal</option>
+                                <option value="high">High</option>
+                            </select>
+                            <select
+                                value={selectedStatus}
+                                onChange={e => setSelectedStatus(e.target.value as TicketStatus)}
+                                style={{ padding: '0.42rem', borderRadius: 6, minWidth: 150, flex: '1 1 155px' }}
+                                disabled={metaSaving || savingNote}
+                            >
+                                <option value="open">Open</option>
+                                <option value="in_progress">In progress</option>
+                                <option value="closed">Closed</option>
+                            </select>
+                            <button
+                                type="button"
+                                onClick={saveSelectedTicketDetails}
+                                disabled={metaSaving || savingNote}
+                                style={{
+                                    padding: '0.35rem 0.65rem',
+                                    borderRadius: 6,
+                                    border: '1px solid #22d3ee',
+                                    background: 'transparent',
+                                    color: '#67e8f9',
+                                    cursor: metaSaving || savingNote ? 'not-allowed' : 'pointer',
+                                    opacity: metaSaving || savingNote ? 0.65 : 1,
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                {metaSaving ? 'Saving...' : 'Save ticket details'}
+                            </button>
+                        </div>
+                        {roles.length > 0 && assignableRoles.length === 0 && (
+                            <div style={{ color: '#fca5a5', fontSize: '0.76rem' }}>
+                                Role assignment is unavailable until roles are created in Supabase.
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                onChange={e => setSelectedImageFile(e.target.files?.[0] || null)}
+                                disabled={metaSaving || savingNote}
+                                style={{ padding: '0.35rem', borderRadius: 6, minWidth: 240, flex: '1 1 250px' }}
+                            />
+                            <button
+                                type="button"
+                                onClick={addImageToSelectedTicket}
+                                disabled={!selectedImageFile || metaSaving || savingNote}
+                                style={{
+                                    padding: '0.35rem 0.65rem',
+                                    borderRadius: 6,
+                                    border: '1px solid #60a5fa',
+                                    background: 'transparent',
+                                    color: '#93c5fd',
+                                    cursor: selectedImageFile && !metaSaving && !savingNote ? 'pointer' : 'not-allowed',
+                                    opacity: selectedImageFile && !metaSaving && !savingNote ? 1 : 0.65,
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                Add image
+                            </button>
+                        </div>
+                    </div>
+                )}
                 <textarea
                     value={workNote}
                     onChange={e => setWorkNote(e.target.value)}
@@ -321,7 +618,7 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
 
                         <div style={{ display: 'grid', gap: '0.5rem', maxHeight: 580, overflowY: 'auto', paddingRight: '0.2rem' }}>
                             {grouped[column.key].map(ticket => {
-                                const attachment = extractAttachment(ticket.description);
+                                const attachment = extractAttachments(ticket.description);
                                 const isActive = ticket.id === activeTicketId;
                                 const isSelected = ticket.id === selectedTicketId;
                                 const ticketNumber = getTicketNumber(ticket);
@@ -373,9 +670,9 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
                                         >
                                             {attachment.cleanText || 'No description'}
                                         </div>
-                                        {attachment.url && (
+                                        {attachment.urls.length > 0 && (
                                             <img
-                                                src={attachment.url}
+                                                src={attachment.urls[0]}
                                                 alt="Attachment"
                                                 style={{
                                                     marginTop: '0.45rem',
