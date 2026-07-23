@@ -368,7 +368,7 @@ export default function DashboardPage() {
                         href="/dashboard/calendar"
                         style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
                     >
-                        Open Hunting/Fishing Calendar
+                        Open Season Planner
                     </Link>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>

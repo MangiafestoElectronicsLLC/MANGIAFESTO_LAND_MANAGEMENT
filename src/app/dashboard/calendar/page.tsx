@@ -30,6 +30,19 @@ const MONTHS = [
 ];
 
 const ALL_MONTHS = Array.from({ length: 12 }, (_, idx) => idx + 1);
+const PLANNING_AHEAD_DAY = 24;
+
+function getPlanningDefaultMonth() {
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+    const dayOfMonth = today.getDate();
+
+    if (dayOfMonth >= PLANNING_AHEAD_DAY) {
+        return currentMonth === 12 ? 1 : currentMonth + 1;
+    }
+
+    return currentMonth;
+}
 
 const SEASONS: SeasonEntry[] = [
     {
@@ -123,13 +136,17 @@ const SEASONS: SeasonEntry[] = [
 ];
 
 export default function CalendarPage() {
-    const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
+    const [month, setMonth] = useState<number>(() => getPlanningDefaultMonth());
+    const [currentMonth] = useState<number>(() => new Date().getMonth() + 1);
     const [typeFilter, setTypeFilter] = useState<'all' | ActivityType>('all');
     const [query, setQuery] = useState('');
+    const [showOpenNowOnly, setShowOpenNowOnly] = useState(false);
+    const [showFullYearMap, setShowFullYearMap] = useState(false);
+    const effectiveMonth = showOpenNowOnly ? currentMonth : month;
 
     const filtered = useMemo(() => {
         return SEASONS.filter(entry => {
-            const monthMatch = entry.openMonths.includes(month);
+            const monthMatch = entry.openMonths.includes(effectiveMonth);
             const typeMatch = typeFilter === 'all' ? true : entry.type === typeFilter;
             const queryMatch = query.trim()
                 ? `${entry.species} ${entry.location} ${entry.notes}`
@@ -139,14 +156,15 @@ export default function CalendarPage() {
 
             return monthMatch && typeMatch && queryMatch;
         });
-    }, [month, query, typeFilter]);
+    }, [effectiveMonth, query, typeFilter]);
 
     const huntingCount = filtered.filter(item => item.type === 'hunting').length;
     const fishingCount = filtered.filter(item => item.type === 'fishing').length;
-    const huntingStatusByMonth = SEASONS.filter(item => item.type === 'hunting').map(item => ({
-        ...item,
-        inSeason: item.openMonths.includes(month)
-    }));
+    const monthName = MONTHS[effectiveMonth - 1];
+    const plannedMonthName = MONTHS[month - 1];
+    const filteredHunting = filtered.filter(item => item.type === 'hunting');
+    const filteredFishing = filtered.filter(item => item.type === 'fishing');
+    const seasonBadgeLabel = showOpenNowOnly ? 'Open now' : `Open in ${monthName}`;
 
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
@@ -165,20 +183,29 @@ export default function CalendarPage() {
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.9rem' }}>
                 <div style={{ display: 'grid', gap: '0.3rem' }}>
                     <div style={{ opacity: 0.85, fontSize: '0.85rem' }}>Brockport Seasonal Planner</div>
-                    <h2 style={{ margin: 0, fontSize: 'clamp(1.4rem, 3.8vw, 2rem)' }}>Hunting / Fishing Calendar</h2>
+                    <h2 style={{ margin: 0, fontSize: 'clamp(1.4rem, 3.8vw, 2rem)' }}>What is open this month?</h2>
                     <div style={{ opacity: 0.78, maxWidth: 860 }}>
-                        Month-by-month season guide for the Brockport, New York area. Use this as a planning board, then verify final legal dates and bag limits in the current NYS DEC regulations.
+                        Pick a month, choose a type, and see what is in season around Brockport, New York. Always confirm legal dates and bag limits with current NYS DEC regulations.
                     </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', fontSize: '0.84rem' }}>
+                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.2rem 0.55rem', background: 'rgba(15, 23, 42, 0.5)' }}>1. Pick month</span>
+                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.2rem 0.55rem', background: 'rgba(15, 23, 42, 0.5)' }}>2. Filter by type</span>
+                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.2rem 0.55rem', background: 'rgba(15, 23, 42, 0.5)' }}>3. Review open options</span>
                 </div>
 
                 <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Month</span>
-                        <select value={month} onChange={e => setMonth(Number(e.target.value))}>
+                        <select value={month} onChange={e => setMonth(Number(e.target.value))} disabled={showOpenNowOnly}>
                             {MONTHS.map((name, idx) => (
                                 <option key={name} value={idx + 1}>{name}</option>
                             ))}
                         </select>
+                        <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                            Late-month planning defaults to next month after day {PLANNING_AHEAD_DAY - 1}.
+                        </span>
                     </label>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Type</span>
@@ -194,125 +221,190 @@ export default function CalendarPage() {
                     </label>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', opacity: 0.9 }}>
-                    <span>Total in season: {filtered.length}</span>
-                    <span>Hunting: {huntingCount}</span>
-                    <span>Fishing: {fishingCount}</span>
-                    <span>Month: {MONTHS[month - 1]}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: 'fit-content', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            checked={showOpenNowOnly}
+                            onChange={e => setShowOpenNowOnly(e.target.checked)}
+                        />
+                        <span style={{ fontSize: '0.9rem' }}>Show only open now for my selected type</span>
+                    </label>
+                    <button
+                        type="button"
+                        onClick={() => setShowOpenNowOnly(false)}
+                        disabled={!showOpenNowOnly}
+                        style={{
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: 8,
+                            border: '1px solid #334155',
+                            background: showOpenNowOnly ? 'rgba(30, 41, 59, 0.6)' : 'rgba(15, 23, 42, 0.4)',
+                            color: showOpenNowOnly ? '#e2e8f0' : '#94a3b8',
+                            cursor: showOpenNowOnly ? 'pointer' : 'not-allowed'
+                        }}
+                    >
+                        Use planning month
+                    </button>
+                </div>
+
+                <div style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+                    <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem 0.65rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div style={{ fontSize: '0.78rem', opacity: 0.76 }}>Selected month</div>
+                        <div style={{ fontWeight: 700 }}>{showOpenNowOnly ? `${monthName} (now)` : plannedMonthName}</div>
+                    </div>
+                    <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem 0.65rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div style={{ fontSize: '0.78rem', opacity: 0.76 }}>Open now</div>
+                        <div style={{ fontWeight: 700 }}>{filtered.length} options</div>
+                    </div>
+                    <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem 0.65rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div style={{ fontSize: '0.78rem', opacity: 0.76 }}>Hunting</div>
+                        <div style={{ fontWeight: 700 }}>{huntingCount}</div>
+                    </div>
+                    <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem 0.65rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div style={{ fontSize: '0.78rem', opacity: 0.76 }}>Fishing</div>
+                        <div style={{ fontWeight: 700 }}>{fishingCount}</div>
+                    </div>
                 </div>
             </section>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.65rem' }}>
-                <div style={{ fontWeight: 700 }}>In-season opportunities</div>
+                <div style={{ fontWeight: 700 }}>{showOpenNowOnly ? 'Open now' : `Open in ${monthName}`}</div>
                 {filtered.length === 0 && <div style={{ opacity: 0.75 }}>No entries match this filter.</div>}
-                {filtered.map(entry => (
-                    <div
-                        key={entry.id}
-                        style={{
-                            border: `1px solid ${entry.type === 'hunting' ? '#f59e0b' : '#38bdf8'}`,
-                            borderRadius: 12,
-                            padding: '0.8rem',
-                            background: entry.type === 'hunting' ? 'rgba(120, 53, 15, 0.22)' : 'rgba(8, 47, 73, 0.28)',
-                            display: 'grid',
-                            gap: '0.35rem'
-                        }}
-                    >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.8rem', flexWrap: 'wrap' }}>
-                            <div style={{ fontWeight: 700 }}>{entry.species}</div>
-                            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                                <span style={{ textTransform: 'capitalize', opacity: 0.82 }}>{entry.type}</span>
+
+                <div style={{ display: 'grid', gap: '0.85rem' }}>
+                    <div style={{ fontWeight: 600, opacity: 0.9 }}>Hunting</div>
+                    {filteredHunting.length === 0 && <div style={{ opacity: 0.72 }}>No hunting options in this view.</div>}
+                    {filteredHunting.map(entry => (
+                        <div
+                            key={`${entry.id}-hunt`}
+                            style={{
+                                border: '1px solid #f59e0b',
+                                borderRadius: 10,
+                                padding: '0.7rem',
+                                display: 'grid',
+                                gap: '0.3rem',
+                                background: 'rgba(120, 53, 15, 0.22)'
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                <div style={{ fontWeight: 700 }}>{entry.species}</div>
                                 <span
                                     style={{
                                         fontSize: '0.75rem',
                                         borderRadius: 999,
-                                        padding: '0.12rem 0.45rem',
+                                        padding: '0.1rem 0.45rem',
                                         border: '1px solid #22c55e',
                                         background: 'rgba(22, 163, 74, 0.25)',
                                         color: '#bbf7d0'
                                     }}
                                 >
-                                    In season now
+                                    {seasonBadgeLabel}
                                 </span>
                             </div>
+                            <div style={{ opacity: 0.85 }}>{entry.location}</div>
+                            <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>{entry.notes}</div>
                         </div>
-                        <div style={{ opacity: 0.85 }}>{entry.location}</div>
-                        <div style={{ fontSize: '0.9rem', opacity: 0.78 }}>{entry.notes}</div>
-                        <div style={{ fontSize: '0.82rem', opacity: 0.7 }}>
-                            Open months: {entry.openMonths.map(m => MONTHS[m - 1].slice(0, 3)).join(', ')}
-                        </div>
-                    </div>
-                ))}
-            </section>
+                    ))}
+                </div>
 
-            <section className="panel panel-pad" style={{ display: 'grid', gap: '0.65rem' }}>
-                <div style={{ fontWeight: 700 }}>Hunting quick status for {MONTHS[month - 1]}</div>
-                <div style={{ display: 'grid', gap: '0.45rem' }}>
-                    {huntingStatusByMonth.map(entry => (
+                <div style={{ display: 'grid', gap: '0.85rem' }}>
+                    <div style={{ fontWeight: 600, opacity: 0.9 }}>Fishing</div>
+                    {filteredFishing.length === 0 && <div style={{ opacity: 0.72 }}>No fishing options in this view.</div>}
+                    {filteredFishing.map(entry => (
                         <div
-                            key={`${entry.id}-status`}
+                            key={`${entry.id}-fish`}
                             style={{
-                                border: `1px solid ${entry.inSeason ? '#22c55e' : '#64748b'}`,
+                                border: '1px solid #38bdf8',
                                 borderRadius: 10,
-                                padding: '0.55rem 0.7rem',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                gap: '0.75rem',
-                                flexWrap: 'wrap',
-                                background: entry.inSeason ? 'rgba(21, 128, 61, 0.2)' : 'rgba(51, 65, 85, 0.2)'
+                                padding: '0.7rem',
+                                display: 'grid',
+                                gap: '0.3rem',
+                                background: 'rgba(8, 47, 73, 0.28)'
                             }}
                         >
-                            <span style={{ fontWeight: 600 }}>{entry.species}</span>
-                            <span
-                                style={{
-                                    fontSize: '0.8rem',
-                                    color: entry.inSeason ? '#bbf7d0' : '#cbd5e1'
-                                }}
-                            >
-                                {entry.inSeason ? 'IN SEASON' : 'CLOSED THIS MONTH'}
-                            </span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                <div style={{ fontWeight: 700 }}>{entry.species}</div>
+                                <span
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        borderRadius: 999,
+                                        padding: '0.1rem 0.45rem',
+                                        border: '1px solid #22c55e',
+                                        background: 'rgba(22, 163, 74, 0.25)',
+                                        color: '#bbf7d0'
+                                    }}
+                                >
+                                    {seasonBadgeLabel}
+                                </span>
+                            </div>
+                            <div style={{ opacity: 0.85 }}>{entry.location}</div>
+                            <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>{entry.notes}</div>
                         </div>
                     ))}
                 </div>
             </section>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.65rem' }}>
-                <div style={{ fontWeight: 700 }}>Full-year season map</div>
-                <div style={{ display: 'grid', gap: '0.55rem' }}>
-                    {SEASONS.map(entry => (
-                        <div key={`${entry.id}-timeline`} style={{ display: 'grid', gap: '0.25rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 600 }}>{entry.species}</span>
-                                <span style={{ opacity: 0.78, textTransform: 'capitalize' }}>{entry.type}</span>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: '0.25rem' }}>
-                                {MONTHS.map((name, idx) => {
-                                    const active = entry.openMonths.includes(idx + 1);
-                                    return (
-                                        <div
-                                            key={`${entry.id}-${name}`}
-                                            title={`${name}: ${active ? 'in season' : 'closed'}`}
-                                            style={{
-                                                borderRadius: 6,
-                                                textAlign: 'center',
-                                                padding: '0.25rem 0',
-                                                fontSize: '0.72rem',
-                                                border: '1px solid #334155',
-                                                background: active
-                                                    ? entry.type === 'hunting'
-                                                        ? 'rgba(234, 88, 12, 0.45)'
-                                                        : 'rgba(14, 116, 144, 0.5)'
-                                                    : 'rgba(15, 23, 42, 0.55)',
-                                                color: active ? '#f8fafc' : '#94a3b8'
-                                            }}
-                                        >
-                                            {name.slice(0, 3)}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700 }}>Full-year season map</div>
+                    <button
+                        type="button"
+                        onClick={() => setShowFullYearMap(prev => !prev)}
+                        style={{
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: 8,
+                            border: '1px solid #334155',
+                            background: 'rgba(30, 41, 59, 0.6)',
+                            color: '#e2e8f0',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {showFullYearMap ? 'Hide year map' : 'Show year map'}
+                    </button>
                 </div>
+
+                <div style={{ fontSize: '0.84rem', opacity: 0.78 }}>
+                    Use this only when planning far ahead. For month-to-month decisions, the "Open this month" section above is the fastest view.
+                </div>
+
+                {showFullYearMap && (
+                    <div style={{ display: 'grid', gap: '0.55rem' }}>
+                        {SEASONS.map(entry => (
+                            <div key={`${entry.id}-timeline`} style={{ display: 'grid', gap: '0.25rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                    <span style={{ fontWeight: 600 }}>{entry.species}</span>
+                                    <span style={{ opacity: 0.78, textTransform: 'capitalize' }}>{entry.type}</span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: '0.25rem' }}>
+                                    {MONTHS.map((name, idx) => {
+                                        const active = entry.openMonths.includes(idx + 1);
+                                        return (
+                                            <div
+                                                key={`${entry.id}-${name}`}
+                                                title={`${name}: ${active ? 'in season' : 'closed'}`}
+                                                style={{
+                                                    borderRadius: 6,
+                                                    textAlign: 'center',
+                                                    padding: '0.25rem 0',
+                                                    fontSize: '0.72rem',
+                                                    border: '1px solid #334155',
+                                                    background: active
+                                                        ? entry.type === 'hunting'
+                                                            ? 'rgba(234, 88, 12, 0.45)'
+                                                            : 'rgba(14, 116, 144, 0.5)'
+                                                        : 'rgba(15, 23, 42, 0.55)',
+                                                    color: active ? '#f8fafc' : '#94a3b8'
+                                                }}
+                                            >
+                                                {name.slice(0, 3)}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </section>
         </div>
     );
