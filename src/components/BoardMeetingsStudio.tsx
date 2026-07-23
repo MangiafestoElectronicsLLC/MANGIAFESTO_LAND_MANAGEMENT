@@ -7,6 +7,7 @@ import { getSupabaseErrorCode, getSupabaseErrorMessage, isMissingTableSetupError
 import ConnectionDiagnostics from '@/components/ConnectionDiagnostics';
 
 type StorageMode = 'supabase' | 'local';
+type RecordingSource = 'local' | 'call-room';
 
 type BoardMeeting = {
     id: string;
@@ -126,6 +127,17 @@ const humanizeMediaError = (err: any) => {
     return err?.message || 'Could not access camera and microphone.';
 };
 
+const humanizeCallRoomError = (err: any) => {
+    const name = String(err?.name || '').toLowerCase();
+    if (name === 'notallowederror' || name === 'securityerror') {
+        return 'Screen share permission was denied. Allow sharing the call room tab/window with audio, then try again.';
+    }
+    if (name === 'notfounderror') {
+        return 'No screen/window source was available for call room recording.';
+    }
+    return err?.message || 'Could not capture the call room. Try sharing the call tab with audio enabled.';
+};
+
 export default function BoardMeetingsStudio() {
     const router = useRouter();
     const supabase = supabaseClient();
@@ -146,6 +158,7 @@ export default function BoardMeetingsStudio() {
     const [selectedMeetingId, setSelectedMeetingId] = useState<string>('');
     const [liveMeetingId, setLiveMeetingId] = useState<string | null>(null);
     const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
+    const [recordingSource, setRecordingSource] = useState<RecordingSource>('local');
     const [liveTitle, setLiveTitle] = useState('Family Board Meeting');
     const [liveDescription, setLiveDescription] = useState('');
     const [noteDraft, setNoteDraft] = useState('');
@@ -368,6 +381,40 @@ export default function BoardMeetingsStudio() {
         }
 
         throw lastError || new Error('Could not access camera and microphone.');
+    };
+
+    const getCallRoomMediaStream = async () => {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+            throw new Error('This browser cannot capture a tab/window for call room recording.');
+        }
+
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
+        });
+
+        // Some browsers skip tab audio unless the user toggles it on during share.
+        if (displayStream.getAudioTracks().length > 0) {
+            return displayStream;
+        }
+
+        try {
+            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const micTrack = micStream.getAudioTracks()[0];
+            if (micTrack) {
+                displayStream.addTrack(micTrack);
+                const stopMicTrack = () => {
+                    micTrack.stop();
+                };
+                displayStream.getVideoTracks().forEach(track => {
+                    track.addEventListener('ended', stopMicTrack, { once: true });
+                });
+            }
+        } catch {
+            // If mic access is denied we still keep video capture for meeting replay.
+        }
+
+        return displayStream;
     };
 
     useEffect(() => {
@@ -622,18 +669,26 @@ export default function BoardMeetingsStudio() {
         setError(null);
         setStatusMessage(null);
         let stream: MediaStream | null = null;
+        let sourceMode: RecordingSource = recordingSource;
 
         try {
             const userId = await ensureUser();
             if (!userId) return;
 
-            if (!navigator.mediaDevices?.getUserMedia) {
+            sourceMode = recordingSource;
+
+            if (sourceMode === 'local' && !navigator.mediaDevices?.getUserMedia) {
                 setError('This browser cannot access the camera and microphone. You can still open meetings and add notes.');
                 return;
             }
 
+            if (sourceMode === 'call-room' && !navigator.mediaDevices?.getDisplayMedia) {
+                setError('This browser cannot capture a shared call room. Use local recording mode or a modern browser that supports tab/window capture.');
+                return;
+            }
+
             setIsStarting(true);
-            stream = await getMeetingMediaStream();
+            stream = sourceMode === 'call-room' ? await getCallRoomMediaStream() : await getMeetingMediaStream();
 
             const audioTracks = stream.getAudioTracks();
             const hasAudioTrack = audioTracks.length > 0;
@@ -785,15 +840,23 @@ export default function BoardMeetingsStudio() {
 
             recorder.start(1000);
             if (hasAudioTrack) {
-                setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
+                if (sourceMode === 'call-room') {
+                    setStatusMessage('Live call room recording started. Keep the shared tab/window open while your family joins. Notes will be saved with timestamps.');
+                } else {
+                    setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
+                }
             } else {
-                setStatusMessage('Live meeting started, but no microphone audio track was detected. Allow microphone access and restart the meeting if you need audio in recordings.');
+                if (sourceMode === 'call-room') {
+                    setStatusMessage('Call room recording started, but no audio track was detected. When sharing, enable tab audio so family voices are included.');
+                } else {
+                    setStatusMessage('Live meeting started, but no microphone audio track was detected. Allow microphone access and restart the meeting if you need audio in recordings.');
+                }
             }
         } catch (err: any) {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
-            setError(humanizeMediaError(err));
+            setError(sourceMode === 'call-room' ? humanizeCallRoomError(err) : humanizeMediaError(err));
         } finally {
             setIsStarting(false);
         }
@@ -1092,13 +1155,62 @@ export default function BoardMeetingsStudio() {
                 )}
 
                 <div className="meetings-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div
+                        style={{
+                            display: 'flex',
+                            gap: '0.4rem',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            marginRight: '0.35rem'
+                        }}
+                    >
+                        <span style={{ opacity: 0.82, fontSize: '0.9rem' }}>Record source:</span>
+                        <button
+                            type="button"
+                            onClick={() => setRecordingSource('local')}
+                            disabled={Boolean(liveMeetingId)}
+                            className="soft-button"
+                            style={{
+                                borderColor: recordingSource === 'local' ? '#22c55e' : '#334155',
+                                color: recordingSource === 'local' ? '#bbf7d0' : '#cbd5e1',
+                                opacity: liveMeetingId && recordingSource !== 'local' ? 0.72 : 1
+                            }}
+                        >
+                            Local camera/mic
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setRecordingSource('call-room')}
+                            disabled={Boolean(liveMeetingId)}
+                            className="soft-button"
+                            style={{
+                                borderColor: recordingSource === 'call-room' ? '#22c55e' : '#334155',
+                                color: recordingSource === 'call-room' ? '#bbf7d0' : '#cbd5e1',
+                                opacity: liveMeetingId && recordingSource !== 'call-room' ? 0.72 : 1
+                            }}
+                        >
+                            Call room tab/window
+                        </button>
+                    </div>
                     <button onClick={startMeeting} disabled={isStarting || isStopping} className="soft-button" style={{ borderColor: '#2563eb', color: '#dbeafe' }}>
-                        {isStarting ? 'Starting...' : liveMeetingId ? 'Meeting live' : 'Start live meeting'}
+                        {isStarting
+                            ? 'Starting...'
+                            : liveMeetingId
+                                ? 'Meeting live'
+                                : recordingSource === 'call-room'
+                                    ? 'Start live call recording'
+                                    : 'Start live meeting'}
                     </button>
                     <button onClick={stopMeeting} disabled={isStarting || isStopping || (!liveMeetingId && !recorderRef.current)} className="soft-button" style={{ borderColor: '#ef4444', color: '#fecaca' }}>
                         {isStopping ? 'Stopping...' : 'Stop and save'}
                     </button>
                 </div>
+
+                {recordingSource === 'call-room' && !liveMeetingId && (
+                    <div style={{ opacity: 0.78, fontSize: '0.9rem' }}>
+                        Tip: pick the call room tab/window and enable share audio so everyone in the room is captured.
+                    </div>
+                )}
 
                 <div className="meetings-fields mobile-stack" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
@@ -1152,6 +1264,35 @@ export default function BoardMeetingsStudio() {
                             Copy room link
                         </button>
                     </div>
+                    {liveMeetingId && recordingSource === 'call-room' && (
+                        <div
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                width: 'fit-content',
+                                border: '1px solid #ef4444',
+                                borderRadius: 999,
+                                padding: '0.35rem 0.7rem',
+                                background: 'rgba(127, 29, 29, 0.32)',
+                                color: '#fecaca',
+                                fontWeight: 700,
+                                fontSize: '0.85rem'
+                            }}
+                        >
+                            <span
+                                aria-hidden="true"
+                                style={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    background: '#ef4444',
+                                    boxShadow: '0 0 0 4px rgba(239, 68, 68, 0.22)'
+                                }}
+                            />
+                            Call room recording active
+                        </div>
+                    )}
                     <iframe
                         src={activeRoomUrl}
                         title="Family live call room"
