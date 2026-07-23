@@ -35,7 +35,54 @@ type BoardMeetingNote = {
 const LOCAL_MEETINGS_KEY = 'family-land-local-meetings';
 const LOCAL_NOTES_KEY = 'family-land-local-meeting-notes';
 
-const SUPPORTED_MIME_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+const SUPPORTED_MIME_TYPES = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+];
+
+const extensionForMimeType = (mimeType: string | null | undefined) => {
+    const normalized = String(mimeType || '').toLowerCase();
+    if (normalized.includes('mp4')) return 'mp4';
+    if (normalized.includes('webm')) return 'webm';
+    if (normalized.includes('ogg')) return 'ogv';
+    return 'webm';
+};
+
+const extensionForPathOrUrl = (value: string | null | undefined) => {
+    const source = String(value || '').toLowerCase();
+    if (!source) return null;
+    if (source.includes('.mp4')) return 'mp4';
+    if (source.includes('.webm')) return 'webm';
+    if (source.includes('.ogv')) return 'ogv';
+    return null;
+};
+
+const detectMimeTypeFromBytes = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+
+    // MP4 files typically contain the `ftyp` box near byte 4.
+    if (bytes.length >= 12) {
+        const brand = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+        if (brand === 'ftyp') {
+            return 'video/mp4';
+        }
+    }
+
+    // WebM starts with an EBML header.
+    if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+        return 'video/webm';
+    }
+
+    // Ogg container signature.
+    if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+        return 'video/ogg';
+    }
+
+    return null;
+};
 
 const formatSeconds = (totalSeconds: number | null | undefined) => {
     const safeSeconds = Math.max(0, Math.floor(totalSeconds || 0));
@@ -85,6 +132,7 @@ export default function BoardMeetingsStudio() {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const recorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<BlobPart[]>([]);
+    const recordedMimeTypeRef = useRef<string | null>(null);
     const liveMeetingIdRef = useRef<string | null>(null);
     const liveStartedAtRef = useRef<number>(0);
 
@@ -105,6 +153,7 @@ export default function BoardMeetingsStudio() {
     const [isStarting, setIsStarting] = useState(false);
     const [isStopping, setIsStopping] = useState(false);
     const [isSavingNote, setIsSavingNote] = useState(false);
+    const [isMigratingRecording, setIsMigratingRecording] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [diagnosticLastOperation, setDiagnosticLastOperation] = useState('Startup checks');
@@ -440,7 +489,9 @@ export default function BoardMeetingsStudio() {
         if (playbackUrl) {
             video.srcObject = null;
             video.src = playbackUrl;
+            video.muted = false;
             video.load();
+            void video.play().catch(() => undefined);
             return;
         }
 
@@ -469,9 +520,15 @@ export default function BoardMeetingsStudio() {
     const selectedPlaybackUrl = selectedMeeting
         ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url || null
         : null;
+    const selectedExtension = selectedMeeting
+        ? extensionForPathOrUrl(selectedMeeting.recording_path) ||
+        extensionForPathOrUrl(selectedMeeting.recording_url) ||
+        extensionForPathOrUrl(selectedPlaybackUrl) ||
+        'webm'
+        : 'webm';
     const selectedDownloadName = selectedMeeting
-        ? `${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.webm`
-        : 'meeting.webm';
+        ? `${selectedMeeting.title.replace(/\s+/g, '-').toLowerCase() || 'meeting'}.${selectedExtension}`
+        : `meeting.${selectedExtension}`;
 
     const getPlaybackTime = () => {
         if (liveMeetingIdRef.current) {
@@ -643,8 +700,12 @@ export default function BoardMeetingsStudio() {
             const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
 
             chunksRef.current = [];
+            recordedMimeTypeRef.current = supportedMimeType || recorder.mimeType || null;
             recorder.ondataavailable = event => {
                 if (event.data.size > 0) {
+                    if (!recordedMimeTypeRef.current && event.data.type) {
+                        recordedMimeTypeRef.current = event.data.type;
+                    }
                     chunksRef.current.push(event.data);
                 }
             };
@@ -654,15 +715,18 @@ export default function BoardMeetingsStudio() {
                 void (async () => {
                     const meetingId = liveMeetingIdRef.current;
                     const recordedSeconds = Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000));
+                    const finalMimeType = recordedMimeTypeRef.current || recorder.mimeType || 'video/webm';
+                    const fileExtension = extensionForMimeType(finalMimeType);
                     const blob = new Blob(chunksRef.current, {
-                        type: supportedMimeType || 'video/webm'
+                        type: finalMimeType
                     });
 
                     chunksRef.current = [];
+                    recordedMimeTypeRef.current = null;
 
                     if (meetingId && blob.size > 0) {
                         if (isSupabaseMode) {
-                            const filePath = `${userId}/${meetingId}.webm`;
+                            const filePath = `${userId}/${meetingId}.${fileExtension}`;
                             const { error: uploadError } = await supabase.storage
                                 .from('board-meetings')
                                 .upload(filePath, blob, {
@@ -847,6 +911,126 @@ export default function BoardMeetingsStudio() {
         }
     };
 
+    const migrateSelectedRecording = async () => {
+        if (!selectedMeeting || !selectedPlaybackUrl) {
+            setError('Select a meeting with a recording before running migration.');
+            return;
+        }
+
+        setError(null);
+        setStatusMessage('Migrating selected legacy recording...');
+        setIsMigratingRecording(true);
+
+        try {
+            const response = await fetch(selectedPlaybackUrl, {
+                cache: 'no-store'
+            });
+
+            if (!response.ok) {
+                throw new Error(`Could not fetch recording for migration (HTTP ${response.status}).`);
+            }
+
+            const sourceBlob = await response.blob();
+            if (sourceBlob.size === 0) {
+                throw new Error('Selected recording is empty and cannot be migrated.');
+            }
+
+            const probeBuffer = await sourceBlob.slice(0, 64).arrayBuffer();
+            const detectedMime = detectMimeTypeFromBytes(probeBuffer);
+            const fallbackMimeFromPath = extensionForPathOrUrl(selectedMeeting.recording_path || selectedMeeting.recording_url || selectedPlaybackUrl);
+
+            const targetMimeType =
+                detectedMime ||
+                (sourceBlob.type ? sourceBlob.type : null) ||
+                (fallbackMimeFromPath === 'mp4' ? 'video/mp4' : fallbackMimeFromPath === 'ogv' ? 'video/ogg' : 'video/webm');
+
+            const targetBlob = sourceBlob.type === targetMimeType ? sourceBlob : new Blob([sourceBlob], { type: targetMimeType });
+            const targetExtension = extensionForMimeType(targetMimeType);
+
+            if (isSupabaseMode) {
+                const userId = profileId || (await ensureUser());
+                if (!userId) {
+                    throw new Error('Could not verify your account for migration.');
+                }
+
+                const filePath = `${userId}/${selectedMeeting.id}-migrated.${targetExtension}`;
+                const { error: uploadError } = await supabase.storage
+                    .from('board-meetings')
+                    .upload(filePath, targetBlob, {
+                        contentType: targetBlob.type,
+                        upsert: true
+                    });
+
+                if (uploadError) {
+                    throw uploadError;
+                }
+
+                const { data: publicData } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
+                const migratedPublicUrl = publicData?.publicUrl || null;
+
+                const { error: updateError } = await supabase
+                    .from('board_meetings')
+                    .update({
+                        status: 'recorded',
+                        recording_path: filePath,
+                        recording_url: migratedPublicUrl,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', selectedMeeting.id);
+
+                if (updateError) {
+                    throw updateError;
+                }
+
+                setMeetings(prev =>
+                    prev.map(meeting =>
+                        meeting.id === selectedMeeting.id
+                            ? {
+                                ...meeting,
+                                status: 'recorded',
+                                recording_path: filePath,
+                                recording_url: migratedPublicUrl,
+                                updated_at: new Date().toISOString()
+                            }
+                            : meeting
+                    )
+                );
+
+                const resolvedUrl = await resolvePlaybackUrl({
+                    ...selectedMeeting,
+                    recording_path: filePath,
+                    recording_url: migratedPublicUrl
+                });
+
+                if (resolvedUrl) {
+                    setPlaybackUrls(prev => ({
+                        ...prev,
+                        [selectedMeeting.id]: resolvedUrl
+                    }));
+                }
+            } else {
+                const localPlaybackUrl = URL.createObjectURL(targetBlob);
+                upsertLocalMeeting(selectedMeeting.id, meetingRecord => ({
+                    ...meetingRecord,
+                    status: 'recorded',
+                    recording_url: localPlaybackUrl,
+                    updated_at: new Date().toISOString()
+                }));
+
+                setPlaybackUrls(prev => ({
+                    ...prev,
+                    [selectedMeeting.id]: localPlaybackUrl
+                }));
+            }
+
+            setStatusMessage('Legacy migration complete. Try replaying this meeting now. If original recording has no audio track, migration cannot create missing audio.');
+        } catch (err: any) {
+            setError(getSupabaseErrorMessage(err, err?.message || 'Recording migration failed.'));
+        } finally {
+            setIsMigratingRecording(false);
+        }
+    };
+
     const seekToNote = (seconds: number) => {
         const video = videoRef.current;
         if (!video || liveStream) return;
@@ -999,19 +1183,31 @@ export default function BoardMeetingsStudio() {
                     controls={!liveMeetingId}
                     muted={Boolean(liveMeetingId)}
                     playsInline
+                    preload="metadata"
                     className="meetings-video"
                     style={{ width: '100%', maxHeight: 420, borderRadius: 18, background: '#020617', border: '1px solid #334155' }}
                 />
 
                 {selectedPlaybackUrl && !liveMeetingId && (
-                    <a
-                        href={selectedPlaybackUrl}
-                        download={selectedDownloadName}
-                        className="soft-button"
-                        style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe' }}
-                    >
-                        Download recording
-                    </a>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <a
+                            href={selectedPlaybackUrl}
+                            download={selectedDownloadName}
+                            className="soft-button"
+                            style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe' }}
+                        >
+                            Download recording
+                        </a>
+                        <button
+                            type="button"
+                            onClick={migrateSelectedRecording}
+                            disabled={isMigratingRecording}
+                            className="soft-button"
+                            style={{ borderColor: '#f59e0b', color: '#fde68a' }}
+                        >
+                            {isMigratingRecording ? 'Migrating...' : 'Migrate legacy recording'}
+                        </button>
+                    </div>
                 )}
 
                 <div className="meetings-notes-compose" style={{ display: 'grid', gap: '0.5rem' }}>
