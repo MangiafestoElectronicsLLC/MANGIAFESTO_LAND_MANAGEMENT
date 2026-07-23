@@ -5,78 +5,24 @@ import BoardMeetingsStudio from '@/components/BoardMeetingsStudio';
 
 export default function MeetingsPage() {
     return (
-        <div style={{ display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link
-                    href="/dashboard"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+        <div className="page-stack">
+            <div className="toolbar">
+                <Link href="/dashboard" className="chip-link">
                     Main Dashboard
                 </Link>
-                <Link
-                    href="/dashboard/roles"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/roles" className="chip-link">
                     Role Directory
                 </Link>
-                <Link
-                    href="/dashboard/tickets"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/tickets" className="chip-link">
                     Tickets
                 </Link>
-                <Link
-                    href="/dashboard/system"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/system" className="chip-link">
                     System Check
                 </Link>
-                <Link
-                    href="/dashboard/property-map"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/property-map" className="chip-link">
                     Property Map
                 </Link>
-                <Link
-                    href="/dashboard/calendar"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/calendar" className="chip-link">
                     Hunting/Fishing Calendar
                 </Link>
             </div>

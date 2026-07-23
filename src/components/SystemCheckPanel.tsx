@@ -188,29 +188,13 @@ export default function SystemCheckPanel() {
     const needsSetup = summary.missing > 0;
 
     return (
-        <div
-            style={{
-                border: '1px solid #1f2937',
-                borderRadius: 8,
-                padding: '1rem',
-                background: '#020617',
-                display: 'grid',
-                gap: '0.75rem'
-            }}
-        >
+        <div className="panel-soft" style={{ gap: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <div style={{ fontWeight: 700 }}>System Check</div>
                 <button
                     onClick={runChecks}
                     disabled={running}
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        background: 'transparent',
-                        color: '#cbd5e1',
-                        cursor: 'pointer'
-                    }}
+                    className="button-secondary"
                 >
                     {running ? 'Checking...' : 'Run check again'}
                 </button>

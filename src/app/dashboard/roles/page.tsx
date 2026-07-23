@@ -32,27 +32,27 @@ export default function RolesDirectoryPage() {
         load();
     }, []);
 
-    if (loading) return <div>Loading roles...</div>;
+    if (loading) return <div className="panel-soft">Loading roles...</div>;
 
     return (
-        <div style={{ display: 'grid', gap: '1rem' }}>
+        <div className="page-stack">
             <div>
-                <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>Role Directory</div>
+                <div className="section-eyebrow">Role Directory</div>
                 <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>Open Any Role Board</div>
             </div>
 
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-                <Link href="/dashboard" style={{ color: '#93c5fd', textDecoration: 'none' }}>
+            <div className="page-stack" style={{ gap: '0.5rem' }}>
+                <Link href="/dashboard" className="chip-link-muted">
                     Main Dashboard
                 </Link>
-                <Link href="/dashboard/role/unassigned" style={{ color: '#93c5fd', textDecoration: 'none' }}>
+                <Link href="/dashboard/role/unassigned" className="chip-link-muted">
                     Unassigned Tickets Board
                 </Link>
                 {roles.map(role => (
                     <Link
                         key={role.id}
                         href={`/dashboard/role/${roleNameToSlug(role.name)}`}
-                        style={{ color: '#93c5fd', textDecoration: 'none' }}
+                        className="chip-link-muted"
                     >
                         {role.name} Board
                     </Link>

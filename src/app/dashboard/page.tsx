@@ -256,33 +256,20 @@ export default function DashboardPage() {
         return counts;
     }, [roles, tickets]);
 
-    if (loading) return <div>Loading...</div>;
+    if (loading) return <div className="panel-soft">Loading...</div>;
 
     if (pageError) {
         return (
             <div
-                style={{
-                    border: '1px solid #7f1d1d',
-                    borderRadius: 8,
-                    padding: '1rem',
-                    background: '#1f1111',
-                    display: 'grid',
-                    gap: '0.65rem'
-                }}
+                className="panel-soft"
+                style={{ borderColor: '#7f1d1d', background: '#1f1111', gap: '0.65rem' }}
             >
                 <div style={{ fontWeight: 600 }}>Dashboard Error</div>
                 <div style={{ fontSize: '0.9rem', color: '#fecaca' }}>{pageError}</div>
                 <button
                     onClick={() => window.location.reload()}
-                    style={{
-                        width: 'fit-content',
-                        padding: '0.4rem 0.75rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        background: 'transparent',
-                        color: '#e2e8f0',
-                        cursor: 'pointer'
-                    }}
+                    className="button-secondary"
+                    style={{ width: 'fit-content' }}
                 >
                     Reload page
                 </button>
@@ -291,147 +278,96 @@ export default function DashboardPage() {
     }
 
     return (
-        <div style={{ display: 'grid', gap: '1.5rem' }}>
-            <div
-                style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '0.75rem'
-                }}
-            >
+        <div className="page-stack" style={{ gap: '1.5rem' }}>
+            <div className="toolbar toolbar-spread">
                 <div>
-                    <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>Logged in as</div>
+                    <div className="section-eyebrow">Logged in as</div>
                     <div>{profile?.full_name || email || 'Unknown user'}</div>
-                    <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>{email}</div>
+                    <div className="section-subtle">{email}</div>
                     <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>
                         Role: {roleName}
                     </div>
                 </div>
-                <button
-                    onClick={handleSignOut}
-                    style={{
-                        padding: '0.4rem 0.75rem',
-                        borderRadius: 4,
-                        border: '1px solid #f97373',
-                        background: 'transparent',
-                        color: '#fecaca',
-                        cursor: 'pointer'
-                    }}
-                >
+                <button onClick={handleSignOut} className="button-danger">
                     Sign out
                 </button>
             </div>
 
-            <div
-                style={{
-                    border: '1px solid #1f2937',
-                    borderRadius: 8,
-                    padding: '1rem',
-                    background: '#020617',
-                    display: 'grid',
-                    gap: '0.8rem'
-                }}
-            >
+            <div className="panel-soft" style={{ gap: '0.8rem' }}>
                 <div style={{ fontWeight: 600 }}>Board Views</div>
                 <div>
                     <Link
                         href="/dashboard/roles"
-                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                        className="chip-link-muted"
                     >
                         Open Role Directory
                     </Link>
-                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <span className="inline-dot">•</span>
                     <Link
                         href="/dashboard/meetings"
-                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                        className="chip-link-muted"
                     >
                         Open Board Meetings
                     </Link>
-                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <span className="inline-dot">•</span>
                     <Link
                         href="/dashboard/system"
-                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                        className="chip-link-muted"
                     >
                         Open System Check
                     </Link>
-                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <span className="inline-dot">•</span>
                     <Link
                         href="/dashboard/property-map"
-                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                        className="chip-link-muted"
                     >
                         Open Property Map
                     </Link>
-                    <span style={{ margin: '0 0.45rem', opacity: 0.5 }}>•</span>
+                    <span className="inline-dot">•</span>
+                    <Link
+                        href="/dashboard/trail-cams"
+                        className="chip-link-muted"
+                    >
+                        Open Trail Cams
+                    </Link>
+                    <span className="inline-dot">•</span>
                     <Link
                         href="/dashboard/calendar"
-                        style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.85rem' }}
+                        className="chip-link-muted"
                     >
-                        Open Season Planner
+                        Open Hunting / Fishing Calendar
                     </Link>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div className="pill-row">
                     <button
                         onClick={() => setSelectedRoleId('all')}
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 999,
-                            border: selectedRoleId === 'all' ? '1px solid #93c5fd' : '1px solid #334155',
-                            background: selectedRoleId === 'all' ? '#1e3a8a' : 'transparent',
-                            color: '#e2e8f0',
-                            cursor: 'pointer'
-                        }}
+                        className={`pill-button ${selectedRoleId === 'all' ? 'active-blue' : ''}`}
                     >
                         All Roles ({roleCounts.all || 0})
                     </button>
-                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                    <div className="pill-item">
                         <button
                             onClick={() => setSelectedRoleId('unassigned')}
-                            style={{
-                                padding: '0.35rem 0.65rem',
-                                borderRadius: 999,
-                                border: selectedRoleId === 'unassigned' ? '1px solid #93c5fd' : '1px solid #334155',
-                                background: selectedRoleId === 'unassigned' ? '#1e3a8a' : 'transparent',
-                                color: '#e2e8f0',
-                                cursor: 'pointer'
-                            }}
+                            className={`pill-button ${selectedRoleId === 'unassigned' ? 'active-blue' : ''}`}
                         >
                             Unassigned ({roleCounts.unassigned || 0})
                         </button>
-                        <Link
-                            href="/dashboard/role/unassigned"
-                            style={{
-                                fontSize: '0.72rem',
-                                color: '#93c5fd',
-                                textDecoration: 'none'
-                            }}
-                        >
+                        <Link href="/dashboard/role/unassigned" className="chip-link-muted" style={{ fontSize: '0.72rem' }}>
                             Open page
                         </Link>
                     </div>
                     {roles.map(role => (
-                        <div key={role.id} style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                        <div key={role.id} className="pill-item">
                             <button
                                 onClick={() => setSelectedRoleId(role.id)}
-                                style={{
-                                    padding: '0.35rem 0.65rem',
-                                    borderRadius: 999,
-                                    border: selectedRoleId === role.id ? '1px solid #93c5fd' : '1px solid #334155',
-                                    background: selectedRoleId === role.id ? '#1e3a8a' : 'transparent',
-                                    color: '#e2e8f0',
-                                    cursor: 'pointer'
-                                }}
+                                className={`pill-button ${selectedRoleId === role.id ? 'active-blue' : ''}`}
                             >
                                 {role.name} ({roleCounts[role.id] || 0})
                             </button>
                             <Link
                                 href={`/dashboard/role/${roleNameToSlug(role.name)}`}
-                                style={{
-                                    fontSize: '0.72rem',
-                                    color: '#93c5fd',
-                                    textDecoration: 'none'
-                                }}
+                                className="chip-link-muted"
+                                style={{ fontSize: '0.72rem' }}
                             >
                                 Open page
                             </Link>
@@ -439,36 +375,29 @@ export default function DashboardPage() {
                     ))}
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div className="pill-row">
                     {STATUS_OPTIONS.map(status => (
                         <button
                             key={status.key}
                             onClick={() => setSelectedStatus(status.key)}
-                            style={{
-                                padding: '0.35rem 0.65rem',
-                                borderRadius: 999,
-                                border: selectedStatus === status.key ? '1px solid #86efac' : '1px solid #334155',
-                                background: selectedStatus === status.key ? '#14532d' : 'transparent',
-                                color: '#e2e8f0',
-                                cursor: 'pointer'
-                            }}
+                            className={`pill-button ${selectedStatus === status.key ? 'active-green' : ''}`}
                         >
                             {status.label}
                         </button>
                     ))}
                 </div>
 
-                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                <div className="field-stack">
                     <div style={{ fontWeight: 600, fontSize: '0.86rem' }}>Find tickets by title, notes, or ticket number</div>
                     <input
                         value={ticketSearch}
                         onChange={e => setTicketSearch(e.target.value)}
                         placeholder="Search tickets or enter a ticket number like TKT-2026-12345"
-                        style={{ padding: '0.55rem 0.7rem', maxWidth: 460 }}
+                        className="input-compact"
                     />
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.85rem', opacity: 0.9 }}>
+                <div className="stats-row">
                     <span>All: {ticketCounts.all}</span>
                     <span>Open: {ticketCounts.open}</span>
                     <span>In Progress: {ticketCounts.in_progress}</span>
@@ -476,30 +405,16 @@ export default function DashboardPage() {
                     <span>Showing: {showingCount}</span>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div className="pill-row">
                     <button
                         onClick={() => setBoardMode('kanban')}
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 999,
-                            border: boardMode === 'kanban' ? '1px solid #22d3ee' : '1px solid #334155',
-                            background: boardMode === 'kanban' ? '#083344' : 'transparent',
-                            color: '#e2e8f0',
-                            cursor: 'pointer'
-                        }}
+                        className={`pill-button ${boardMode === 'kanban' ? 'active-cyan' : ''}`}
                     >
                         Kanban View
                     </button>
                     <button
                         onClick={() => setBoardMode('list')}
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 999,
-                            border: boardMode === 'list' ? '1px solid #22d3ee' : '1px solid #334155',
-                            background: boardMode === 'list' ? '#083344' : 'transparent',
-                            color: '#e2e8f0',
-                            cursor: 'pointer'
-                        }}
+                        className={`pill-button ${boardMode === 'list' ? 'active-cyan' : ''}`}
                     >
                         List View
                     </button>

@@ -167,22 +167,22 @@ export default function CalendarPage() {
     const seasonBadgeLabel = showOpenNowOnly ? 'Open now' : `Open in ${monthName}`;
 
     return (
-        <div style={{ display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link href="/dashboard" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
+        <div className="page-stack">
+            <div className="toolbar">
+                <Link href="/dashboard" className="chip-link">
                     Main Dashboard
                 </Link>
-                <Link href="/dashboard/tickets" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
+                <Link href="/dashboard/tickets" className="chip-link">
                     Tickets
                 </Link>
-                <Link href="/dashboard/meetings" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
+                <Link href="/dashboard/meetings" className="chip-link">
                     Board Meetings
                 </Link>
             </div>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.9rem' }}>
                 <div style={{ display: 'grid', gap: '0.3rem' }}>
-                    <div style={{ opacity: 0.85, fontSize: '0.85rem' }}>Brockport Seasonal Planner</div>
+                    <div style={{ opacity: 0.85, fontSize: '0.85rem' }}>Brockport Hunting / Fishing Calendar</div>
                     <h2 style={{ margin: 0, fontSize: 'clamp(1.4rem, 3.8vw, 2rem)' }}>What is open this month?</h2>
                     <div style={{ opacity: 0.78, maxWidth: 860 }}>
                         Pick a month, choose a type, and see what is in season around Brockport, New York. Always confirm legal dates and bag limits with current NYS DEC regulations.
@@ -364,7 +364,7 @@ export default function CalendarPage() {
                 </div>
 
                 <div style={{ fontSize: '0.84rem', opacity: 0.78 }}>
-                    Use this only when planning far ahead. For month-to-month decisions, the "Open this month" section above is the fastest view.
+                    Use this only when planning far ahead. For month-to-month decisions, the &quot;Open this month&quot; section above is the fastest view.
                 </div>
 
                 {showFullYearMap && (

@@ -307,28 +307,14 @@ export default function TicketList({ tickets, roles, onChanged }: Props) {
 
     if (!tickets.length) {
         return (
-            <div
-                style={{
-                    border: '1px solid #1f2937',
-                    borderRadius: 8,
-                    padding: '1rem',
-                    background: '#020617'
-                }}
-            >
+            <div className="panel-soft">
                 No tickets found in this view.
             </div>
         );
     }
 
     return (
-        <div
-            style={{
-                border: '1px solid #1f2937',
-                borderRadius: 8,
-                padding: '1rem',
-                background: '#020617'
-            }}
-        >
+        <div className="panel-soft">
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
                 <h3 style={{ margin: 0 }}>Tickets</h3>
                 <div style={{ fontSize: '0.84rem', opacity: 0.8 }}>{tickets.length} in this view</div>

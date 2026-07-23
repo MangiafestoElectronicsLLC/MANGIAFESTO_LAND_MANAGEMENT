@@ -5,54 +5,18 @@ import SystemCheckPanel from '@/components/SystemCheckPanel';
 
 export default function SystemPage() {
     return (
-        <div style={{ display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link
-                    href="/dashboard"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+        <div className="page-stack">
+            <div className="toolbar">
+                <Link href="/dashboard" className="chip-link">
                     Main Dashboard
                 </Link>
-                <Link
-                    href="/dashboard/roles"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/roles" className="chip-link">
                     Role Directory
                 </Link>
-                <Link
-                    href="/dashboard/meetings"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/meetings" className="chip-link">
                     Board Meetings
                 </Link>
-                <Link
-                    href="/dashboard/property-map"
-                    style={{
-                        padding: '0.35rem 0.65rem',
-                        borderRadius: 6,
-                        border: '1px solid #334155',
-                        color: '#cbd5e1',
-                        textDecoration: 'none'
-                    }}
-                >
+                <Link href="/dashboard/property-map" className="chip-link">
                     Property Map
                 </Link>
             </div>

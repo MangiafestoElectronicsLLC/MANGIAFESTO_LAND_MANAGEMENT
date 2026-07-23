@@ -157,45 +157,22 @@ export default function ActivityFeed({
     };
 
     return (
-        <div
-            style={{
-                border: '1px solid #1f2937',
-                borderRadius: 8,
-                padding: '1rem',
-                background: '#020617',
-                display: 'grid',
-                gap: '0.65rem'
-            }}
-        >
+        <div className="panel-soft" style={{ gap: '0.65rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <div style={{ fontWeight: 600 }}>{title}</div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.8rem', opacity: 0.85 }}>Unseen: {unseenCount}</span>
                     <button
                         onClick={markRead}
-                        style={{
-                            padding: '0.25rem 0.55rem',
-                            borderRadius: 6,
-                            border: '1px solid #334155',
-                            background: 'transparent',
-                            color: '#cbd5e1',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem'
-                        }}
+                        className="button-secondary"
+                        style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem' }}
                     >
                         Mark read
                     </button>
                     <button
                         onClick={requestBrowserNotifications}
-                        style={{
-                            padding: '0.25rem 0.55rem',
-                            borderRadius: 6,
-                            border: '1px solid #334155',
-                            background: 'transparent',
-                            color: '#cbd5e1',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem'
-                        }}
+                        className="button-secondary"
+                        style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem' }}
                     >
                         Enable alerts
                     </button>

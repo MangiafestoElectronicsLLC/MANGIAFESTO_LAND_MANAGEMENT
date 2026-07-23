@@ -163,14 +163,7 @@ export default function TicketForm({ roles, onCreated }: Props) {
     };
 
     return (
-        <div
-            style={{
-                border: '1px solid #1f2937',
-                borderRadius: 8,
-                padding: '1rem',
-                background: '#020617'
-            }}
-        >
+        <div className="panel-soft">
             <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Create ticket</h3>
             <form
                 onSubmit={handleSubmit}
@@ -236,10 +229,11 @@ export default function TicketForm({ roles, onCreated }: Props) {
                     disabled={loading}
                     style={{
                         padding: '0.5rem',
-                        borderRadius: 4,
+                        borderRadius: 8,
                         background: '#3b82f6',
                         border: 'none',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        color: '#e2e8f0'
                     }}
                 >
                     {loading ? 'Creating...' : 'Create ticket'}

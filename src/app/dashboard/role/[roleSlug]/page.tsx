@@ -129,16 +129,16 @@ export default function RoleDashboardPage() {
         router.push('/');
     };
 
-    if (loading) return <div>Loading...</div>;
+    if (loading) return <div className="panel-soft">Loading...</div>;
 
     if (!roleName) {
         return (
-            <div style={{ display: 'grid', gap: '1rem' }}>
+            <div className="page-stack">
                 <div>Role page not found.</div>
-                <Link href="/dashboard" style={{ color: '#93c5fd' }}>
+                <Link href="/dashboard" className="chip-link-muted">
                     Return to main dashboard
                 </Link>
-                <Link href="/dashboard/roles" style={{ color: '#93c5fd' }}>
+                <Link href="/dashboard/roles" className="chip-link-muted">
                     Open role directory
                 </Link>
             </div>
@@ -147,12 +147,12 @@ export default function RoleDashboardPage() {
 
     if (!selectedRole) {
         return (
-            <div style={{ display: 'grid', gap: '1rem' }}>
+            <div className="page-stack">
                 <div>Role {roleName} does not exist in your roles table yet.</div>
-                <Link href="/dashboard" style={{ color: '#93c5fd' }}>
+                <Link href="/dashboard" className="chip-link-muted">
                     Return to main dashboard
                 </Link>
-                <Link href="/dashboard/roles" style={{ color: '#93c5fd' }}>
+                <Link href="/dashboard/roles" className="chip-link-muted">
                     Open role directory
                 </Link>
             </div>
@@ -160,72 +160,27 @@ export default function RoleDashboardPage() {
     }
 
     return (
-        <div style={{ display: 'grid', gap: '1.25rem' }}>
-            <div
-                style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '0.75rem'
-                }}
-            >
+        <div className="page-stack" style={{ gap: '1.25rem' }}>
+            <div className="toolbar toolbar-spread">
                 <div>
-                    <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>Role Board</div>
+                    <div className="section-eyebrow">Role Board</div>
                     <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{selectedRole.name}</div>
-                    <div style={{ fontSize: '0.82rem', opacity: 0.7 }}>
+                    <div className="section-subtle">
                         Logged in as {profile?.full_name || 'Family Member'}
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <Link
-                        href="/dashboard"
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 6,
-                            border: '1px solid #334155',
-                            color: '#cbd5e1',
-                            textDecoration: 'none'
-                        }}
-                    >
+                <div className="toolbar">
+                    <Link href="/dashboard" className="chip-link">
                         Main Dashboard
                     </Link>
-                    <Link
-                        href="/dashboard/roles"
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 6,
-                            border: '1px solid #334155',
-                            color: '#cbd5e1',
-                            textDecoration: 'none'
-                        }}
-                    >
+                    <Link href="/dashboard/roles" className="chip-link">
                         Role Directory
                     </Link>
-                    <Link
-                        href="/dashboard/system"
-                        style={{
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: 6,
-                            border: '1px solid #334155',
-                            color: '#cbd5e1',
-                            textDecoration: 'none'
-                        }}
-                    >
+                    <Link href="/dashboard/system" className="chip-link">
                         System Check
                     </Link>
-                    <button
-                        onClick={handleSignOut}
-                        style={{
-                            padding: '0.4rem 0.75rem',
-                            borderRadius: 6,
-                            border: '1px solid #f97373',
-                            background: 'transparent',
-                            color: '#fecaca',
-                            cursor: 'pointer'
-                        }}
-                    >
+                    <button onClick={handleSignOut} className="button-danger">
                         Sign out
                     </button>
                 </div>

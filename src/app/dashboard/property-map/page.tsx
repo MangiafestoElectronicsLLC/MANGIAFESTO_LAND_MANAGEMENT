@@ -391,8 +391,10 @@ const computeTrailStats = (trailPoints: TrailPoint[], calibration: MapBoundsCali
         }
     }
 
-    const firstTime = trailPoints[0].capturedAtIso ? Date.parse(trailPoints[0].capturedAtIso) : NaN;
-    const lastTime = trailPoints[trailPoints.length - 1].capturedAtIso ? Date.parse(trailPoints[trailPoints.length - 1].capturedAtIso) : NaN;
+    const firstCapturedAt = trailPoints[0]?.capturedAtIso;
+    const lastCapturedAt = trailPoints[trailPoints.length - 1]?.capturedAtIso;
+    const firstTime = typeof firstCapturedAt === 'string' ? Date.parse(firstCapturedAt) : NaN;
+    const lastTime = typeof lastCapturedAt === 'string' ? Date.parse(lastCapturedAt) : NaN;
     const durationSeconds = Number.isFinite(firstTime) && Number.isFinite(lastTime) && lastTime >= firstTime
         ? Math.round((lastTime - firstTime) / 1000)
         : null;

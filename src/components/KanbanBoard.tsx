@@ -379,14 +379,7 @@ export default function KanbanBoard({ tickets, roles, onChanged }: Props) {
     };
 
     return (
-        <div
-            style={{
-                border: '1px solid #1f2937',
-                borderRadius: 8,
-                padding: '1rem',
-                background: '#020617'
-            }}
-        >
+        <div className="panel-soft">
             <div style={{ marginBottom: '0.8rem', fontWeight: 600 }}>Kanban Board (drag and drop)</div>
             {actionError && <div style={{ color: '#fca5a5', fontSize: '0.84rem', marginBottom: '0.65rem' }}>{actionError}</div>}
             {actionMessage && <div style={{ color: '#86efac', fontSize: '0.84rem', marginBottom: '0.65rem' }}>{actionMessage}</div>}

@@ -59,8 +59,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         <nav className="app-nav" aria-label="Primary">
                             <Link href="/dashboard">Dashboard</Link>
                             <Link href="/dashboard/tickets">Tickets</Link>
+                            <Link href="/dashboard/trail-cams">Trail Cams</Link>
                             <Link href="/dashboard/property-map">Property Map</Link>
-                            <Link href="/dashboard/calendar">Season Planner</Link>
+                            <Link href="/dashboard/calendar">Hunting / Fishing Calendar</Link>
                             <Link href="/dashboard/roles">Roles</Link>
                             <Link href="/dashboard/meetings">Board Meetings</Link>
                             <Link href="/dashboard/system">System Check</Link>

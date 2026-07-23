@@ -9,6 +9,11 @@ const nextConfig = {
         ]
     },
     async headers() {
+        const isDev = process.env.NODE_ENV !== 'production';
+        const scriptSrc = isDev
+            ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+            : "script-src 'self' 'unsafe-inline'";
+
         return [
             {
                 source: '/:path*',
@@ -27,12 +32,12 @@ const nextConfig = {
                     },
                     {
                         key: 'Permissions-Policy',
-                        value: 'camera=(self), microphone=(), geolocation=()'
+                        value: 'camera=(self), microphone=(self), geolocation=(self)'
                     },
                     {
                         key: 'Content-Security-Policy',
                         value:
-                            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src 'self' https://me-cam.replit.app; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
                     }
                 ]
             }
