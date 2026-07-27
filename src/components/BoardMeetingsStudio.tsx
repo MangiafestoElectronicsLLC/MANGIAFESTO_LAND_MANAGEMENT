@@ -147,6 +147,7 @@ export default function BoardMeetingsStudio() {
     const recordedMimeTypeRef = useRef<string | null>(null);
     const liveMeetingIdRef = useRef<string | null>(null);
     const liveStartedAtRef = useRef<number>(0);
+    const manualStopRequestedRef = useRef(false);
 
     const [storageMode, setStorageMode] = useState<StorageMode>('supabase');
     const [setupNotice, setSetupNotice] = useState<string | null>(null);
@@ -167,6 +168,9 @@ export default function BoardMeetingsStudio() {
     const [isStopping, setIsStopping] = useState(false);
     const [isSavingNote, setIsSavingNote] = useState(false);
     const [isMigratingRecording, setIsMigratingRecording] = useState(false);
+    const [isResumingCapture, setIsResumingCapture] = useState(false);
+    const [isRefreshingPlayback, setIsRefreshingPlayback] = useState(false);
+    const [isDeletingMeetingId, setIsDeletingMeetingId] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [diagnosticLastOperation, setDiagnosticLastOperation] = useState('Startup checks');
@@ -602,6 +606,152 @@ export default function BoardMeetingsStudio() {
         });
     };
 
+    const attachRecorder = useCallback(
+        (args: {
+            stream: MediaStream;
+            userId: string;
+            sourceMode: RecordingSource;
+            meetingId: string;
+        }) => {
+            const { stream, userId, sourceMode, meetingId } = args;
+
+            if (!window.MediaRecorder) {
+                setStatusMessage('Live meeting started, but this browser cannot record video. Notes still work.');
+                return;
+            }
+
+            const supportedMimeType = SUPPORTED_MIME_TYPES.find(type => window.MediaRecorder?.isTypeSupported(type));
+            const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
+
+            chunksRef.current = [];
+            recordedMimeTypeRef.current = supportedMimeType || recorder.mimeType || null;
+            recorder.ondataavailable = event => {
+                if (event.data.size > 0) {
+                    if (!recordedMimeTypeRef.current && event.data.type) {
+                        recordedMimeTypeRef.current = event.data.type;
+                    }
+                    chunksRef.current.push(event.data);
+                }
+            };
+
+            recorder.onstop = () => {
+                void (async () => {
+                    const activeMeetingId = liveMeetingIdRef.current;
+                    const shouldFinalizeMeeting = manualStopRequestedRef.current;
+                    const recordedSeconds = Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000));
+                    const finalMimeType = recordedMimeTypeRef.current || recorder.mimeType || 'video/webm';
+                    const fileExtension = extensionForMimeType(finalMimeType);
+                    const blob = new Blob(chunksRef.current, {
+                        type: finalMimeType
+                    });
+
+                    chunksRef.current = [];
+                    recordedMimeTypeRef.current = null;
+                    recorderRef.current = null;
+                    setLiveStream(null);
+
+                    const targetMeetingId = activeMeetingId || meetingId;
+                    if (targetMeetingId && blob.size > 0) {
+                        if (isSupabaseMode) {
+                            const filePath = `${userId}/${targetMeetingId}.${fileExtension}`;
+                            const { error: uploadError } = await supabase.storage
+                                .from('board-meetings')
+                                .upload(filePath, blob, {
+                                    contentType: blob.type,
+                                    upsert: true
+                                });
+
+                            let recordingUrl: string | null = null;
+                            if (!uploadError) {
+                                const { data } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
+                                recordingUrl = data.publicUrl;
+                            }
+
+                            await supabase
+                                .from('board_meetings')
+                                .update({
+                                    status: recordingUrl ? (shouldFinalizeMeeting ? 'recorded' : 'live') : shouldFinalizeMeeting ? 'completed' : 'live',
+                                    ...(shouldFinalizeMeeting ? { ended_at: new Date().toISOString() } : {}),
+                                    recording_path: filePath,
+                                    recording_url: recordingUrl,
+                                    duration_seconds: recordedSeconds,
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('id', targetMeetingId);
+
+                            if (uploadError) {
+                                setStatusMessage('Meeting saved, but recording upload failed. Run storage_board_meetings.sql and try again.');
+                            } else if (shouldFinalizeMeeting) {
+                                setStatusMessage('Meeting recording saved. You can play it back and add notes now.');
+                            } else {
+                                setStatusMessage('Capture ended. Meeting is still live. Reopen call room capture or stop manually when done.');
+                            }
+                        } else {
+                            const localPlaybackUrl = URL.createObjectURL(blob);
+                            upsertLocalMeeting(targetMeetingId, meetingRecord => ({
+                                ...meetingRecord,
+                                status: shouldFinalizeMeeting ? 'recorded' : 'live',
+                                ended_at: shouldFinalizeMeeting ? new Date().toISOString() : null,
+                                recording_url: localPlaybackUrl,
+                                duration_seconds: recordedSeconds,
+                                updated_at: new Date().toISOString()
+                            }));
+                            setStatusMessage(
+                                shouldFinalizeMeeting
+                                    ? 'Meeting saved in local mode. Replay works now on this page.'
+                                    : 'Capture ended. Meeting is still live. Resume capture or stop manually when done.'
+                            );
+                        }
+
+                        setSelectedMeetingId(targetMeetingId);
+                    }
+
+                    if (shouldFinalizeMeeting) {
+                        liveMeetingIdRef.current = null;
+                        liveStartedAtRef.current = 0;
+                        manualStopRequestedRef.current = false;
+                        setLiveMeetingId(null);
+                        await refreshAfterSave();
+                        setIsStopping(false);
+                        return;
+                    }
+
+                    await refreshAfterSave();
+                    setIsStopping(false);
+                })();
+            };
+
+            // If tab/window sharing ends, recorder stops. Keep meeting live until user manually ends it.
+            stream.getVideoTracks().forEach(track => {
+                track.addEventListener(
+                    'ended',
+                    () => {
+                        if (manualStopRequestedRef.current) return;
+                        setStatusMessage('Call room sharing ended. Meeting is still live; resume capture or stop and save when ready.');
+                    },
+                    { once: true }
+                );
+            });
+
+            recorderRef.current = recorder;
+            recorder.start(1000);
+
+            const hasAudioTrack = stream.getAudioTracks().length > 0;
+            if (hasAudioTrack) {
+                if (sourceMode === 'call-room') {
+                    setStatusMessage('Live call room recording started. Keep the shared tab/window open while your family joins. Notes will be saved with timestamps.');
+                } else {
+                    setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
+                }
+            } else if (sourceMode === 'call-room') {
+                setStatusMessage('Call room recording started, but no audio track was detected. When sharing, enable tab audio so family voices are included.');
+            } else {
+                setStatusMessage('Live meeting started, but no microphone audio track was detected. Allow microphone access and restart the meeting if you need audio in recordings.');
+            }
+        },
+        [isSupabaseMode, supabase]
+    );
+
     const retrySupabaseMode = async () => {
         setError(null);
         setSetupNotice(null);
@@ -740,118 +890,18 @@ export default function BoardMeetingsStudio() {
 
             liveMeetingIdRef.current = meeting.id;
             liveStartedAtRef.current = Date.now();
+            manualStopRequestedRef.current = false;
             setLiveMeetingId(meeting.id);
             setLiveStream(stream);
             setSelectedMeetingId(meeting.id);
             setMeetings(prev => [meeting, ...prev.filter(item => item.id !== meeting.id)]);
 
-            if (!window.MediaRecorder) {
-                setStatusMessage('Live meeting started, but this browser cannot record video. Notes still work.');
-                setIsStarting(false);
-                return;
-            }
-
-            const supportedMimeType = SUPPORTED_MIME_TYPES.find(type => window.MediaRecorder?.isTypeSupported(type));
-            const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
-
-            chunksRef.current = [];
-            recordedMimeTypeRef.current = supportedMimeType || recorder.mimeType || null;
-            recorder.ondataavailable = event => {
-                if (event.data.size > 0) {
-                    if (!recordedMimeTypeRef.current && event.data.type) {
-                        recordedMimeTypeRef.current = event.data.type;
-                    }
-                    chunksRef.current.push(event.data);
-                }
-            };
-            recorderRef.current = recorder;
-
-            recorder.onstop = () => {
-                void (async () => {
-                    const meetingId = liveMeetingIdRef.current;
-                    const recordedSeconds = Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000));
-                    const finalMimeType = recordedMimeTypeRef.current || recorder.mimeType || 'video/webm';
-                    const fileExtension = extensionForMimeType(finalMimeType);
-                    const blob = new Blob(chunksRef.current, {
-                        type: finalMimeType
-                    });
-
-                    chunksRef.current = [];
-                    recordedMimeTypeRef.current = null;
-
-                    if (meetingId && blob.size > 0) {
-                        if (isSupabaseMode) {
-                            const filePath = `${userId}/${meetingId}.${fileExtension}`;
-                            const { error: uploadError } = await supabase.storage
-                                .from('board-meetings')
-                                .upload(filePath, blob, {
-                                    contentType: blob.type,
-                                    upsert: true
-                                });
-
-                            let recordingUrl: string | null = null;
-                            if (!uploadError) {
-                                const { data } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
-                                recordingUrl = data.publicUrl;
-                            }
-
-                            await supabase
-                                .from('board_meetings')
-                                .update({
-                                    status: recordingUrl ? 'recorded' : 'completed',
-                                    ended_at: new Date().toISOString(),
-                                    recording_path: filePath,
-                                    recording_url: recordingUrl,
-                                    duration_seconds: recordedSeconds,
-                                    updated_at: new Date().toISOString()
-                                })
-                                .eq('id', meetingId);
-
-                            if (uploadError) {
-                                setStatusMessage('Meeting saved, but recording upload failed. Run storage_board_meetings.sql and try again.');
-                            } else {
-                                setStatusMessage('Meeting recording saved. You can play it back and add notes now.');
-                            }
-                        } else {
-                            const localPlaybackUrl = URL.createObjectURL(blob);
-                            upsertLocalMeeting(meetingId, meetingRecord => ({
-                                ...meetingRecord,
-                                status: 'recorded',
-                                ended_at: new Date().toISOString(),
-                                recording_url: localPlaybackUrl,
-                                duration_seconds: recordedSeconds,
-                                updated_at: new Date().toISOString()
-                            }));
-                            setStatusMessage('Meeting saved in local mode. Replay works now on this page.');
-                        }
-
-                        setSelectedMeetingId(meetingId);
-                    }
-
-                    recorderRef.current = null;
-                    liveMeetingIdRef.current = null;
-                    liveStartedAtRef.current = 0;
-                    setLiveMeetingId(null);
-                    setLiveStream(null);
-                    await refreshAfterSave();
-                    setIsStopping(false);
-                })();
-            };
-
-            recorder.start(1000);
-            if (hasAudioTrack) {
-                if (sourceMode === 'call-room') {
-                    setStatusMessage('Live call room recording started. Keep the shared tab/window open while your family joins. Notes will be saved with timestamps.');
-                } else {
-                    setStatusMessage('Live meeting started. Notes will be saved with timestamps.');
-                }
-            } else {
-                if (sourceMode === 'call-room') {
-                    setStatusMessage('Call room recording started, but no audio track was detected. When sharing, enable tab audio so family voices are included.');
-                } else {
-                    setStatusMessage('Live meeting started, but no microphone audio track was detected. Allow microphone access and restart the meeting if you need audio in recordings.');
-                }
-            }
+            attachRecorder({
+                stream,
+                userId,
+                sourceMode,
+                meetingId: meeting.id
+            });
         } catch (err: any) {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -871,6 +921,7 @@ export default function BoardMeetingsStudio() {
 
         setStatusMessage('Saving meeting...');
         setIsStopping(true);
+        manualStopRequestedRef.current = true;
 
         try {
             if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -907,6 +958,7 @@ export default function BoardMeetingsStudio() {
 
                 liveMeetingIdRef.current = null;
                 liveStartedAtRef.current = 0;
+                manualStopRequestedRef.current = false;
                 setLiveMeetingId(null);
                 setLiveStream(null);
                 await refreshAfterSave();
@@ -918,6 +970,122 @@ export default function BoardMeetingsStudio() {
             if (!recorderRef.current || recorderRef.current.state === 'inactive') {
                 setIsStopping(false);
             }
+        }
+    };
+
+    const resumeCallRoomCapture = async () => {
+        if (!liveMeetingIdRef.current || recorderRef.current || recordingSource !== 'call-room') {
+            return;
+        }
+
+        setError(null);
+        setIsResumingCapture(true);
+
+        try {
+            const userId = profileId || (await ensureUser());
+            if (!userId) return;
+
+            const stream = await getCallRoomMediaStream();
+            setLiveStream(stream);
+            attachRecorder({
+                stream,
+                userId,
+                sourceMode: 'call-room',
+                meetingId: liveMeetingIdRef.current
+            });
+            setStatusMessage('Call room capture resumed.');
+        } catch (err: any) {
+            setError(humanizeCallRoomError(err));
+        } finally {
+            setIsResumingCapture(false);
+        }
+    };
+
+    const refreshSelectedPlayback = async (meeting: BoardMeeting | null) => {
+        if (!meeting) return;
+        setIsRefreshingPlayback(true);
+        try {
+            const refreshedUrl = await resolvePlaybackUrl(meeting);
+            if (refreshedUrl) {
+                setPlaybackUrls(prev => ({
+                    ...prev,
+                    [meeting.id]: refreshedUrl
+                }));
+                setStatusMessage(`Refreshed playback link for ${meeting.title}.`);
+            } else {
+                setError('Could not refresh playback URL for the selected meeting.');
+            }
+        } catch (err: any) {
+            setError(getSupabaseErrorMessage(err, 'Could not refresh playback URL.'));
+        } finally {
+            setIsRefreshingPlayback(false);
+        }
+    };
+
+    const deleteMeeting = async (meeting: BoardMeeting) => {
+        if (!meeting?.id) return;
+        if (liveMeetingIdRef.current === meeting.id) {
+            setError('Stop the live meeting before deleting it.');
+            return;
+        }
+
+        const confirmed = window.confirm(`Delete meeting "${meeting.title}" and its notes? This cannot be undone.`);
+        if (!confirmed) return;
+
+        setError(null);
+        setIsDeletingMeetingId(meeting.id);
+
+        try {
+            if (isSupabaseMode) {
+                if (meeting.recording_path) {
+                    await supabase.storage.from('board-meetings').remove([meeting.recording_path]);
+                }
+
+                const { error: deleteError } = await supabase.from('board_meetings').delete().eq('id', meeting.id);
+                if (deleteError) throw deleteError;
+            } else {
+                const localMeetingNotes = readLocalNotes();
+                const nextNotes = { ...localMeetingNotes };
+                delete nextNotes[meeting.id];
+                saveLocalNotes(nextNotes);
+                setNotesByMeeting(nextNotes);
+
+                if (meeting.recording_url?.startsWith('blob:')) {
+                    URL.revokeObjectURL(meeting.recording_url);
+                }
+            }
+
+            setMeetings(prev => {
+                const nextMeetings = prev.filter(item => item.id !== meeting.id);
+                if (!isSupabaseMode) {
+                    saveLocalMeetings(nextMeetings);
+                }
+                return nextMeetings;
+            });
+
+            setPlaybackUrls(prev => {
+                const next = { ...prev };
+                delete next[meeting.id];
+                return next;
+            });
+
+            setNotesByMeeting(prev => {
+                const next = { ...prev };
+                delete next[meeting.id];
+                return next;
+            });
+
+            if (selectedMeetingId === meeting.id) {
+                const nextMeeting = meetings.find(item => item.id !== meeting.id) || null;
+                setSelectedMeetingId(nextMeeting?.id || '');
+            }
+
+            setStatusMessage(`Deleted ${meeting.title}.`);
+            await refreshAfterSave();
+        } catch (err: any) {
+            setError(getSupabaseErrorMessage(err, 'Could not delete the meeting.'));
+        } finally {
+            setIsDeletingMeetingId(null);
         }
     };
 
@@ -975,7 +1143,7 @@ export default function BoardMeetingsStudio() {
     };
 
     const migrateSelectedRecording = async () => {
-        if (!selectedMeeting || !selectedPlaybackUrl) {
+        if (!selectedMeeting) {
             setError('Select a meeting with a recording before running migration.');
             return;
         }
@@ -985,15 +1153,34 @@ export default function BoardMeetingsStudio() {
         setIsMigratingRecording(true);
 
         try {
-            const response = await fetch(selectedPlaybackUrl, {
-                cache: 'no-store'
-            });
+            const freshestPlaybackUrl = await resolvePlaybackUrl(selectedMeeting);
+            const fetchUrl = freshestPlaybackUrl || selectedPlaybackUrl;
 
-            if (!response.ok) {
-                throw new Error(`Could not fetch recording for migration (HTTP ${response.status}).`);
+            if (!fetchUrl && !selectedMeeting.recording_path) {
+                throw new Error('No recording URL/path found for this meeting.');
             }
 
-            const sourceBlob = await response.blob();
+            let sourceBlob: Blob;
+            if (isSupabaseMode && selectedMeeting.recording_path) {
+                const { data: downloadBlob, error: downloadError } = await supabase.storage
+                    .from('board-meetings')
+                    .download(selectedMeeting.recording_path);
+                if (downloadError || !downloadBlob) {
+                    throw downloadError || new Error('Could not download the selected recording for migration.');
+                }
+                sourceBlob = downloadBlob;
+            } else {
+                const response = await fetch(String(fetchUrl), {
+                    cache: 'no-store'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Could not fetch recording for migration (HTTP ${response.status}).`);
+                }
+
+                sourceBlob = await response.blob();
+            }
+
             if (sourceBlob.size === 0) {
                 throw new Error('Selected recording is empty and cannot be migrated.');
             }
@@ -1212,6 +1399,23 @@ export default function BoardMeetingsStudio() {
                     </div>
                 )}
 
+                {liveMeetingId && recordingSource === 'call-room' && !liveStream && (
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                            type="button"
+                            onClick={resumeCallRoomCapture}
+                            disabled={isResumingCapture || isStopping}
+                            className="soft-button"
+                            style={{ borderColor: '#f59e0b', color: '#fde68a' }}
+                        >
+                            {isResumingCapture ? 'Resuming capture...' : 'Resume call-room capture'}
+                        </button>
+                        <div style={{ alignSelf: 'center', opacity: 0.8, fontSize: '0.9rem' }}>
+                            The meeting stays live until you manually stop and save.
+                        </div>
+                    </div>
+                )}
+
                 <div className="meetings-fields mobile-stack" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Meeting title</span>
@@ -1325,6 +1529,11 @@ export default function BoardMeetingsStudio() {
                     muted={Boolean(liveMeetingId)}
                     playsInline
                     preload="metadata"
+                    onError={() => {
+                        if (!liveMeetingId && selectedMeeting) {
+                            void refreshSelectedPlayback(selectedMeeting);
+                        }
+                    }}
                     className="meetings-video"
                     style={{ width: '100%', maxHeight: 420, borderRadius: 18, background: '#020617', border: '1px solid #334155' }}
                 />
@@ -1339,6 +1548,17 @@ export default function BoardMeetingsStudio() {
                         >
                             Download recording
                         </a>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                void refreshSelectedPlayback(selectedMeeting);
+                            }}
+                            disabled={isRefreshingPlayback}
+                            className="soft-button"
+                            style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
+                        >
+                            {isRefreshingPlayback ? 'Refreshing playback...' : 'Refresh playback link'}
+                        </button>
                         <button
                             type="button"
                             onClick={migrateSelectedRecording}
@@ -1391,25 +1611,8 @@ export default function BoardMeetingsStudio() {
                         const isSelected = meeting.id === selectedMeetingId;
 
                         return (
-                            <button
+                            <div
                                 key={meeting.id}
-                                type="button"
-                                onClick={async () => {
-                                    setSelectedMeetingId(meeting.id);
-                                    if (isSupabaseMode) {
-                                        await loadNotes(meeting.id);
-                                    }
-
-                                    const url = await resolvePlaybackUrl(meeting);
-                                    if (url) {
-                                        setPlaybackUrls(prev => ({
-                                            ...prev,
-                                            [meeting.id]: url
-                                        }));
-                                    }
-
-                                    setStatusMessage(`Selected ${meeting.title}.`);
-                                }}
                                 className="meetings-card"
                                 style={{
                                     textAlign: 'left',
@@ -1417,10 +1620,39 @@ export default function BoardMeetingsStudio() {
                                     border: isSelected ? '1px solid #60a5fa' : '1px solid #334155',
                                     background: isSelected ? 'rgba(30, 41, 59, 0.9)' : 'rgba(2, 6, 23, 0.74)',
                                     padding: '0.9rem 1rem',
-                                    color: '#e2e8f0',
-                                    cursor: 'pointer'
+                                    color: '#e2e8f0'
                                 }}
                             >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            setSelectedMeetingId(meeting.id);
+                                            if (isSupabaseMode) {
+                                                await loadNotes(meeting.id);
+                                            }
+
+                                            await refreshSelectedPlayback(meeting);
+
+                                            setStatusMessage(`Selected ${meeting.title}.`);
+                                        }}
+                                        className="soft-button"
+                                        style={{ borderColor: '#334155', color: '#e2e8f0' }}
+                                    >
+                                        {isSelected ? 'Selected' : 'Select meeting'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            void deleteMeeting(meeting);
+                                        }}
+                                        disabled={isDeletingMeetingId === meeting.id || liveMeetingId === meeting.id}
+                                        className="soft-button"
+                                        style={{ borderColor: '#ef4444', color: '#fecaca' }}
+                                    >
+                                        {isDeletingMeetingId === meeting.id ? 'Deleting...' : 'Delete (admin)'}
+                                    </button>
+                                </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
                                     <div style={{ display: 'grid', gap: '0.25rem' }}>
                                         <div style={{ fontWeight: 700 }}>{meeting.title}</div>
@@ -1440,7 +1672,7 @@ export default function BoardMeetingsStudio() {
                                         : 'No uploaded recording yet.'}{' '}
                                     {meetingNotes.length} notes.
                                 </div>
-                            </button>
+                            </div>
                         );
                     })}
                 </div>
