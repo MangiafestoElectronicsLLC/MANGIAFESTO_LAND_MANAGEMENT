@@ -44,6 +44,9 @@ const SUPPORTED_MIME_TYPES = [
     'video/webm'
 ];
 
+const PLAYBACK_REFRESH_TIMEOUT_MS = 7000;
+const AUTO_REFRESH_COOLDOWN_MS = 20000;
+
 const extensionForMimeType = (mimeType: string | null | undefined) => {
     const normalized = String(mimeType || '').toLowerCase();
     if (normalized.includes('mp4')) return 'mp4';
@@ -148,6 +151,7 @@ export default function BoardMeetingsStudio() {
     const liveMeetingIdRef = useRef<string | null>(null);
     const liveStartedAtRef = useRef<number>(0);
     const manualStopRequestedRef = useRef(false);
+    const autoRefreshAttemptAtRef = useRef<Record<string, number>>({});
 
     const [storageMode, setStorageMode] = useState<StorageMode>('supabase');
     const [setupNotice, setSetupNotice] = useState<string | null>(null);
@@ -208,12 +212,32 @@ export default function BoardMeetingsStudio() {
             }
 
             if (meeting.recording_path) {
-                const { data, error: signedUrlError } = await supabase.storage
-                    .from('board-meetings')
-                    .createSignedUrl(meeting.recording_path, 60 * 60 * 24 * 7);
+                const signedUrlResult = await Promise.race([
+                    supabase.storage.from('board-meetings').createSignedUrl(meeting.recording_path, 60 * 60 * 24 * 7),
+                    new Promise<{ data: null; error: Error }>(resolve => {
+                        window.setTimeout(() => {
+                            resolve({ data: null, error: new Error('signed-url-timeout') });
+                        }, PLAYBACK_REFRESH_TIMEOUT_MS);
+                    })
+                ]);
+
+                const { data, error: signedUrlError } = signedUrlResult as {
+                    data: { signedUrl?: string } | null;
+                    error: unknown;
+                };
 
                 if (!signedUrlError && data?.signedUrl) {
                     return data.signedUrl;
+                }
+
+                // Fast fallback for public buckets when signed URL generation fails or times out.
+                const { data: publicData } = supabase.storage.from('board-meetings').getPublicUrl(meeting.recording_path);
+                if (publicData?.publicUrl) {
+                    return publicData.publicUrl;
+                }
+
+                if (String((signedUrlError as any)?.message || '').includes('signed-url-timeout')) {
+                    throw new Error('Playback source unavailable, click Migrate legacy recording');
                 }
             }
 
@@ -1001,9 +1025,21 @@ export default function BoardMeetingsStudio() {
         }
     };
 
-    const refreshSelectedPlayback = async (meeting: BoardMeeting | null) => {
+    const refreshSelectedPlayback = async (
+        meeting: BoardMeeting | null,
+        options?: {
+            showBusy?: boolean;
+            silent?: boolean;
+        }
+    ) => {
         if (!meeting) return;
-        setIsRefreshingPlayback(true);
+        const showBusy = options?.showBusy ?? true;
+        const silent = options?.silent ?? false;
+
+        if (showBusy) {
+            setIsRefreshingPlayback(true);
+        }
+
         try {
             const refreshedUrl = await resolvePlaybackUrl(meeting);
             if (refreshedUrl) {
@@ -1011,14 +1047,27 @@ export default function BoardMeetingsStudio() {
                     ...prev,
                     [meeting.id]: refreshedUrl
                 }));
-                setStatusMessage(`Refreshed playback link for ${meeting.title}.`);
+                if (!silent) {
+                    setStatusMessage(`Refreshed playback link for ${meeting.title}.`);
+                }
             } else {
-                setError('Could not refresh playback URL for the selected meeting.');
+                setError('Playback source unavailable, click Migrate legacy recording');
             }
         } catch (err: any) {
-            setError(getSupabaseErrorMessage(err, 'Could not refresh playback URL.'));
+            const message = getSupabaseErrorMessage(err, 'Could not refresh playback URL.');
+            if (
+                message.includes('signed-url-timeout') ||
+                message.toLowerCase().includes('timeout') ||
+                message.toLowerCase().includes('playback source unavailable')
+            ) {
+                setError('Playback source unavailable, click Migrate legacy recording');
+            } else {
+                setError(message);
+            }
         } finally {
-            setIsRefreshingPlayback(false);
+            if (showBusy) {
+                setIsRefreshingPlayback(false);
+            }
         }
     };
 
@@ -1531,7 +1580,15 @@ export default function BoardMeetingsStudio() {
                     preload="metadata"
                     onError={() => {
                         if (!liveMeetingId && selectedMeeting) {
-                            void refreshSelectedPlayback(selectedMeeting);
+                            const meetingId = selectedMeeting.id;
+                            const now = Date.now();
+                            const lastAttempt = autoRefreshAttemptAtRef.current[meetingId] || 0;
+                            if (now - lastAttempt < AUTO_REFRESH_COOLDOWN_MS) {
+                                return;
+                            }
+
+                            autoRefreshAttemptAtRef.current[meetingId] = now;
+                            void refreshSelectedPlayback(selectedMeeting, { showBusy: false, silent: true });
                         }
                     }}
                     className="meetings-video"
@@ -1632,7 +1689,9 @@ export default function BoardMeetingsStudio() {
                                                 await loadNotes(meeting.id);
                                             }
 
-                                            await refreshSelectedPlayback(meeting);
+                                            if (!playbackUrls[meeting.id] && meeting.recording_path) {
+                                                void refreshSelectedPlayback(meeting, { showBusy: false, silent: true });
+                                            }
 
                                             setStatusMessage(`Selected ${meeting.title}.`);
                                         }}
