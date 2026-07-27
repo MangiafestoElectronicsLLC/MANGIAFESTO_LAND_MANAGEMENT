@@ -75,11 +75,29 @@ type FeatureAttachmentsMeta = {
     attachments: FeatureAttachment[];
 };
 
+type FeatureVisualMeta = {
+    version: 1;
+    iconKey?: string;
+    trailColor?: string;
+    trailWidth?: number;
+    trailPattern?: 'solid' | 'dashed' | 'dotted';
+};
+
 type MapBoundsCalibration = {
     northLat: number;
     southLat: number;
     westLng: number;
     eastLng: number;
+};
+
+type MapImageFraming = {
+    fitMode: 'contain' | 'cover';
+    scalePercent: number;
+    offsetXPercent: number;
+    offsetYPercent: number;
+    rotationDeg: number;
+    flipX: boolean;
+    flipY: boolean;
 };
 
 type LiveGpsState = {
@@ -92,6 +110,13 @@ type LiveGpsState = {
     capturedAtIso: string;
 };
 
+type MapPercentPoint = {
+    x: number;
+    y: number;
+};
+
+type EdgeCalibrationMode = 'auto' | 'north' | 'east-west';
+
 const DEFAULT_ADDRESS = '825 West Ave, Brockport, NY';
 const DEFAULT_LAT = 43.2180558;
 const DEFAULT_LNG = -77.9778462;
@@ -103,10 +128,30 @@ const FEATURE_STATUS = ['planned', 'active', 'completed', 'blocked'];
 const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
 const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
 const LOCAL_MAP_CALIBRATIONS_KEY = 'family-land-map-calibrations';
+const LOCAL_MAP_IMAGE_FRAMING_KEY = 'family-land-map-image-framing';
+const LOCAL_ONX_IMPORT_CURSOR_KEY = 'family-land-onx-import-cursor';
+const LOCAL_ONX_IMPORTED_SIGNATURES_KEY = 'family-land-onx-imported-signatures';
 const TRAIL_META_PREFIX = '[trail-plan]';
 const ATTACHMENTS_META_PREFIX = '[feature-attachments]';
+const VISUAL_META_PREFIX = '[feature-visual]';
 const MAX_MAP_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_FEATURE_IMAGE_BYTES = 10 * 1024 * 1024;
+const ONX_HUNT_WEBMAP_URL = 'https://webmap.onxmaps.com/hunt';
+const ONX_HUNT_APP_DEEP_LINK = 'onxhunt://';
+const DEFAULT_TRAIL_COLOR = '#22d3ee';
+const DEFAULT_TRAIL_WIDTH = 1;
+const DEFAULT_TRAIL_PATTERN: 'solid' | 'dashed' | 'dotted' = 'solid';
+
+const LANDMARK_ICON_OPTIONS: Array<{ key: string; label: string; glyph: string }> = [
+    { key: 'pin', label: 'Pin', glyph: 'P' },
+    { key: 'trail', label: 'Trail', glyph: 'T' },
+    { key: 'gate', label: 'Gate', glyph: 'G' },
+    { key: 'water', label: 'Water', glyph: 'W' },
+    { key: 'camp', label: 'Camp', glyph: 'C' },
+    { key: 'stand', label: 'Stand', glyph: 'S' },
+    { key: 'camera', label: 'Cam', glyph: 'M' },
+    { key: 'note', label: 'Note', glyph: 'N' }
+];
 
 const parseJson = <T,>(raw: string | null, fallback: T) => {
     if (!raw) return fallback;
@@ -123,16 +168,91 @@ const formatDate = (value: string) => new Date(value).toLocaleString();
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+const normalizeSignedAngle = (degrees: number) => {
+    const normalized = ((degrees + 180) % 360 + 360) % 360 - 180;
+    return Number(normalized.toFixed(2));
+};
+
+const calculateNorthAlignmentRotationDelta = (first: MapPercentPoint, second: MapPercentPoint) => {
+    const northPoint = first.y <= second.y ? first : second;
+    const southPoint = first.y <= second.y ? second : first;
+    const dx = northPoint.x - southPoint.x;
+    const dy = northPoint.y - southPoint.y;
+    const length = Math.hypot(dx, dy);
+
+    if (length < 1) {
+        return null;
+    }
+
+    const edgeAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const targetNorthAngleDeg = -90;
+    return normalizeSignedAngle(targetNorthAngleDeg - edgeAngleDeg);
+};
+
+const calculateEastWestAlignmentRotationDelta = (first: MapPercentPoint, second: MapPercentPoint) => {
+    const westPoint = first.x <= second.x ? first : second;
+    const eastPoint = first.x <= second.x ? second : first;
+    const dx = eastPoint.x - westPoint.x;
+    const dy = eastPoint.y - westPoint.y;
+    const length = Math.hypot(dx, dy);
+
+    if (length < 1) {
+        return null;
+    }
+
+    const edgeAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const targetEastWestAngleDeg = 0;
+    return normalizeSignedAngle(targetEastWestAngleDeg - edgeAngleDeg);
+};
+
+const sanitizeFileStem = (value: string) =>
+    value
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[^a-zA-Z0-9-_ ]/g, '')
+        .trim();
+
+const escapeXml = (value: string) =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+
 const stripKnownMetadataLines = (description: string | null) => {
     if (!description) return '';
     return description
         .split('\n')
         .filter(line => {
             const trimmed = line.trim();
-            return !trimmed.startsWith(TRAIL_META_PREFIX) && !trimmed.startsWith(ATTACHMENTS_META_PREFIX);
+            return !trimmed.startsWith(TRAIL_META_PREFIX) && !trimmed.startsWith(ATTACHMENTS_META_PREFIX) && !trimmed.startsWith(VISUAL_META_PREFIX);
         })
         .join('\n')
         .trim();
+};
+
+const readVisualMetaFromDescription = (description: string | null): FeatureVisualMeta | null => {
+    if (!description) return null;
+
+    const visualLine = description
+        .split('\n')
+        .map(line => line.trim())
+        .find(line => line.startsWith(VISUAL_META_PREFIX));
+
+    if (!visualLine) return null;
+
+    try {
+        const raw = visualLine.slice(VISUAL_META_PREFIX.length);
+        const parsed = JSON.parse(raw) as FeatureVisualMeta;
+        return parsed;
+    } catch {
+        return null;
+    }
+};
+
+const markerGlyphForIcon = (iconKey: string) => {
+    const matched = LANDMARK_ICON_OPTIONS.find(option => option.key === iconKey);
+    return matched?.glyph || 'P';
 };
 
 const parseTrailPointsFromDescription = (description: string | null) => {
@@ -220,7 +340,8 @@ const composeFeatureDescription = (
     trailPoints: TrailPoint[],
     attachments: FeatureAttachment[],
     includeTrailData: boolean,
-    trailStats: TrailStats | null
+    trailStats: TrailStats | null,
+    visualMeta: FeatureVisualMeta | null
 ) => {
     const lines: string[] = [];
     const cleaned = stripKnownMetadataLines(plainDescription);
@@ -244,6 +365,10 @@ const composeFeatureDescription = (
             attachments
         };
         lines.push(`${ATTACHMENTS_META_PREFIX}${JSON.stringify(attachmentsMeta)}`);
+    }
+
+    if (visualMeta) {
+        lines.push(`${VISUAL_META_PREFIX}${JSON.stringify(visualMeta)}`);
     }
 
     if (lines.length === 0) return null;
@@ -282,6 +407,16 @@ const readLocalCalibrations = () => {
 const saveLocalCalibrations = (nextCalibrations: Record<string, MapBoundsCalibration>) => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(LOCAL_MAP_CALIBRATIONS_KEY, JSON.stringify(nextCalibrations));
+};
+
+const readLocalMapImageFraming = () => {
+    if (typeof window === 'undefined') return {} as Record<string, MapImageFraming>;
+    return parseJson<Record<string, MapImageFraming>>(window.localStorage.getItem(LOCAL_MAP_IMAGE_FRAMING_KEY), {});
+};
+
+const saveLocalMapImageFraming = (nextFraming: Record<string, MapImageFraming>) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LOCAL_MAP_IMAGE_FRAMING_KEY, JSON.stringify(nextFraming));
 };
 
 const mapGpsToPercent = (gps: LiveGpsState, calibration: MapBoundsCalibration) => {
@@ -350,6 +485,110 @@ const xyPointToLatLng = (point: TrailPoint, calibration: MapBoundsCalibration) =
         lat: calibration.northLat - (point.y / 100) * latSpan,
         lng: calibration.westLng + (point.x / 100) * lngSpan
     };
+};
+
+const latLngToXyPoint = (lat: number, lng: number, calibration: MapBoundsCalibration) => {
+    const latSpan = calibration.northLat - calibration.southLat;
+    const lngSpan = calibration.eastLng - calibration.westLng;
+    if (latSpan <= 0 || lngSpan <= 0) return null;
+
+    const x = ((lng - calibration.westLng) / lngSpan) * 100;
+    const y = ((calibration.northLat - lat) / latSpan) * 100;
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+    }
+
+    return {
+        x: clamp(x, 0, 100),
+        y: clamp(y, 0, 100)
+    };
+};
+
+const buildGpxFromTrail = (
+    trailPoints: TrailPoint[],
+    calibration: MapBoundsCalibration,
+    trailName: string
+) => {
+    const gpxPoints = trailPoints
+        .map(point => {
+            const latLng =
+                Number.isFinite(point.lat) && Number.isFinite(point.lng)
+                    ? { lat: point.lat as number, lng: point.lng as number }
+                    : xyPointToLatLng(point, calibration);
+            return {
+                lat: latLng.lat,
+                lng: latLng.lng,
+                ele: Number.isFinite(point.altitudeMeters) ? (point.altitudeMeters as number) : null,
+                time: point.capturedAtIso || null
+            };
+        })
+        .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+
+    if (gpxPoints.length < 2) {
+        return null;
+    }
+
+    const encodedTrackPoints = gpxPoints
+        .map(point => {
+            const elePart = point.ele !== null ? `<ele>${point.ele.toFixed(2)}</ele>` : '';
+            const timePart = point.time ? `<time>${escapeXml(point.time)}</time>` : '';
+            return `<trkpt lat=\"${point.lat.toFixed(7)}\" lon=\"${point.lng.toFixed(7)}\">${elePart}${timePart}</trkpt>`;
+        })
+        .join('');
+
+    return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<gpx version=\"1.1\" creator=\"Mangiafesto Land App\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n  <trk>\n    <name>${escapeXml(trailName)}</name>\n    <trkseg>${encodedTrackPoints}</trkseg>\n  </trk>\n</gpx>`;
+};
+
+const parseGpxToTrailPoints = (rawGpx: string, calibration: MapBoundsCalibration) => {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(rawGpx, 'application/xml');
+    const parserError = xml.querySelector('parsererror');
+    if (parserError) {
+        throw new Error('GPX file could not be parsed.');
+    }
+
+    const trackPoints = Array.from(xml.querySelectorAll('trkpt'));
+    const routePoints = Array.from(xml.querySelectorAll('rtept'));
+    const pointNodes = trackPoints.length > 0 ? trackPoints : routePoints;
+
+    const points: TrailPoint[] = [];
+
+    for (const node of pointNodes) {
+        const lat = Number(node.getAttribute('lat'));
+        const lng = Number(node.getAttribute('lon'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+        const projected = latLngToXyPoint(lat, lng, calibration);
+        if (!projected) continue;
+
+        const eleRaw = node.querySelector('ele')?.textContent || '';
+        const timeRaw = node.querySelector('time')?.textContent || '';
+        const parsedElevation = Number(eleRaw);
+
+        points.push({
+            x: Number(projected.x.toFixed(2)),
+            y: Number(projected.y.toFixed(2)),
+            lat,
+            lng,
+            altitudeMeters: Number.isFinite(parsedElevation) ? parsedElevation : null,
+            capturedAtIso: timeRaw || undefined
+        });
+    }
+
+    return points;
+};
+
+const triggerTextDownload = (contents: string, filename: string) => {
+    const blob = new Blob([contents], { type: 'application/gpx+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
 };
 
 const computeTrailStats = (trailPoints: TrailPoint[], calibration: MapBoundsCalibration | null): TrailStats | null => {
@@ -523,6 +762,10 @@ export default function PropertyMapPage() {
     const [featureLabel, setFeatureLabel] = useState('');
     const [featureType, setFeatureType] = useState('build');
     const [featureStatus, setFeatureStatus] = useState('planned');
+    const [featureIconKey, setFeatureIconKey] = useState('pin');
+    const [trailColor, setTrailColor] = useState(DEFAULT_TRAIL_COLOR);
+    const [trailWidth, setTrailWidth] = useState(DEFAULT_TRAIL_WIDTH);
+    const [trailPattern, setTrailPattern] = useState<'solid' | 'dashed' | 'dotted'>(DEFAULT_TRAIL_PATTERN);
     const [featureDescription, setFeatureDescription] = useState('');
     const [featureX, setFeatureX] = useState('50');
     const [featureY, setFeatureY] = useState('50');
@@ -531,10 +774,33 @@ export default function PropertyMapPage() {
 
     const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
     const [mapImageFitMode, setMapImageFitMode] = useState<'contain' | 'cover'>('contain');
+    const [mapImageScalePercent, setMapImageScalePercent] = useState(100);
+    const [mapImageOffsetXPercent, setMapImageOffsetXPercent] = useState(0);
+    const [mapImageOffsetYPercent, setMapImageOffsetYPercent] = useState(0);
+    const [mapImageRotationDeg, setMapImageRotationDeg] = useState(0);
+    const [mapImageFlipX, setMapImageFlipX] = useState(false);
+    const [mapImageFlipY, setMapImageFlipY] = useState(false);
     const [trailDraftPoints, setTrailDraftPoints] = useState<TrailPoint[]>([]);
     const [isTrailPlanning, setIsTrailPlanning] = useState(false);
+    const [isTrailEditMode, setIsTrailEditMode] = useState(false);
+    const [selectedDraftPointIndex, setSelectedDraftPointIndex] = useState<number | null>(null);
     const [featureImageFiles, setFeatureImageFiles] = useState<File[]>([]);
     const [existingAttachments, setExistingAttachments] = useState<FeatureAttachment[]>([]);
+    const [onxGpxFile, setOnxGpxFile] = useState<File | null>(null);
+    const [onxAutoImportEnabled, setOnxAutoImportEnabled] = useState(false);
+    const [onxAutoArchiveEnabled, setOnxAutoArchiveEnabled] = useState(false);
+    const [onxAutoImportIntervalSec, setOnxAutoImportIntervalSec] = useState(60);
+    const [onxAutoImportLastRun, setOnxAutoImportLastRun] = useState<string | null>(null);
+    const [onxAutoImportInFlight, setOnxAutoImportInFlight] = useState(false);
+    const onxAutoImportRunningRef = useRef(false);
+
+    const [draggingFeatureId, setDraggingFeatureId] = useState<string | null>(null);
+    const draggingFeatureIdRef = useRef<string | null>(null);
+    const mapCanvasRef = useRef<HTMLDivElement | null>(null);
+    const suppressNextMapClickRef = useRef(false);
+    const [edgeCalibrationMode, setEdgeCalibrationMode] = useState<EdgeCalibrationMode | null>(null);
+    const [edgeCalibrationStartPoint, setEdgeCalibrationStartPoint] = useState<MapPercentPoint | null>(null);
+    const [edgeCalibrationPreviewPoint, setEdgeCalibrationPreviewPoint] = useState<MapPercentPoint | null>(null);
 
     const [northLatInput, setNorthLatInput] = useState('');
     const [southLatInput, setSouthLatInput] = useState('');
@@ -615,6 +881,17 @@ export default function PropertyMapPage() {
         return lookup;
     }, [savedTrails]);
 
+    const featureVisualById = useMemo(() => {
+        const lookup = new Map<string, FeatureVisualMeta>();
+        for (const feature of features) {
+            const visualMeta = readVisualMetaFromDescription(feature.description);
+            if (visualMeta) {
+                lookup.set(feature.id, visualMeta);
+            }
+        }
+        return lookup;
+    }, [features]);
+
     const gpsMapPoint = useMemo(() => {
         if (!liveGps || !activeCalibration) return null;
         return mapGpsToPercent(liveGps, activeCalibration);
@@ -629,6 +906,10 @@ export default function PropertyMapPage() {
         const followPoint = autoFollowGps && gpsMapPoint ? { x: gpsMapPoint.x, y: gpsMapPoint.y } : null;
         return buildMapTransform(mapZoomPercent, followPoint);
     }, [autoFollowGps, gpsMapPoint, mapZoomPercent]);
+
+    const mapNorthCompassAngleDeg = useMemo(() => {
+        return normalizeSignedAngle(mapImageRotationDeg + (mapImageFlipY ? 180 : 0));
+    }, [mapImageRotationDeg, mapImageFlipY]);
 
     const setDiagnosticSuccess = (operation: string) => {
         setDiagnosticLastOperation(operation);
@@ -687,6 +968,155 @@ export default function PropertyMapPage() {
 
     const saveLocalFeatures = (nextFeatures: PropertyMapFeature[]) => {
         window.localStorage.setItem(LOCAL_PROPERTY_MAP_FEATURES_KEY, JSON.stringify(nextFeatures));
+    };
+
+    const onxCursorStorageKey = useMemo(
+        () => `${LOCAL_ONX_IMPORT_CURSOR_KEY}-${selectedMapId || 'none'}`,
+        [selectedMapId]
+    );
+
+    const onxSignaturesStorageKey = useMemo(
+        () => `${LOCAL_ONX_IMPORTED_SIGNATURES_KEY}-${selectedMapId || 'none'}`,
+        [selectedMapId]
+    );
+
+    const readOnxImportCursor = () => {
+        if (typeof window === 'undefined') return 0;
+        const raw = window.localStorage.getItem(onxCursorStorageKey);
+        const parsed = Number(raw || '0');
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const writeOnxImportCursor = (cursorMs: number) => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem(onxCursorStorageKey, String(cursorMs));
+    };
+
+    const readOnxImportedSignatures = () => {
+        if (typeof window === 'undefined') return new Set<string>();
+        const parsed = parseJson<string[]>(window.localStorage.getItem(onxSignaturesStorageKey), []);
+        return new Set(parsed);
+    };
+
+    const writeOnxImportedSignatures = (signatures: Set<string>) => {
+        if (typeof window === 'undefined') return;
+        const compact = Array.from(signatures).slice(-300);
+        window.localStorage.setItem(onxSignaturesStorageKey, JSON.stringify(compact));
+    };
+
+    const persistFeaturePosition = async (featureId: string, nextX: number, nextY: number) => {
+        const nowIso = new Date().toISOString();
+
+        if (storageMode === 'local') {
+            const nextFeatures = readLocalFeatures().map(feature =>
+                feature.id === featureId
+                    ? {
+                        ...feature,
+                        x_percent: nextX,
+                        y_percent: nextY,
+                        updated_at: nowIso
+                    }
+                    : feature
+            );
+
+            saveLocalFeatures(nextFeatures);
+            setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMapId));
+            return;
+        }
+
+        const { error: updateError } = await supabase
+            .from('property_map_features')
+            .update({
+                x_percent: nextX,
+                y_percent: nextY,
+                updated_at: nowIso,
+                updated_by: profileId
+            })
+            .eq('id', featureId);
+
+        if (updateError) {
+            throw updateError;
+        }
+    };
+
+    const createTrailFeatureFromPoints = async (
+        trailPoints: TrailPoint[],
+        label: string,
+        sourceDescription: string,
+        visualOverrides?: Partial<FeatureVisualMeta>
+    ) => {
+        if (!selectedMap?.id) {
+            throw new Error('Create or select a property map first.');
+        }
+
+        const normalizedTrailPoints = trailPoints
+            .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
+            .map(point => ({
+                x: clamp(Number(point.x.toFixed(2)), 0, 100),
+                y: clamp(Number(point.y.toFixed(2)), 0, 100),
+                lat: Number.isFinite(point.lat) ? Number(point.lat) : undefined,
+                lng: Number.isFinite(point.lng) ? Number(point.lng) : undefined,
+                altitudeMeters: Number.isFinite(point.altitudeMeters) ? Number(point.altitudeMeters) : null,
+                capturedAtIso: point.capturedAtIso
+            }));
+
+        if (normalizedTrailPoints.length < 2) {
+            throw new Error('Imported trail needs at least 2 points.');
+        }
+
+        const visualMeta: FeatureVisualMeta = {
+            version: 1,
+            iconKey: 'trail',
+            trailColor: visualOverrides?.trailColor || trailColor,
+            trailWidth: Number.isFinite(visualOverrides?.trailWidth) ? visualOverrides?.trailWidth : trailWidth,
+            trailPattern: visualOverrides?.trailPattern || trailPattern
+        };
+
+        const description = composeFeatureDescription(
+            sourceDescription,
+            normalizedTrailPoints,
+            [],
+            true,
+            computeTrailStats(normalizedTrailPoints, activeCalibration),
+            visualMeta
+        );
+
+        const payload = {
+            map_id: selectedMap.id,
+            label: label.trim() || 'Imported ONX trail',
+            feature_type: 'trail',
+            status: 'planned',
+            description,
+            x_percent: normalizedTrailPoints[0].x,
+            y_percent: normalizedTrailPoints[0].y,
+            lat: normalizedTrailPoints[0].lat ?? null,
+            lng: normalizedTrailPoints[0].lng ?? null,
+            created_by: profileId,
+            updated_by: profileId
+        };
+
+        if (storageMode === 'local') {
+            const nowIso = new Date().toISOString();
+            const nextFeatures = [
+                ...readLocalFeatures(),
+                {
+                    id: `local-feature-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    ...payload,
+                    created_at: nowIso,
+                    updated_at: nowIso
+                } as PropertyMapFeature
+            ];
+            saveLocalFeatures(nextFeatures);
+            setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMap.id));
+            return;
+        }
+
+        const { error: insertError } = await supabase.from('property_map_features').insert(payload);
+        if (insertError) {
+            throw insertError;
+        }
+
+        await loadFeatures(selectedMap.id);
     };
 
     const loadFeatures = async (mapId: string) => {
@@ -848,6 +1278,25 @@ export default function PropertyMapPage() {
         setMapLat(String(selectedMap.center_lat || DEFAULT_LAT));
         setMapLng(String(selectedMap.center_lng || DEFAULT_LNG));
 
+        const storedFraming = readLocalMapImageFraming()[selectedMap.id];
+        if (storedFraming) {
+            setMapImageFitMode(storedFraming.fitMode === 'cover' ? 'cover' : 'contain');
+            setMapImageScalePercent(clamp(Number(storedFraming.scalePercent), 70, 220));
+            setMapImageOffsetXPercent(clamp(Number(storedFraming.offsetXPercent), -40, 40));
+            setMapImageOffsetYPercent(clamp(Number(storedFraming.offsetYPercent), -40, 40));
+            setMapImageRotationDeg(clamp(Number(storedFraming.rotationDeg), -180, 180));
+            setMapImageFlipX(Boolean(storedFraming.flipX));
+            setMapImageFlipY(Boolean(storedFraming.flipY));
+        } else {
+            setMapImageFitMode('contain');
+            setMapImageScalePercent(100);
+            setMapImageOffsetXPercent(0);
+            setMapImageOffsetYPercent(0);
+            setMapImageRotationDeg(0);
+            setMapImageFlipX(false);
+            setMapImageFlipY(false);
+        }
+
         const storedCalibration = readLocalCalibrations()[selectedMap.id];
         if (storedCalibration) {
             setNorthLatInput(String(storedCalibration.northLat));
@@ -863,6 +1312,34 @@ export default function PropertyMapPage() {
         setWestLngInput(String(estimated.westLng));
         setEastLngInput(String(estimated.eastLng));
     }, [selectedMap]);
+
+    useEffect(() => {
+        if (!selectedMap?.id) return;
+
+        const nextFraming = {
+            ...readLocalMapImageFraming(),
+            [selectedMap.id]: {
+                fitMode: mapImageFitMode,
+                scalePercent: mapImageScalePercent,
+                offsetXPercent: mapImageOffsetXPercent,
+                offsetYPercent: mapImageOffsetYPercent,
+                rotationDeg: mapImageRotationDeg,
+                flipX: mapImageFlipX,
+                flipY: mapImageFlipY
+            } as MapImageFraming
+        };
+
+        saveLocalMapImageFraming(nextFraming);
+    }, [
+        selectedMap?.id,
+        mapImageFitMode,
+        mapImageScalePercent,
+        mapImageOffsetXPercent,
+        mapImageOffsetYPercent,
+        mapImageRotationDeg,
+        mapImageFlipX,
+        mapImageFlipY
+    ]);
 
     useEffect(() => {
         resolveMapImageUrl(selectedMap);
@@ -882,8 +1359,14 @@ export default function PropertyMapPage() {
             setFeatureLabel('');
             setFeatureType('build');
             setFeatureStatus('planned');
+            setFeatureIconKey('pin');
+            setTrailColor(DEFAULT_TRAIL_COLOR);
+            setTrailWidth(DEFAULT_TRAIL_WIDTH);
+            setTrailPattern(DEFAULT_TRAIL_PATTERN);
             setFeatureDescription('');
             setTrailDraftPoints([]);
+            setSelectedDraftPointIndex(null);
+            setIsTrailEditMode(false);
             setFeatureImageFiles([]);
             setExistingAttachments([]);
             return;
@@ -892,6 +1375,15 @@ export default function PropertyMapPage() {
         setFeatureLabel(selectedFeature.label);
         setFeatureType(selectedFeature.feature_type);
         setFeatureStatus(selectedFeature.status);
+        const visualMeta = readVisualMetaFromDescription(selectedFeature.description);
+        setFeatureIconKey(visualMeta?.iconKey || selectedFeature.feature_type || 'pin');
+        setTrailColor(visualMeta?.trailColor || DEFAULT_TRAIL_COLOR);
+        setTrailWidth(Number.isFinite(visualMeta?.trailWidth) ? clamp(visualMeta?.trailWidth as number, 0.5, 2.5) : DEFAULT_TRAIL_WIDTH);
+        setTrailPattern(
+            visualMeta?.trailPattern === 'dashed' || visualMeta?.trailPattern === 'dotted' || visualMeta?.trailPattern === 'solid'
+                ? visualMeta.trailPattern
+                : DEFAULT_TRAIL_PATTERN
+        );
         setFeatureDescription(stripTrailMetadata(selectedFeature.description));
         setFeatureX(String(selectedFeature.x_percent));
         setFeatureY(String(selectedFeature.y_percent));
@@ -902,8 +1394,12 @@ export default function PropertyMapPage() {
 
         if (selectedFeature.feature_type === 'trail') {
             setTrailDraftPoints(parseTrailPointsFromDescription(selectedFeature.description));
+            setIsTrailEditMode(false);
+            setSelectedDraftPointIndex(null);
         } else {
             setTrailDraftPoints([]);
+            setIsTrailEditMode(false);
+            setSelectedDraftPointIndex(null);
         }
     }, [selectedFeature]);
 
@@ -1089,12 +1585,81 @@ export default function PropertyMapPage() {
         }
     };
 
+    const mapPercentFromClientPoint = (clientX: number, clientY: number, rect: DOMRect) => {
+        const clickX = ((clientX - rect.left) / rect.width) * 100;
+        const clickY = ((clientY - rect.top) / rect.height) * 100;
+        const mappedX = (clickX - mapTransform.translateXPercent) / mapTransform.scale;
+        const mappedY = (clickY - mapTransform.translateYPercent) / mapTransform.scale;
+        return {
+            x: Number(clamp(mappedX, 0, 100).toFixed(2)),
+            y: Number(clamp(mappedY, 0, 100).toFixed(2))
+        };
+    };
+
     const onMapClick = (event: React.MouseEvent<HTMLDivElement>) => {
+        if (suppressNextMapClickRef.current) {
+            suppressNextMapClickRef.current = false;
+            return;
+        }
+
         const rect = event.currentTarget.getBoundingClientRect();
-        const x = ((event.clientX - rect.left) / rect.width) * 100;
-        const y = ((event.clientY - rect.top) / rect.height) * 100;
-        const clampedX = Number(Math.min(100, Math.max(0, x)).toFixed(2));
-        const clampedY = Number(Math.min(100, Math.max(0, y)).toFixed(2));
+        const { x: clampedX, y: clampedY } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
+
+        if (edgeCalibrationMode) {
+            if (!edgeCalibrationStartPoint) {
+                setEdgeCalibrationStartPoint({ x: clampedX, y: clampedY });
+                setEdgeCalibrationPreviewPoint({ x: clampedX, y: clampedY });
+                setError(null);
+                setStatusMessage(
+                    edgeCalibrationMode === 'auto'
+                        ? 'Auto calibrate: point 1 set. Choose edge type below, then tap point 2 on that same edge.'
+                        : edgeCalibrationMode === 'north'
+                            ? 'North alignment: point 1 set. Tap a second point farther north on the same edge.'
+                            : 'East/West alignment: point 1 set. Tap a second point farther east or west on the same edge.'
+                );
+                return;
+            }
+
+            if (edgeCalibrationMode === 'auto') {
+                setError('Choose edge type (North or East/West) before selecting point 2.');
+                return;
+            }
+
+            const rotationDelta = edgeCalibrationMode === 'north'
+                ? calculateNorthAlignmentRotationDelta(edgeCalibrationStartPoint, { x: clampedX, y: clampedY })
+                : calculateEastWestAlignmentRotationDelta(edgeCalibrationStartPoint, { x: clampedX, y: clampedY });
+            if (rotationDelta === null) {
+                setError(
+                    edgeCalibrationMode === 'north'
+                        ? 'North alignment line is too short. Tap two points farther apart.'
+                        : 'East/West alignment line is too short. Tap two points farther apart.'
+                );
+                return;
+            }
+
+            setMapImageRotationDeg(prev => normalizeSignedAngle(prev + rotationDelta));
+            setEdgeCalibrationMode(null);
+            setEdgeCalibrationStartPoint(null);
+            setEdgeCalibrationPreviewPoint(null);
+            setError(null);
+            setStatusMessage(
+                edgeCalibrationMode === 'north'
+                    ? `North alignment applied. Rotated image ${rotationDelta.toFixed(1)} degrees.`
+                    : `East/West alignment applied. Rotated image ${rotationDelta.toFixed(1)} degrees.`
+            );
+            return;
+        }
+
+        if (isTrailEditMode && trailDraftPoints.length > 0) {
+            const targetIndex = selectedDraftPointIndex ?? trailDraftPoints.length - 1;
+            setTrailDraftPoints(prev =>
+                prev.map((point, idx) => (idx === targetIndex ? { ...point, x: clampedX, y: clampedY } : point))
+            );
+            setFeatureX(String(clampedX));
+            setFeatureY(String(clampedY));
+            setStatusMessage(`Moved trail point #${targetIndex + 1}. Save feature to keep the edit.`);
+            return;
+        }
 
         if (isTrailPlanning) {
             setFeatureType('trail');
@@ -1115,6 +1680,321 @@ export default function PropertyMapPage() {
         setFeatureX(String(clampedX));
         setFeatureY(String(clampedY));
     };
+
+    const beginFeatureDrag = (featureId: string) => {
+        suppressNextMapClickRef.current = true;
+        draggingFeatureIdRef.current = featureId;
+        setDraggingFeatureId(featureId);
+    };
+
+    const onMapPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (edgeCalibrationMode && edgeCalibrationStartPoint && !draggingFeatureIdRef.current) {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const { x, y } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
+            setEdgeCalibrationPreviewPoint({ x, y });
+        }
+
+        if (!draggingFeatureIdRef.current) return;
+        event.preventDefault();
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        const { x, y } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
+
+        setFeatures(prev =>
+            prev.map(feature =>
+                feature.id === draggingFeatureIdRef.current
+                    ? { ...feature, x_percent: x, y_percent: y }
+                    : feature
+            )
+        );
+
+        if (selectedFeatureId === draggingFeatureIdRef.current) {
+            setFeatureX(String(x));
+            setFeatureY(String(y));
+        }
+    };
+
+    const onMapPointerUp = async () => {
+        const featureId = draggingFeatureIdRef.current;
+        if (!featureId) return;
+
+        draggingFeatureIdRef.current = null;
+        setDraggingFeatureId(null);
+
+        const movedFeature = features.find(feature => feature.id === featureId);
+        if (!movedFeature) return;
+
+        try {
+            await persistFeaturePosition(featureId, movedFeature.x_percent, movedFeature.y_percent);
+            setStatusMessage(`Moved ${movedFeature.label} to X ${movedFeature.x_percent.toFixed(2)}%, Y ${movedFeature.y_percent.toFixed(2)}%.`);
+        } catch (err: any) {
+            setError(err?.message || 'Could not persist dragged marker position.');
+            if (selectedMap?.id) {
+                await loadFeatures(selectedMap.id);
+            }
+        }
+    };
+
+    const loadSelectedTrailIntoEditor = () => {
+        if (!selectedFeature || selectedFeature.feature_type !== 'trail') {
+            setError('Select a trail feature first.');
+            return;
+        }
+
+        const parsedTrailPoints = parseTrailPointsFromDescription(selectedFeature.description);
+        if (parsedTrailPoints.length < 2) {
+            setError('Selected trail does not have enough points to edit.');
+            return;
+        }
+
+        setFeatureType('trail');
+        setFeatureIconKey('trail');
+        setTrailDraftPoints(parsedTrailPoints);
+        setSelectedDraftPointIndex(0);
+        setIsTrailPlanning(false);
+        setIsTrailEditMode(true);
+        setFeatureX(String(parsedTrailPoints[0].x));
+        setFeatureY(String(parsedTrailPoints[0].y));
+        setError(null);
+        setStatusMessage('Trail edit mode is active. Select a point, tap map to reposition, then save feature.');
+    };
+
+    const removeSelectedDraftPoint = () => {
+        if (selectedDraftPointIndex === null) {
+            setError('Select a draft point first.');
+            return;
+        }
+
+        if (trailDraftPoints.length <= 2) {
+            setError('Trails need at least 2 points.');
+            return;
+        }
+
+        const nextPoints = trailDraftPoints.filter((_, idx) => idx !== selectedDraftPointIndex);
+        setTrailDraftPoints(nextPoints);
+        setSelectedDraftPointIndex(Math.min(selectedDraftPointIndex, nextPoints.length - 1));
+        setStatusMessage('Removed selected draft point.');
+    };
+
+    const insertDraftPointAfterSelected = () => {
+        if (trailDraftPoints.length === 0) {
+            setError('Add or load a trail first.');
+            return;
+        }
+
+        const sourceIndex = selectedDraftPointIndex ?? trailDraftPoints.length - 1;
+        const current = trailDraftPoints[sourceIndex];
+        const next = trailDraftPoints[Math.min(sourceIndex + 1, trailDraftPoints.length - 1)] || current;
+        const insertedPoint: TrailPoint = {
+            x: Number(((current.x + next.x) / 2).toFixed(2)),
+            y: Number(((current.y + next.y) / 2).toFixed(2))
+        };
+
+        const nextPoints = [...trailDraftPoints];
+        nextPoints.splice(sourceIndex + 1, 0, insertedPoint);
+        setTrailDraftPoints(nextPoints);
+        setSelectedDraftPointIndex(sourceIndex + 1);
+        setStatusMessage('Inserted new point after current selection.');
+    };
+
+    const dropLandmarkAtGpsPin = () => {
+        if (!gpsMapPoint || !liveGps) {
+            setError('Start phone GPS and wait for a map position first.');
+            return;
+        }
+
+        const nextX = Number(gpsMapPoint.x.toFixed(2));
+        const nextY = Number(gpsMapPoint.y.toFixed(2));
+        setFeatureType('note');
+        setFeatureIconKey('pin');
+        setFeatureStatus('active');
+        setFeatureLabel(`GPS landmark ${new Date().toLocaleTimeString()}`);
+        setFeatureX(String(nextX));
+        setFeatureY(String(nextY));
+        setFeatureLat(liveGps.lat.toFixed(7));
+        setFeatureLng(liveGps.lng.toFixed(7));
+        setStatusMessage('GPS landmark prefilled. Save feature to pin it on your map.');
+        setError(null);
+    };
+
+    const openOnxHuntApp = () => {
+        if (typeof window === 'undefined') return;
+        window.location.href = ONX_HUNT_APP_DEEP_LINK;
+        window.setTimeout(() => {
+            window.open(ONX_HUNT_WEBMAP_URL, '_blank', 'noopener,noreferrer');
+        }, 700);
+    };
+
+    const exportTrailToGpx = () => {
+        if (!activeCalibration) {
+            setError('Save a valid GPS calibration first. GPX export needs map bounds.');
+            return;
+        }
+
+        const sourceTrail = trailDraftPoints.length >= 2
+            ? trailDraftPoints
+            : selectedFeature?.feature_type === 'trail'
+                ? parseTrailPointsFromDescription(selectedFeature.description)
+                : [];
+
+        if (sourceTrail.length < 2) {
+            setError('Select a trail or create a draft trail before exporting GPX.');
+            return;
+        }
+
+        const trailName = featureLabel.trim() || selectedFeature?.label || 'property-trail';
+        const gpx = buildGpxFromTrail(sourceTrail, activeCalibration, trailName);
+
+        if (!gpx) {
+            setError('Could not export this trail to GPX.');
+            return;
+        }
+
+        const filename = `${sanitizeFileStem(trailName) || 'property-trail'}-${new Date().toISOString().slice(0, 10)}.gpx`;
+        triggerTextDownload(gpx, filename);
+        setStatusMessage('GPX exported. Import this file into ONX Hunt to sync the trail.');
+        setError(null);
+    };
+
+    const importOnxGpxToDraftTrail = async () => {
+        if (!onxGpxFile) {
+            setError('Choose a GPX file from ONX first.');
+            return;
+        }
+
+        if (!activeCalibration) {
+            setError('Save valid map bounds before importing ONX GPX.');
+            return;
+        }
+
+        try {
+            const rawGpx = await onxGpxFile.text();
+            const importedPoints = parseGpxToTrailPoints(rawGpx, activeCalibration);
+
+            if (importedPoints.length < 2) {
+                setError('No usable track points were found in this GPX file.');
+                return;
+            }
+
+            setFeatureType('trail');
+            setFeatureStatus('planned');
+            setFeatureIconKey('trail');
+            setFeatureLabel(`${sanitizeFileStem(onxGpxFile.name) || 'ONX trail'} import`);
+            setTrailDraftPoints(importedPoints);
+            setFeatureX(String(importedPoints[0].x));
+            setFeatureY(String(importedPoints[0].y));
+            setFeatureLat(importedPoints[0].lat?.toFixed(7) || '');
+            setFeatureLng(importedPoints[0].lng?.toFixed(7) || '');
+            setIsTrailPlanning(false);
+            setIsTrailEditMode(true);
+            setSelectedDraftPointIndex(0);
+            setStatusMessage(`Imported ${importedPoints.length} ONX points to draft trail. Save feature to store it.`);
+            setError(null);
+        } catch (err: any) {
+            setError(err?.message || 'Could not import GPX from ONX.');
+        }
+    };
+
+    const runOnxAutoImport = async (force = false) => {
+        if ((!onxAutoImportEnabled && !force) || !selectedMap?.id || !activeCalibration) return;
+        if (onxAutoImportRunningRef.current) return;
+
+        onxAutoImportRunningRef.current = true;
+        setOnxAutoImportInFlight(true);
+
+        try {
+            const sinceMs = readOnxImportCursor();
+            const response = await fetch(
+                `/api/onx-gpx-feed?sinceMs=${encodeURIComponent(String(sinceMs))}&maxFiles=10&archive=${onxAutoArchiveEnabled ? '1' : '0'}`,
+                {
+                    cache: 'no-store'
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('ONX shared-folder feed is unavailable.');
+            }
+
+            const payload = await response.json() as {
+                enabled: boolean;
+                folderPath: string;
+                files: Array<{
+                    name: string;
+                    modifiedMs: number;
+                    content: string;
+                }>;
+                archivedCount?: number;
+                message?: string;
+            };
+
+            if (!payload.enabled) {
+                setStatusMessage(payload.message || 'ONX shared-folder import is not configured on server.');
+                return;
+            }
+
+            const signatures = readOnxImportedSignatures();
+            let importedCount = 0;
+            let newestModifiedMs = sinceMs;
+
+            for (const file of payload.files) {
+                newestModifiedMs = Math.max(newestModifiedMs, file.modifiedMs);
+                const signature = `${file.name}:${file.modifiedMs}`;
+                if (signatures.has(signature)) continue;
+
+                let importedPoints: TrailPoint[] = [];
+                try {
+                    importedPoints = parseGpxToTrailPoints(file.content, activeCalibration);
+                } catch {
+                    signatures.add(signature);
+                    continue;
+                }
+
+                if (importedPoints.length < 2) {
+                    signatures.add(signature);
+                    continue;
+                }
+
+                await createTrailFeatureFromPoints(
+                    importedPoints,
+                    `${sanitizeFileStem(file.name) || 'ONX trail'} auto`,
+                    `Imported automatically from shared ONX GPX folder (${file.name}).`
+                );
+
+                signatures.add(signature);
+                importedCount += 1;
+            }
+
+            writeOnxImportedSignatures(signatures);
+            writeOnxImportCursor(newestModifiedMs || Date.now());
+            setOnxAutoImportLastRun(new Date().toISOString());
+
+            if (importedCount > 0) {
+                const archivePart = onxAutoArchiveEnabled && (payload.archivedCount || 0) > 0
+                    ? ` Archived ${payload.archivedCount} source file(s).`
+                    : '';
+                setStatusMessage(`Auto-imported ${importedCount} ONX GPX trail(s) from shared folder.${archivePart}`);
+            }
+        } catch (err: any) {
+            setError(err?.message || 'ONX auto-import failed.');
+        } finally {
+            onxAutoImportRunningRef.current = false;
+            setOnxAutoImportInFlight(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!onxAutoImportEnabled || !selectedMap?.id || !activeCalibration) return;
+
+        runOnxAutoImport();
+        const intervalMs = Math.max(15, onxAutoImportIntervalSec) * 1000;
+        const timerId = window.setInterval(() => {
+            runOnxAutoImport();
+        }, intervalMs);
+
+        return () => {
+            window.clearInterval(timerId);
+        };
+    }, [onxAutoImportEnabled, onxAutoImportIntervalSec, selectedMap?.id, activeCalibration, onxAutoArchiveEnabled]);
 
     const saveCalibration = () => {
         if (!selectedMap?.id) {
@@ -1222,8 +2102,11 @@ export default function PropertyMapPage() {
         }
 
         setFeatureType('trail');
+        setFeatureIconKey('trail');
         setFeatureLabel(walkTrailLabel.trim() || 'Live hike trail');
         setTrailDraftPoints([]);
+        setSelectedDraftPointIndex(null);
+        setIsTrailEditMode(false);
         setIsWalkTrailRecording(true);
         walkTrailSmoothPointRef.current = null;
         setStatusMessage('Walk trail recording started. Move with your phone to map the path.');
@@ -1242,10 +2125,13 @@ export default function PropertyMapPage() {
         }
 
         setFeatureType('trail');
+        setFeatureIconKey('trail');
         if (!featureLabel.trim()) {
             setFeatureLabel('Hike breadcrumb trail');
         }
         setTrailDraftPoints(breadcrumbPoints);
+        setSelectedDraftPointIndex(0);
+        setIsTrailEditMode(true);
         setFeatureX(String(breadcrumbPoints[0].x));
         setFeatureY(String(breadcrumbPoints[0].y));
         setStatusMessage('Breadcrumb path loaded into trail draft. Save feature when ready.');
@@ -1277,7 +2163,14 @@ export default function PropertyMapPage() {
                 normalizedTrailPoints,
                 [],
                 true,
-                trailStats
+                trailStats,
+                {
+                    version: 1,
+                    iconKey: 'trail',
+                    trailColor,
+                    trailWidth,
+                    trailPattern
+                }
             );
 
             const payload = {
@@ -1318,8 +2211,11 @@ export default function PropertyMapPage() {
 
             setSelectedFeatureId('');
             setFeatureType('trail');
+            setFeatureIconKey('trail');
             setFeatureLabel(walkTrailLabel.trim() || 'Live hike trail');
             setTrailDraftPoints([]);
+            setSelectedDraftPointIndex(null);
+            setIsTrailEditMode(false);
             setIsWalkTrailRecording(false);
             setStatusMessage('Walked trail saved as completed.');
         } catch (err: any) {
@@ -1414,7 +2310,11 @@ export default function PropertyMapPage() {
                 .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
                 .map(point => ({
                     x: clamp(Number(point.x.toFixed(2)), 0, 100),
-                    y: clamp(Number(point.y.toFixed(2)), 0, 100)
+                    y: clamp(Number(point.y.toFixed(2)), 0, 100),
+                    lat: Number.isFinite(point.lat) ? Number(point.lat) : undefined,
+                    lng: Number.isFinite(point.lng) ? Number(point.lng) : undefined,
+                    altitudeMeters: Number.isFinite(point.altitudeMeters) ? Number(point.altitudeMeters) : null,
+                    capturedAtIso: point.capturedAtIso
                 }));
 
             if (featureType === 'trail' && normalizedTrailPoints.length < 2) {
@@ -1490,7 +2390,14 @@ export default function PropertyMapPage() {
                 normalizedTrailPoints,
                 allAttachments,
                 featureType === 'trail',
-                featureType === 'trail' ? computeTrailStats(normalizedTrailPoints, activeCalibration) : null
+                featureType === 'trail' ? computeTrailStats(normalizedTrailPoints, activeCalibration) : null,
+                {
+                    version: 1,
+                    iconKey: featureIconKey,
+                    trailColor: featureType === 'trail' ? trailColor : undefined,
+                    trailWidth: featureType === 'trail' ? trailWidth : undefined,
+                    trailPattern: featureType === 'trail' ? trailPattern : undefined
+                }
             );
 
             const payload = {
@@ -1541,6 +2448,8 @@ export default function PropertyMapPage() {
                 setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMap.id));
                 setSelectedFeatureId('');
                 setTrailDraftPoints([]);
+                setSelectedDraftPointIndex(null);
+                setIsTrailEditMode(false);
                 setFeatureImageFiles([]);
                 setExistingAttachments([]);
                 setIsWalkTrailRecording(false);
@@ -1577,6 +2486,8 @@ export default function PropertyMapPage() {
 
             setSelectedFeatureId('');
             setTrailDraftPoints([]);
+            setSelectedDraftPointIndex(null);
+            setIsTrailEditMode(false);
             setFeatureImageFiles([]);
             setExistingAttachments([]);
             setIsWalkTrailRecording(false);
@@ -1600,6 +2511,8 @@ export default function PropertyMapPage() {
             setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMap.id));
             setSelectedFeatureId('');
             setTrailDraftPoints([]);
+            setSelectedDraftPointIndex(null);
+            setIsTrailEditMode(false);
             setStatusMessage('Feature deleted in local mode.');
             return;
         }
@@ -1616,6 +2529,8 @@ export default function PropertyMapPage() {
 
         setSelectedFeatureId('');
         setTrailDraftPoints([]);
+        setSelectedDraftPointIndex(null);
+        setIsTrailEditMode(false);
         setStatusMessage('Feature deleted.');
         await loadFeatures(selectedMap.id);
     };
@@ -1651,6 +2566,24 @@ export default function PropertyMapPage() {
                     <div style={{ opacity: 0.72, fontSize: '0.86rem' }}>
                         For live phone tracking, open this page from your phone browser over HTTPS, then enable GPS tracking below.
                     </div>
+                </div>
+
+                <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                        <img src="/property-map-guides/calibration-guide.svg" alt="GPS calibration guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                        <div style={{ fontWeight: 600 }}>1) Calibrate map bounds</div>
+                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Set north/south/west/east edges once, then your phone pin lands in the correct place.</div>
+                    </article>
+                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                        <img src="/property-map-guides/trail-edit-guide.svg" alt="Trail editing guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                        <div style={{ fontWeight: 600 }}>2) Edit trails point-by-point</div>
+                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Load any saved trail, select a point, and tap map to move it for cleaner trail alignment.</div>
+                    </article>
+                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                        <img src="/property-map-guides/onx-sync-guide.svg" alt="ONX sync guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                        <div style={{ fontWeight: 600 }}>3) ONX Hunt bridge</div>
+                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Open ONX quickly, export GPX from here, or import GPX from ONX to keep both tools in sync.</div>
+                    </article>
                 </div>
 
                 {statusMessage && <div style={{ color: '#86efac' }}>{statusMessage}</div>}
@@ -1841,6 +2774,14 @@ export default function PropertyMapPage() {
                         >
                             Create trail from breadcrumbs
                         </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={dropLandmarkAtGpsPin}
+                            disabled={!liveGps || !gpsMapPoint}
+                        >
+                            Drop landmark at GPS pin
+                        </button>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                             <input
                                 type="checkbox"
@@ -1884,6 +2825,90 @@ export default function PropertyMapPage() {
                         </div>
                     )}
                 </div>
+
+                <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.7rem', display: 'grid', gap: '0.55rem' }}>
+                    <div style={{ fontWeight: 700 }}>ONX Hunt Access + Sync Bridge</div>
+                    <div style={{ opacity: 0.78, fontSize: '0.88rem' }}>
+                        For paid ONX users: launch ONX quickly from here and share trail updates using GPX import/export.
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                        <button type="button" className="soft-button" onClick={openOnxHuntApp}>
+                            Open ONX Hunt app/web
+                        </button>
+                        <a href={ONX_HUNT_WEBMAP_URL} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
+                            Open ONX Web Map
+                        </a>
+                        <button type="button" className="soft-button" onClick={exportTrailToGpx}>
+                            Export selected trail to GPX
+                        </button>
+                    </div>
+                    <div style={{ display: 'grid', gap: '0.45rem', gridTemplateColumns: 'minmax(180px, 1fr) auto' }}>
+                        <input
+                            type="file"
+                            accept=".gpx,application/gpx+xml,application/xml,text/xml"
+                            onChange={e => {
+                                const file = e.target.files?.[0] || null;
+                                setOnxGpxFile(file);
+                                if (file) {
+                                    setStatusMessage(`Selected GPX: ${file.name}`);
+                                }
+                            }}
+                        />
+                        <button type="button" className="soft-button" onClick={importOnxGpxToDraftTrail}>
+                            Import ONX GPX
+                        </button>
+                    </div>
+                    <div style={{ display: 'grid', gap: '0.5rem', borderTop: '1px solid #334155', paddingTop: '0.55rem' }}>
+                        <div style={{ fontSize: '0.86rem', fontWeight: 600 }}>Near-live shared-folder sync</div>
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={onxAutoImportEnabled}
+                                    onChange={e => setOnxAutoImportEnabled(e.target.checked)}
+                                />
+                                <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Enable auto-import</span>
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={onxAutoArchiveEnabled}
+                                    onChange={e => setOnxAutoArchiveEnabled(e.target.checked)}
+                                />
+                                <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Auto-archive imported files</span>
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ fontSize: '0.84rem', opacity: 0.78 }}>Poll every</span>
+                                <select
+                                    value={String(onxAutoImportIntervalSec)}
+                                    onChange={e => setOnxAutoImportIntervalSec(Number(e.target.value))}
+                                    disabled={!onxAutoImportEnabled}
+                                >
+                                    <option value="30">30 sec</option>
+                                    <option value="45">45 sec</option>
+                                    <option value="60">60 sec</option>
+                                    <option value="120">120 sec</option>
+                                </select>
+                            </label>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => {
+                                    void runOnxAutoImport(true);
+                                }}
+                                disabled={!selectedMap || !activeCalibration || onxAutoImportInFlight}
+                            >
+                                {onxAutoImportInFlight ? 'Importing...' : 'Run sync now'}
+                            </button>
+                        </div>
+                        <div style={{ fontSize: '0.8rem', opacity: 0.72 }}>
+                            Server reads files from ONX_SHARED_GPX_DIR (or shared-gpx folder in app root). When auto-archive is on, imported files move to shared-gpx/imported. Last run: {onxAutoImportLastRun ? formatDate(onxAutoImportLastRun) : 'Not yet'}
+                        </div>
+                    </div>
+                    <div style={{ fontSize: '0.82rem', opacity: 0.72 }}>
+                        Live automatic sync requires official ONX API access. This bridge provides reliable file-based sync today.
+                    </div>
+                </div>
             </section>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.85rem' }}>
@@ -1916,11 +2941,21 @@ export default function PropertyMapPage() {
                         className="soft-button"
                         onClick={() => {
                             setIsTrailPlanning(prev => !prev);
+                            setIsTrailEditMode(false);
                             setFeatureType('trail');
                         }}
                         style={{ borderColor: isTrailPlanning ? '#22c55e' : '#475569', color: isTrailPlanning ? '#bbf7d0' : '#cbd5e1' }}
                     >
                         {isTrailPlanning ? 'Trail planning on' : 'Start trail planning'}
+                    </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={loadSelectedTrailIntoEditor}
+                        disabled={!selectedFeature || selectedFeature.feature_type !== 'trail'}
+                        style={{ borderColor: isTrailEditMode ? '#f59e0b' : '#475569', color: isTrailEditMode ? '#fde68a' : '#cbd5e1' }}
+                    >
+                        {isTrailEditMode ? 'Trail edit mode active' : 'Edit selected trail'}
                     </button>
                     {!isWalkTrailRecording ? (
                         <button type="button" className="soft-button" onClick={startWalkTrailRecording} disabled={!isGpsTracking}>
@@ -1975,11 +3010,48 @@ export default function PropertyMapPage() {
                     <button
                         type="button"
                         className="soft-button"
-                        onClick={() => setTrailDraftPoints([])}
+                        onClick={insertDraftPointAfterSelected}
+                        disabled={trailDraftPoints.length < 2}
+                    >
+                        Insert point after selected
+                    </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={removeSelectedDraftPoint}
+                        disabled={selectedDraftPointIndex === null || trailDraftPoints.length <= 2}
+                    >
+                        Remove selected point
+                    </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => {
+                            setTrailDraftPoints([]);
+                            setSelectedDraftPointIndex(null);
+                            setIsTrailEditMode(false);
+                        }}
                         disabled={trailDraftPoints.length === 0}
                     >
                         Clear draft trail
                     </button>
+                    {trailDraftPoints.length > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <span style={{ fontSize: '0.86rem', opacity: 0.82 }}>Selected point</span>
+                            <select
+                                value={selectedDraftPointIndex ?? ''}
+                                onChange={e => {
+                                    const raw = e.target.value;
+                                    setSelectedDraftPointIndex(raw === '' ? null : Number(raw));
+                                }}
+                            >
+                                <option value="">None</option>
+                                {trailDraftPoints.map((_, idx) => (
+                                    <option key={`draft-select-${idx}`} value={idx}>Point {idx + 1}</option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                     {trailDraftPoints.length > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', opacity: 0.8, fontSize: '0.9rem' }}>
                             Draft points: {trailDraftPoints.length}
@@ -1993,7 +3065,18 @@ export default function PropertyMapPage() {
                 </div>
 
                 <div
+                    ref={mapCanvasRef}
                     onClick={onMapClick}
+                    onPointerMove={onMapPointerMove}
+                    onPointerUp={() => {
+                        void onMapPointerUp();
+                    }}
+                    onPointerCancel={() => {
+                        void onMapPointerUp();
+                    }}
+                    onPointerLeave={() => {
+                        void onMapPointerUp();
+                    }}
                     style={{
                         position: 'relative',
                         width: '100%',
@@ -2002,7 +3085,8 @@ export default function PropertyMapPage() {
                         border: '1px solid #334155',
                         background: 'linear-gradient(145deg, #0b1220, #13213e)',
                         overflow: 'hidden',
-                        cursor: isTrailPlanning ? 'copy' : 'crosshair'
+                        cursor: edgeCalibrationMode ? 'crosshair' : isTrailPlanning ? 'copy' : isTrailEditMode ? 'cell' : 'crosshair',
+                        touchAction: 'none'
                     }}
                 >
                     {!displayImageUrl && (
@@ -2023,32 +3107,62 @@ export default function PropertyMapPage() {
                             style={{
                                 position: 'absolute',
                                 inset: 0,
-                                background: displayImageUrl
-                                    ? `url(${displayImageUrl}) center/${mapImageFitMode} no-repeat`
-                                    : 'linear-gradient(145deg, #0b1220, #13213e)'
+                                background: 'linear-gradient(145deg, #0b1220, #13213e)'
                             }}
-                        />
+                        >
+                            {displayImageUrl && (
+                                <img
+                                    src={displayImageUrl}
+                                    alt="Property map base"
+                                    style={{
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: mapImageFitMode,
+                                        transform: `translate(${mapImageOffsetXPercent}%, ${mapImageOffsetYPercent}%) rotate(${mapImageRotationDeg}deg) scale(${mapImageScalePercent / 100}) scaleX(${mapImageFlipX ? -1 : 1}) scaleY(${mapImageFlipY ? -1 : 1})`,
+                                        transformOrigin: 'center',
+                                        pointerEvents: 'none',
+                                        userSelect: 'none'
+                                    }}
+                                />
+                            )}
+                        </div>
 
                         <svg
                             viewBox="0 0 100 100"
                             preserveAspectRatio="none"
-                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
                         >
                             {savedTrails.map(({ feature, points }) => {
                                 const start = points[0];
                                 const end = points[points.length - 1];
                                 const checkpointIndexes = buildCheckpointIndexes(points.length);
+                                const visualMeta = featureVisualById.get(feature.id);
+                                const strokeColor = visualMeta?.trailColor || (feature.id === selectedFeatureId ? '#f8fafc' : '#22d3ee');
+                                const widthMultiplier = Number.isFinite(visualMeta?.trailWidth)
+                                    ? clamp((visualMeta?.trailWidth as number) / DEFAULT_TRAIL_WIDTH, 0.65, 2.6)
+                                    : 1;
+                                const strokeDasharray = visualMeta?.trailPattern === 'dashed'
+                                    ? '1.8 1.2'
+                                    : visualMeta?.trailPattern === 'dotted'
+                                        ? '0.45 0.95'
+                                        : undefined;
 
                                 return (
                                     <g key={`trail-${feature.id}`}>
                                         <polyline
                                             points={points.map(point => `${point.x},${point.y}`).join(' ')}
                                             fill="none"
-                                            stroke={feature.id === selectedFeatureId ? '#f8fafc' : '#22d3ee'}
-                                            strokeWidth={feature.id === selectedFeatureId ? 0.95 : 0.65}
+                                            stroke={strokeColor}
+                                            strokeWidth={(feature.id === selectedFeatureId ? 1.25 : 0.9) * widthMultiplier}
+                                            strokeDasharray={strokeDasharray}
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
                                             opacity={0.95}
+                                            style={{ cursor: 'pointer' }}
+                                            onClick={event => {
+                                                event.stopPropagation();
+                                                setSelectedFeatureId(feature.id);
+                                            }}
                                         />
 
                                         <circle cx={start.x} cy={start.y} r={1.05} fill="#22c55e" stroke="#f8fafc" strokeWidth={0.25} />
@@ -2101,9 +3215,9 @@ export default function PropertyMapPage() {
                                     <polyline
                                         points={trailDraftPoints.map(point => `${point.x},${point.y}`).join(' ')}
                                         fill="none"
-                                        stroke="#f59e0b"
-                                        strokeWidth={0.9}
-                                        strokeDasharray="1.8 1.2"
+                                        stroke={trailColor}
+                                        strokeWidth={trailWidth}
+                                        strokeDasharray={trailPattern === 'dashed' ? '1.8 1.2' : trailPattern === 'dotted' ? '0.45 0.95' : undefined}
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
                                     />
@@ -2120,7 +3234,21 @@ export default function PropertyMapPage() {
                                 </>
                             )}
                             {trailDraftPoints.map((point, index) => (
-                                <circle key={`draft-point-${index}`} cx={point.x} cy={point.y} r={0.8} fill="#fbbf24" />
+                                <circle
+                                    key={`draft-point-${index}`}
+                                    cx={point.x}
+                                    cy={point.y}
+                                    r={selectedDraftPointIndex === index ? 1.05 : 0.82}
+                                    fill={selectedDraftPointIndex === index ? '#fef08a' : '#fbbf24'}
+                                    stroke={selectedDraftPointIndex === index ? '#f97316' : 'transparent'}
+                                    strokeWidth={selectedDraftPointIndex === index ? 0.22 : 0}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={event => {
+                                        event.stopPropagation();
+                                        setSelectedDraftPointIndex(index);
+                                        setIsTrailEditMode(true);
+                                    }}
+                                />
                             ))}
 
                             {liveGps && gpsMapPoint && (
@@ -2146,34 +3274,342 @@ export default function PropertyMapPage() {
                                     <circle cx={gpsMapPoint.x} cy={gpsMapPoint.y} r={1.15} fill="#38bdf8" stroke="#f8fafc" strokeWidth={0.4} />
                                 </>
                             )}
+
+                            {edgeCalibrationMode && edgeCalibrationStartPoint && (
+                                <g>
+                                    <line
+                                        x1={edgeCalibrationStartPoint.x}
+                                        y1={edgeCalibrationStartPoint.y}
+                                        x2={(edgeCalibrationPreviewPoint || edgeCalibrationStartPoint).x}
+                                        y2={(edgeCalibrationPreviewPoint || edgeCalibrationStartPoint).y}
+                                        stroke="#facc15"
+                                        strokeWidth={0.75}
+                                        strokeDasharray="1.2 0.85"
+                                        opacity={0.95}
+                                    />
+                                    <circle cx={edgeCalibrationStartPoint.x} cy={edgeCalibrationStartPoint.y} r={1} fill="#facc15" stroke="#0f172a" strokeWidth={0.25} />
+                                    {edgeCalibrationPreviewPoint && (
+                                        <circle cx={edgeCalibrationPreviewPoint.x} cy={edgeCalibrationPreviewPoint.y} r={0.88} fill="#fde68a" stroke="#0f172a" strokeWidth={0.2} />
+                                    )}
+                                </g>
+                            )}
                         </svg>
 
                         {features.map(feature => {
                             const selected = feature.id === selectedFeatureId;
+                            const visualMeta = featureVisualById.get(feature.id);
+                            const iconKey = visualMeta?.iconKey || feature.feature_type || 'pin';
+                            const glyph = markerGlyphForIcon(iconKey);
                             return (
-                                <button
+                                <div
                                     key={feature.id}
-                                    onClick={e => {
-                                        e.stopPropagation();
-                                        setSelectedFeatureId(feature.id);
-                                    }}
-                                    title={`${feature.label} (${feature.feature_type})`}
                                     style={{
                                         position: 'absolute',
                                         left: `${feature.x_percent}%`,
                                         top: `${feature.y_percent}%`,
-                                        transform: 'translate(-50%, -50%)',
-                                        width: 18,
-                                        height: 18,
-                                        borderRadius: 999,
-                                        border: selected ? '2px solid #f8fafc' : '1px solid #93c5fd',
-                                        background: feature.status === 'completed' ? '#22c55e' : feature.status === 'blocked' ? '#ef4444' : '#f59e0b',
-                                        cursor: 'pointer',
                                         zIndex: 2
                                     }}
-                                />
+                                >
+                                    <button
+                                        onClick={e => {
+                                            e.stopPropagation();
+                                            setSelectedFeatureId(feature.id);
+                                        }}
+                                        onPointerDown={e => {
+                                            e.stopPropagation();
+                                            beginFeatureDrag(feature.id);
+                                        }}
+                                        title={`${feature.label} (${feature.feature_type})`}
+                                        style={{
+                                            transform: 'translate(-50%, -50%)',
+                                            width: 24,
+                                            height: 24,
+                                            borderRadius: 999,
+                                            border: selected ? '2px solid #f8fafc' : '1px solid #93c5fd',
+                                            background: feature.status === 'completed' ? '#22c55e' : feature.status === 'blocked' ? '#ef4444' : '#1d4ed8',
+                                            cursor: draggingFeatureId === feature.id ? 'grabbing' : 'grab',
+                                            color: '#f8fafc',
+                                            fontSize: '0.72rem',
+                                            fontWeight: 700,
+                                            display: 'grid',
+                                            placeItems: 'center',
+                                            boxShadow: selected ? '0 0 0 2px rgba(125, 211, 252, 0.35)' : undefined
+                                        }}
+                                    >
+                                        {glyph}
+                                    </button>
+                                    <div
+                                        style={{
+                                            position: 'absolute',
+                                            top: '-20px',
+                                            left: '8px',
+                                            transform: 'translate(-50%, -50%)',
+                                            background: 'rgba(2, 6, 23, 0.76)',
+                                            border: selected ? '1px solid #7dd3fc' : '1px solid #334155',
+                                            borderRadius: 6,
+                                            padding: '0.1rem 0.35rem',
+                                            fontSize: '0.7rem',
+                                            color: '#e2e8f0',
+                                            whiteSpace: 'nowrap',
+                                            maxWidth: 150,
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            pointerEvents: 'none'
+                                        }}
+                                    >
+                                        {feature.label}
+                                    </div>
+                                </div>
                             );
                         })}
+
+                        {selectedFeature && (
+                            <div
+                                style={{
+                                    position: 'absolute',
+                                    left: `${selectedFeature.x_percent}%`,
+                                    top: `${selectedFeature.y_percent}%`,
+                                    transform: 'translate(-50%, -122%)',
+                                    background: 'rgba(2, 6, 23, 0.9)',
+                                    border: '1px solid #7dd3fc',
+                                    borderRadius: 8,
+                                    padding: '0.35rem',
+                                    display: 'grid',
+                                    gap: '0.3rem',
+                                    width: 'min(220px, 45vw)',
+                                    minWidth: 148,
+                                    zIndex: 4
+                                }}
+                                onClick={event => event.stopPropagation()}
+                            >
+                                <input
+                                    value={featureLabel}
+                                    onChange={event => setFeatureLabel(event.target.value)}
+                                    placeholder="Landmark label"
+                                    style={{ fontSize: '0.78rem' }}
+                                />
+                                <select
+                                    value={featureIconKey}
+                                    onChange={event => setFeatureIconKey(event.target.value)}
+                                    style={{ fontSize: '0.78rem' }}
+                                >
+                                    {LANDMARK_ICON_OPTIONS.map(option => (
+                                        <option key={`quick-icon-${option.key}`} value={option.key}>{option.label} ({option.glyph})</option>
+                                    ))}
+                                </select>
+                                <div style={{ fontSize: '0.72rem', opacity: 0.75 }}>
+                                    Drag marker to move. Click Update feature to save icon/label edits.
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {displayImageUrl && (
+                        <div
+                            style={{
+                                position: 'absolute',
+                                top: 12,
+                                right: 12,
+                                zIndex: 12,
+                                width: 86,
+                                borderRadius: 10,
+                                border: '1px solid rgba(148, 163, 184, 0.45)',
+                                background: 'rgba(2, 6, 23, 0.75)',
+                                padding: '0.35rem',
+                                pointerEvents: 'none',
+                                backdropFilter: 'blur(4px)'
+                            }}
+                        >
+                            <div style={{ fontSize: '0.64rem', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.86, textAlign: 'center' }}>Compass</div>
+                            <svg viewBox="0 0 100 100" style={{ width: '100%', height: 'auto', display: 'block' }}>
+                                <circle cx="50" cy="50" r="40" fill="rgba(15, 23, 42, 0.55)" stroke="rgba(148, 163, 184, 0.5)" strokeWidth="2" />
+                                <circle cx="50" cy="50" r="2.6" fill="#e2e8f0" />
+                                <text x="50" y="16" textAnchor="middle" fill="#e2e8f0" fontSize="8">N</text>
+                                <text x="50" y="89" textAnchor="middle" fill="#94a3b8" fontSize="6">S</text>
+                                <text x="87" y="53" textAnchor="middle" fill="#94a3b8" fontSize="6">E</text>
+                                <text x="13" y="53" textAnchor="middle" fill="#94a3b8" fontSize="6">W</text>
+                                <g transform={`rotate(${mapNorthCompassAngleDeg} 50 50)`}>
+                                    <line x1="50" y1="50" x2="50" y2="24" stroke="#f87171" strokeWidth="3" strokeLinecap="round" />
+                                    <polygon points="50,14 44,27 56,27" fill="#ef4444" />
+                                    <line x1="50" y1="50" x2="50" y2="72" stroke="#93c5fd" strokeWidth="2" strokeLinecap="round" />
+                                </g>
+                            </svg>
+                            <div style={{ fontSize: '0.65rem', textAlign: 'center', opacity: 0.84 }}>
+                                {mapNorthCompassAngleDeg >= 0 ? '+' : ''}{mapNorthCompassAngleDeg.toFixed(1)} degrees
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.65rem', display: 'grid', gap: '0.5rem' }}>
+                    <div style={{ fontWeight: 700 }}>Base Image Framing</div>
+                    <div style={{ opacity: 0.75, fontSize: '0.86rem' }}>
+                        Use these controls when your uploaded map image looks too small or off-center.
+                    </div>
+                    <div style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                        <label style={{ display: 'grid', gap: '0.25rem' }}>
+                            <span>Image scale {mapImageScalePercent}%</span>
+                            <input
+                                type="range"
+                                min={70}
+                                max={220}
+                                step={5}
+                                value={mapImageScalePercent}
+                                onChange={e => setMapImageScalePercent(Number(e.target.value))}
+                            />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.25rem' }}>
+                            <span>Image horizontal offset {mapImageOffsetXPercent}%</span>
+                            <input
+                                type="range"
+                                min={-40}
+                                max={40}
+                                step={1}
+                                value={mapImageOffsetXPercent}
+                                onChange={e => setMapImageOffsetXPercent(Number(e.target.value))}
+                            />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.25rem' }}>
+                            <span>Image vertical offset {mapImageOffsetYPercent}%</span>
+                            <input
+                                type="range"
+                                min={-40}
+                                max={40}
+                                step={1}
+                                value={mapImageOffsetYPercent}
+                                onChange={e => setMapImageOffsetYPercent(Number(e.target.value))}
+                            />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.25rem' }}>
+                            <span>Image rotation {mapImageRotationDeg}°</span>
+                            <input
+                                type="range"
+                                min={-180}
+                                max={180}
+                                step={1}
+                                value={mapImageRotationDeg}
+                                onChange={e => setMapImageRotationDeg(clamp(Number(e.target.value), -180, 180))}
+                            />
+                        </label>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => {
+                                setEdgeCalibrationMode(prev => {
+                                    const next = prev ? null : 'auto';
+                                    if (!next) {
+                                        setEdgeCalibrationStartPoint(null);
+                                        setEdgeCalibrationPreviewPoint(null);
+                                    } else {
+                                        setStatusMessage('Auto calibrate active. Tap point 1 on any straight property boundary line.');
+                                        setError(null);
+                                    }
+                                    return next;
+                                });
+                            }}
+                            disabled={!displayImageUrl}
+                            style={{ borderColor: edgeCalibrationMode ? '#facc15' : '#475569' }}
+                        >
+                            {edgeCalibrationMode ? 'Cancel auto calibrate' : 'Auto Calibrate'}
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setMapImageRotationDeg(prev => clamp(prev - 90, -180, 180))}
+                        >
+                            Rotate -90°
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setMapImageRotationDeg(prev => clamp(prev + 90, -180, 180))}
+                        >
+                            Rotate +90°
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setMapImageFlipX(prev => !prev)}
+                            style={{ borderColor: mapImageFlipX ? '#38bdf8' : '#475569' }}
+                        >
+                            {mapImageFlipX ? 'Unflip left/right' : 'Flip left/right'}
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setMapImageFlipY(prev => !prev)}
+                            style={{ borderColor: mapImageFlipY ? '#38bdf8' : '#475569' }}
+                        >
+                            {mapImageFlipY ? 'Unflip up/down' : 'Flip up/down'}
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => {
+                                setMapImageScalePercent(100);
+                                setMapImageOffsetXPercent(0);
+                                setMapImageOffsetYPercent(0);
+                                setMapImageRotationDeg(0);
+                                setMapImageFlipX(false);
+                                setMapImageFlipY(false);
+                                setEdgeCalibrationMode(null);
+                                setEdgeCalibrationStartPoint(null);
+                                setEdgeCalibrationPreviewPoint(null);
+                            }}
+                        >
+                            Reset image framing
+                        </button>
+                    </div>
+                    {edgeCalibrationMode === 'auto' && edgeCalibrationStartPoint && (
+                        <div style={{ display: 'grid', gap: '0.45rem', border: '1px solid #334155', borderRadius: 10, padding: '0.55rem' }}>
+                            <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>
+                                Point 1 captured. Which edge type are you drawing?
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => {
+                                        setEdgeCalibrationMode('north');
+                                        setStatusMessage('North alignment selected. Tap point 2 farther north or south on this same edge.');
+                                        setError(null);
+                                    }}
+                                >
+                                    This is a North/South edge
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => {
+                                        setEdgeCalibrationMode('east-west');
+                                        setStatusMessage('East/West alignment selected. Tap point 2 farther east or west on this same edge.');
+                                        setError(null);
+                                    }}
+                                >
+                                    This is an East/West edge
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {edgeCalibrationMode === 'auto' && (
+                        <div style={{ fontSize: '0.82rem', opacity: 0.8 }}>
+                            Auto calibrate is active. Tap point 1 on a boundary edge, choose edge type, then tap point 2 to apply rotation.
+                        </div>
+                    )}
+                    {edgeCalibrationMode === 'north' && (
+                        <div style={{ fontSize: '0.82rem', opacity: 0.8 }}>
+                            North alignment is active. Tap point 1, then tap point 2 farther north on that same edge to auto-rotate the map image.
+                        </div>
+                    )}
+                    {edgeCalibrationMode === 'east-west' && (
+                        <div style={{ fontSize: '0.82rem', opacity: 0.8 }}>
+                            East/West alignment is active. Tap point 1, then tap point 2 farther east or west on that same edge to auto-rotate the map image.
+                        </div>
+                    )}
+                    <div style={{ fontSize: '0.82rem', opacity: 0.74 }}>
+                        Tip: rotate or flip until property boundary lines align with known roads or north/south direction, then keep Full acreage view selected.
                     </div>
                 </div>
 
@@ -2189,8 +3625,19 @@ export default function PropertyMapPage() {
                             onChange={e => {
                                 const nextType = e.target.value;
                                 setFeatureType(nextType);
+                                if (nextType === 'trail') {
+                                    setFeatureIconKey('trail');
+                                } else if (nextType === 'gate') {
+                                    setFeatureIconKey('gate');
+                                } else if (nextType === 'water') {
+                                    setFeatureIconKey('water');
+                                } else if (nextType === 'note') {
+                                    setFeatureIconKey('note');
+                                }
                                 if (nextType !== 'trail') {
                                     setIsTrailPlanning(false);
+                                    setIsTrailEditMode(false);
+                                    setSelectedDraftPointIndex(null);
                                     setTrailDraftPoints([]);
                                 }
                             }}
@@ -2205,6 +3652,14 @@ export default function PropertyMapPage() {
                         <select value={featureStatus} onChange={e => setFeatureStatus(e.target.value)}>
                             {FEATURE_STATUS.map(option => (
                                 <option key={option} value={option}>{option}</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label style={{ display: 'grid', gap: '0.3rem' }}>
+                        <span>Landmark icon</span>
+                        <select value={featureIconKey} onChange={e => setFeatureIconKey(e.target.value)}>
+                            {LANDMARK_ICON_OPTIONS.map(option => (
+                                <option key={option.key} value={option.key}>{option.label} ({option.glyph})</option>
                             ))}
                         </select>
                     </label>
@@ -2228,6 +3683,36 @@ export default function PropertyMapPage() {
                         <span>Description</span>
                         <textarea value={featureDescription} onChange={e => setFeatureDescription(e.target.value)} rows={3} placeholder="Scope, materials, access, notes..." />
                     </label>
+                    {featureType === 'trail' && (
+                        <>
+                            <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                <span>Trail color</span>
+                                <input type="color" value={trailColor} onChange={e => setTrailColor(e.target.value)} />
+                            </label>
+                            <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                <span>Trail width {trailWidth.toFixed(1)}</span>
+                                <input
+                                    type="range"
+                                    min={0.6}
+                                    max={2.6}
+                                    step={0.1}
+                                    value={trailWidth}
+                                    onChange={e => setTrailWidth(clamp(Number(e.target.value), 0.6, 2.6))}
+                                />
+                            </label>
+                            <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                <span>Trail style</span>
+                                <select
+                                    value={trailPattern}
+                                    onChange={e => setTrailPattern(e.target.value as 'solid' | 'dashed' | 'dotted')}
+                                >
+                                    <option value="solid">Solid</option>
+                                    <option value="dashed">Dashed</option>
+                                    <option value="dotted">Dotted</option>
+                                </select>
+                            </label>
+                        </>
+                    )}
                     <label style={{ display: 'grid', gap: '0.3rem', gridColumn: '1 / -1' }}>
                         <span>Add trail/marker images (optional)</span>
                         <input
@@ -2331,7 +3816,7 @@ export default function PropertyMapPage() {
                         </button>
                         {featureType === 'trail' && (
                             <div style={{ display: 'flex', alignItems: 'center', opacity: 0.78, fontSize: '0.88rem' }}>
-                                Trail features save clicked route points from the map canvas.
+                                Trail features save clicked route points. Use trail edit mode to adjust highlighted points.
                             </div>
                         )}
                         {selectedFeature && (

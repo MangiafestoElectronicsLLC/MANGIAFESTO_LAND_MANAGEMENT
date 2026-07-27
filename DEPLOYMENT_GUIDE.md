@@ -59,6 +59,12 @@ Replace `YOUR_USERNAME` with your actual GitHub username.
    | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase Project URL |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase Anon Key |
 
+   Optional for ONX near-live GPX sync:
+
+   | Name | Value |
+   |------|-------|
+   | `ONX_SHARED_GPX_DIR` | Absolute folder path where ONX GPX files are dropped |
+
    *Find these in Supabase: Project Settings → API*
 
 3. Click **Deploy**
@@ -132,6 +138,14 @@ Make sure `.gitignore` doesn't exclude `package-lock.json`. If it does, remove t
 
 1. Check Supabase Email/Password auth is enabled (Authentication → Providers)
 2. Check that your Supabase API key has the correct permissions (Project Settings → API)
+
+### ONX shared-folder auto-import not finding files
+
+1. Verify `ONX_SHARED_GPX_DIR` points to a real folder on the server machine
+2. Ensure `.gpx` files are being written into that folder
+3. Confirm the server process user has read access to the folder
+4. If `ONX_SHARED_GPX_DIR` is not set, the app uses a `shared-gpx` folder in the project root
+5. Optional auto-archive in the Property Map UI moves processed files into an `imported` subfolder under that shared GPX directory
 
 ---
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="onx-test" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>ONX Test Track</name>
+    <trkseg>
+      <trkpt lat="43.2196000" lon="-77.9803000"><time>2026-07-27T14:00:00Z</time></trkpt>
+      <trkpt lat="43.2192000" lon="-77.9795000"><time>2026-07-27T14:01:00Z</time></trkpt>
+      <trkpt lat="43.2187000" lon="-77.9786000"><time>2026-07-27T14:02:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

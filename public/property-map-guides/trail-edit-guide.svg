@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="320" viewBox="0 0 600 320" role="img" aria-labelledby="title desc">
+  <title id="title">Trail editing guide</title>
+  <desc id="desc">Diagram showing a trail with editable points and drag style adjustments.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1f2937" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="600" height="320" rx="18" fill="url(#bg)" />
+  <rect x="60" y="40" width="480" height="240" rx="12" fill="#111827" stroke="#334155" stroke-width="2" />
+  <polyline points="120,210 180,175 240,185 300,145 362,152 430,112 482,122" fill="none" stroke="#22d3ee" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.35" />
+  <polyline points="120,210 180,175 240,185 300,145 362,152 430,112 482,122" fill="none" stroke="#f59e0b" stroke-width="4" stroke-dasharray="8 6" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="300" cy="145" r="11" fill="#fde68a" stroke="#f97316" stroke-width="3" />
+  <circle cx="180" cy="175" r="8" fill="#fbbf24" />
+  <circle cx="240" cy="185" r="8" fill="#fbbf24" />
+  <circle cx="362" cy="152" r="8" fill="#fbbf24" />
+  <path d="M335 110 L380 80" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)" />
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8" />
+    </marker>
+  </defs>
+  <text x="390" y="78" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="16">Select point, tap map to move</text>
+  <text x="300" y="298" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Insert, remove, and fine-tune points before saving.</text>
+</svg>

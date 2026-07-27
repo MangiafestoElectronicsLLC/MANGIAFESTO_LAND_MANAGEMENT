@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="320" viewBox="0 0 600 320" role="img" aria-labelledby="title desc">
+  <title id="title">ONX sync bridge guide</title>
+  <desc id="desc">Visual explaining GPX export and import flow between this app and ONX Hunt.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#60a5fa" />
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="600" height="320" rx="18" fill="url(#bg)" />
+  <rect x="58" y="78" width="198" height="164" rx="12" fill="#111827" stroke="#334155" />
+  <rect x="344" y="78" width="198" height="164" rx="12" fill="#111827" stroke="#334155" />
+  <text x="157" y="112" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI, sans-serif" font-size="20">Land App</text>
+  <text x="443" y="112" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI, sans-serif" font-size="20">ONX Hunt</text>
+  <text x="157" y="148" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Export selected trail</text>
+  <text x="443" y="148" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Import GPX to ONX</text>
+  <text x="157" y="188" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Import ONX GPX</text>
+  <text x="443" y="188" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Export updated GPX</text>
+  <line x1="258" y1="146" x2="338" y2="146" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow)" />
+  <line x1="342" y1="194" x2="262" y2="194" stroke="#34d399" stroke-width="3" marker-end="url(#arrow)" />
+  <text x="300" y="62" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="18">File-based sync that works now</text>
+  <text x="300" y="292" text-anchor="middle" fill="#93c5fd" font-family="Segoe UI, sans-serif" font-size="15">Use GPX to keep trails aligned between both apps.</text>
+</svg>
