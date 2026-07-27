@@ -325,6 +325,13 @@ export default function DashboardPage() {
                     </Link>
                     <span className="inline-dot">•</span>
                     <Link
+                        href="/dashboard/treestands"
+                        className="chip-link-muted"
+                    >
+                        Open Treestands / Range
+                    </Link>
+                    <span className="inline-dot">•</span>
+                    <Link
                         href="/dashboard/trail-cams"
                         className="chip-link-muted"
                     >

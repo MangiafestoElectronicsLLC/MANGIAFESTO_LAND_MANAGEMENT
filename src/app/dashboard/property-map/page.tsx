@@ -123,8 +123,8 @@ const DEFAULT_LNG = -77.9778462;
 const FORTY_ACRES_SQ_FT = 40 * 43560;
 const ESTIMATED_SIDE_LENGTH_FEET = Math.round(Math.sqrt(FORTY_ACRES_SQ_FT));
 
-const FEATURE_TYPES = ['build', 'trail', 'gate', 'road', 'utility', 'water', 'note'];
-const FEATURE_STATUS = ['planned', 'active', 'completed', 'blocked'];
+const FEATURE_TYPES = ['build', 'trail', 'gate', 'road', 'utility', 'water', 'note', 'treestand', 'range'];
+const FEATURE_STATUS = ['planned', 'active', 'inactive', 'requested', 'completed', 'blocked'];
 const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
 const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
 const LOCAL_MAP_CALIBRATIONS_KEY = 'family-land-map-calibrations';
@@ -141,6 +141,15 @@ const ONX_HUNT_APP_DEEP_LINK = 'onxhunt://';
 const DEFAULT_TRAIL_COLOR = '#22d3ee';
 const DEFAULT_TRAIL_WIDTH = 1;
 const DEFAULT_TRAIL_PATTERN: 'solid' | 'dashed' | 'dotted' = 'solid';
+
+const getFeatureStatusColor = (status: string) => {
+    if (status === 'active') return '#22c55e';
+    if (status === 'inactive') return '#64748b';
+    if (status === 'requested') return '#f59e0b';
+    if (status === 'completed') return '#10b981';
+    if (status === 'blocked') return '#ef4444';
+    return '#1d4ed8';
+};
 
 const LANDMARK_ICON_OPTIONS: Array<{ key: string; label: string; glyph: string }> = [
     { key: 'pin', label: 'Pin', glyph: 'P' },
@@ -2548,6 +2557,9 @@ export default function PropertyMapPage() {
                 <Link href="/dashboard/tickets" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
                     Tickets
                 </Link>
+                <Link href="/dashboard/treestands" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
+                    Treestands / Range
+                </Link>
                 <Link href="/dashboard/system" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
                     System Check
                 </Link>
@@ -3326,7 +3338,7 @@ export default function PropertyMapPage() {
                                             height: 24,
                                             borderRadius: 999,
                                             border: selected ? '2px solid #f8fafc' : '1px solid #93c5fd',
-                                            background: feature.status === 'completed' ? '#22c55e' : feature.status === 'blocked' ? '#ef4444' : '#1d4ed8',
+                                            background: getFeatureStatusColor(feature.status),
                                             cursor: draggingFeatureId === feature.id ? 'grabbing' : 'grab',
                                             color: '#f8fafc',
                                             fontSize: '0.72rem',
@@ -3627,12 +3639,22 @@ export default function PropertyMapPage() {
                                 setFeatureType(nextType);
                                 if (nextType === 'trail') {
                                     setFeatureIconKey('trail');
+                                    setFeatureStatus('planned');
+                                } else if (nextType === 'treestand') {
+                                    setFeatureIconKey('stand');
+                                    setFeatureStatus('inactive');
+                                } else if (nextType === 'range') {
+                                    setFeatureIconKey('pin');
+                                    setFeatureStatus('inactive');
                                 } else if (nextType === 'gate') {
                                     setFeatureIconKey('gate');
+                                    setFeatureStatus('planned');
                                 } else if (nextType === 'water') {
                                     setFeatureIconKey('water');
+                                    setFeatureStatus('planned');
                                 } else if (nextType === 'note') {
                                     setFeatureIconKey('note');
+                                    setFeatureStatus('planned');
                                 }
                                 if (nextType !== 'trail') {
                                     setIsTrailPlanning(false);

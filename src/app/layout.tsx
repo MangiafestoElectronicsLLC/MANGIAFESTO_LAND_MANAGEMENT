@@ -61,6 +61,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                             <Link href="/dashboard/tickets">Tickets</Link>
                             <Link href="/dashboard/trail-cams">Trail Cams</Link>
                             <Link href="/dashboard/property-map">Property Map</Link>
+                            <Link href="/dashboard/treestands">Treestands / Range</Link>
                             <Link href="/dashboard/calendar">Hunting / Fishing Calendar</Link>
                             <Link href="/dashboard/roles">Roles</Link>
                             <Link href="/dashboard/meetings">Board Meetings</Link>

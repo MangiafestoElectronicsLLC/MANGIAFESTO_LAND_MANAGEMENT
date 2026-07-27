@@ -25,6 +25,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
             priority: 0.75
         },
         {
+            url: `${siteUrl}/dashboard/treestands`,
+            lastModified: now,
+            changeFrequency: 'weekly',
+            priority: 0.75
+        },
+        {
             url: `${siteUrl}/dashboard/role/chairman`,
             lastModified: now,
             changeFrequency: 'weekly',

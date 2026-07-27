@@ -29,9 +29,9 @@ CREATE TABLE IF NOT EXISTS property_map_features (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT property_map_feature_type_chk
-    CHECK (feature_type IN ('build', 'trail', 'gate', 'road', 'utility', 'water', 'note')),
+    CHECK (feature_type IN ('build', 'trail', 'gate', 'road', 'utility', 'water', 'note', 'treestand', 'range')),
   CONSTRAINT property_map_feature_status_chk
-    CHECK (status IN ('planned', 'active', 'completed', 'blocked')),
+    CHECK (status IN ('planned', 'active', 'inactive', 'requested', 'completed', 'blocked')),
   CONSTRAINT property_map_feature_x_chk
     CHECK (x_percent >= 0 AND x_percent <= 100),
   CONSTRAINT property_map_feature_y_chk

@@ -19,6 +19,9 @@ export default function SystemPage() {
                 <Link href="/dashboard/property-map" className="chip-link">
                     Property Map
                 </Link>
+                <Link href="/dashboard/treestands" className="chip-link">
+                    Treestands / Range
+                </Link>
             </div>
 
             <SystemCheckPanel />
