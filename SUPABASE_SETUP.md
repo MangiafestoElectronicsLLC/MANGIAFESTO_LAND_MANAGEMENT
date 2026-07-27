@@ -10,6 +10,7 @@ Copy and run all the SQL code below in your Supabase project to set up the datab
 4. Paste all the code below
 5. Click **Run**
 6. Wait for completion (a few seconds)
+7. Also open and run [supabase/property_map_access_requests.sql](./supabase/property_map_access_requests.sql) so treestand and range requests sync across devices instead of staying local-only
 
 ---
 

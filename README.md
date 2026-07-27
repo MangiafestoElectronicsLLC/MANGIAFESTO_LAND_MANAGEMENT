@@ -35,7 +35,8 @@ npm install
 3. Wait for the project to initialize (2-3 minutes)
 4. Go to **SQL Editor** → Click **New Query** → Paste the contents of [SUPABASE_SETUP.md](./SUPABASE_SETUP.md)
 5. Click **Run** to create the database tables
-6. Go to **Project Settings** → **API** → Copy:
+6. Also run [supabase/property_map_access_requests.sql](./supabase/property_map_access_requests.sql) to enable shared treestand/range requests across devices
+7. Go to **Project Settings** → **API** → Copy:
    - Project URL (NEXT_PUBLIC_SUPABASE_URL)
    - Anon Key (NEXT_PUBLIC_SUPABASE_ANON_KEY)
 

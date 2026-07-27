@@ -64,6 +64,7 @@ This is the server that stores all your data.
 8. Paste it into the Supabase SQL Editor
 9. Click **Run**
 10. Wait for completion
+11. Also run the file called `supabase/property_map_access_requests.sql` so the treestand/range request workflow works on every device, not just the browser that created it
 
 ---
 
