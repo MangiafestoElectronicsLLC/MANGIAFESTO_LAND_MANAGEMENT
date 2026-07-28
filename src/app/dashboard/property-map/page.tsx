@@ -474,6 +474,42 @@ const formatGpsSpeedMph = (speedMps: number | null) => {
     return `${(speedMps * 2.23694).toFixed(1)} mph`;
 };
 
+const gpsConfidenceFromAccuracy = (accuracyMeters: number) => {
+    if (!Number.isFinite(accuracyMeters) || accuracyMeters <= 0) {
+        return {
+            level: 'unknown',
+            label: 'Unknown',
+            color: '#94a3b8',
+            hint: 'Waiting for reliable GPS fix.'
+        };
+    }
+
+    if (accuracyMeters <= 8) {
+        return {
+            level: 'high',
+            label: 'High',
+            color: '#22c55e',
+            hint: 'Great for saving trail points.'
+        };
+    }
+
+    if (accuracyMeters <= 20) {
+        return {
+            level: 'medium',
+            label: 'Medium',
+            color: '#facc15',
+            hint: 'Usable, but pause for tighter accuracy if needed.'
+        };
+    }
+
+    return {
+        level: 'low',
+        label: 'Low',
+        color: '#ef4444',
+        hint: 'Wait before saving critical trail points.'
+    };
+};
+
 const toRadians = (value: number) => (value * Math.PI) / 180;
 
 const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
@@ -538,15 +574,39 @@ const buildGpxFromTrail = (
         return null;
     }
 
-    const encodedTrackPoints = gpxPoints
-        .map(point => {
-            const elePart = point.ele !== null ? `<ele>${point.ele.toFixed(2)}</ele>` : '';
-            const timePart = point.time ? `<time>${escapeXml(point.time)}</time>` : '';
-            return `<trkpt lat=\"${point.lat.toFixed(7)}\" lon=\"${point.lng.toFixed(7)}\">${elePart}${timePart}</trkpt>`;
-        })
-        .join('');
+    const encodePointXml = (point: { lat: number; lng: number; ele: number | null; time: string | null }, tagName: 'trkpt' | 'rtept') => {
+        const elePart = point.ele !== null ? `<ele>${point.ele.toFixed(2)}</ele>` : '';
+        const timePart = point.time ? `<time>${escapeXml(point.time)}</time>` : '';
+        return `<${tagName} lat="${point.lat.toFixed(7)}" lon="${point.lng.toFixed(7)}">${elePart}${timePart}</${tagName}>`;
+    };
 
-    return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<gpx version=\"1.1\" creator=\"Mangiafesto Land App\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n  <trk>\n    <name>${escapeXml(trailName)}</name>\n    <trkseg>${encodedTrackPoints}</trkseg>\n  </trk>\n</gpx>`;
+    const encodedRoutePoints = gpxPoints.map(point => encodePointXml(point, 'rtept')).join('');
+    const encodedTrackPoints = gpxPoints.map(point => encodePointXml(point, 'trkpt')).join('');
+    const description = 'Trail exported from Mangiafesto Land Management for ONX Hunt and other GPX apps.';
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Mangiafesto Land App" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${escapeXml(trailName)}</name>
+    <desc>${escapeXml(description)}</desc>
+  </metadata>
+  <rte>
+    <name>${escapeXml(trailName)}</name>
+    ${encodedRoutePoints}
+  </rte>
+  <trk>
+    <name>${escapeXml(trailName)}</name>
+    <trkseg>${encodedTrackPoints}</trkseg>
+  </trk>
+</gpx>`;
+};
+
+const getNodeLocalName = (node: Element) => (node.localName || node.tagName.toLowerCase());
+
+const getNamedChildText = (node: Element | null, childName: string) => {
+    if (!node) return '';
+    const matchingChild = Array.from(node.children).find(child => getNodeLocalName(child) === childName);
+    return matchingChild?.textContent?.trim() || '';
 };
 
 const parseGpxToTrailPoints = (rawGpx: string, calibration: MapBoundsCalibration) => {
@@ -557,22 +617,32 @@ const parseGpxToTrailPoints = (rawGpx: string, calibration: MapBoundsCalibration
         throw new Error('GPX file could not be parsed.');
     }
 
-    const trackPoints = Array.from(xml.querySelectorAll('trkpt'));
-    const routePoints = Array.from(xml.querySelectorAll('rtept'));
-    const pointNodes = trackPoints.length > 0 ? trackPoints : routePoints;
+    const pointNodes: Element[] = [];
+    const visit = (node: Element) => {
+        const localName = getNodeLocalName(node);
+        if (localName === 'trkpt' || localName === 'rtept' || localName === 'wpt') {
+            pointNodes.push(node);
+        }
+
+        Array.from(node.children).forEach(child => visit(child as Element));
+    };
+
+    visit(xml.documentElement);
 
     const points: TrailPoint[] = [];
 
     for (const node of pointNodes) {
-        const lat = Number(node.getAttribute('lat'));
-        const lng = Number(node.getAttribute('lon'));
+        const latValue = node.getAttribute('lat') || node.getAttribute('latitude');
+        const lngValue = node.getAttribute('lon') || node.getAttribute('lng') || node.getAttribute('longitude');
+        const lat = Number(latValue);
+        const lng = Number(lngValue);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
 
         const projected = latLngToXyPoint(lat, lng, calibration);
         if (!projected) continue;
 
-        const eleRaw = node.querySelector('ele')?.textContent || '';
-        const timeRaw = node.querySelector('time')?.textContent || '';
+        const eleRaw = getNamedChildText(node, 'ele');
+        const timeRaw = getNamedChildText(node, 'time');
         const parsedElevation = Number(eleRaw);
 
         points.push({
@@ -796,6 +866,7 @@ export default function PropertyMapPage() {
     const [featureImageFiles, setFeatureImageFiles] = useState<File[]>([]);
     const [existingAttachments, setExistingAttachments] = useState<FeatureAttachment[]>([]);
     const [onxGpxFile, setOnxGpxFile] = useState<File | null>(null);
+    const [onxDropActive, setOnxDropActive] = useState(false);
     const [onxAutoImportEnabled, setOnxAutoImportEnabled] = useState(false);
     const [onxAutoArchiveEnabled, setOnxAutoArchiveEnabled] = useState(false);
     const [onxAutoImportIntervalSec, setOnxAutoImportIntervalSec] = useState(60);
@@ -810,6 +881,8 @@ export default function PropertyMapPage() {
     const [edgeCalibrationMode, setEdgeCalibrationMode] = useState<EdgeCalibrationMode | null>(null);
     const [edgeCalibrationStartPoint, setEdgeCalibrationStartPoint] = useState<MapPercentPoint | null>(null);
     const [edgeCalibrationPreviewPoint, setEdgeCalibrationPreviewPoint] = useState<MapPercentPoint | null>(null);
+    const [gpsAnchorPickMode, setGpsAnchorPickMode] = useState(false);
+    const [gpsAnchorPoint, setGpsAnchorPoint] = useState<MapPercentPoint | null>(null);
 
     const [northLatInput, setNorthLatInput] = useState('');
     const [southLatInput, setSouthLatInput] = useState('');
@@ -819,7 +892,7 @@ export default function PropertyMapPage() {
     const [isGpsTracking, setIsGpsTracking] = useState(false);
     const [gpsError, setGpsError] = useState<string | null>(null);
     const gpsWatchIdRef = useRef<number | null>(null);
-    const [autoFollowGps, setAutoFollowGps] = useState(true);
+    const [autoFollowGps, setAutoFollowGps] = useState(false);
     const [mapZoomPercent, setMapZoomPercent] = useState(145);
     const [breadcrumbPoints, setBreadcrumbPoints] = useState<TrailPoint[]>([]);
     const [isBreadcrumbTracking, setIsBreadcrumbTracking] = useState(false);
@@ -831,6 +904,7 @@ export default function PropertyMapPage() {
     const walkTrailSmoothPointRef = useRef<TrailPoint | null>(null);
 
     const [loading, setLoading] = useState(true);
+    const [simpleLayout, setSimpleLayout] = useState(true);
     const [savingMap, setSavingMap] = useState(false);
     const [savingFeature, setSavingFeature] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -911,10 +985,17 @@ export default function PropertyMapPage() {
         return gpsAccuracyMetersToPercent(liveGps.accuracyMeters, activeCalibration);
     }, [liveGps, activeCalibration]);
 
+    const gpsConfidence = useMemo(() => {
+        if (!liveGps) return null;
+        return gpsConfidenceFromAccuracy(liveGps.accuracyMeters);
+    }, [liveGps]);
+
     const mapTransform = useMemo(() => {
-        const followPoint = autoFollowGps && gpsMapPoint ? { x: gpsMapPoint.x, y: gpsMapPoint.y } : null;
+        const followPoint = autoFollowGps && isGpsTracking && gpsMapPoint?.insideMap
+            ? { x: gpsMapPoint.x, y: gpsMapPoint.y }
+            : null;
         return buildMapTransform(mapZoomPercent, followPoint);
-    }, [autoFollowGps, gpsMapPoint, mapZoomPercent]);
+    }, [autoFollowGps, isGpsTracking, gpsMapPoint, mapZoomPercent]);
 
     const mapNorthCompassAngleDeg = useMemo(() => {
         return normalizeSignedAngle(mapImageRotationDeg + (mapImageFlipY ? 180 : 0));
@@ -1614,6 +1695,14 @@ export default function PropertyMapPage() {
         const rect = event.currentTarget.getBoundingClientRect();
         const { x: clampedX, y: clampedY } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
 
+        if (gpsAnchorPickMode) {
+            setGpsAnchorPoint({ x: clampedX, y: clampedY });
+            setGpsAnchorPickMode(false);
+            setError(null);
+            setStatusMessage('Standing spot marked on map. Now tap Align GPS to marked spot.');
+            return;
+        }
+
         if (edgeCalibrationMode) {
             if (!edgeCalibrationStartPoint) {
                 setEdgeCalibrationStartPoint({ x: clampedX, y: clampedY });
@@ -1826,6 +1915,14 @@ export default function PropertyMapPage() {
         setError(null);
     };
 
+    const handleOnxGpxFileSelection = (file: File | null) => {
+        setOnxGpxFile(file);
+        setOnxDropActive(false);
+        if (file) {
+            setStatusMessage(`Selected ONX GPX: ${file.name}. Import it to create a draft trail on this map.`);
+        }
+    };
+
     const openOnxHuntApp = () => {
         if (typeof window === 'undefined') return;
         window.location.href = ONX_HUNT_APP_DEEP_LINK;
@@ -2025,6 +2122,89 @@ export default function PropertyMapPage() {
         setStatusMessage('Map GPS calibration saved for this property map on this device.');
     };
 
+    const fitPropertyImageToCanvas = () => {
+        setMapImageOffsetXPercent(0);
+        setMapImageOffsetYPercent(0);
+        setError(null);
+        setStatusMessage('Property image auto-centered using current fit, scale, and rotation settings.');
+    };
+
+    const alignGpsToMarkedMapSpot = () => {
+        if (!selectedMap?.id) {
+            setError('Create or select a property map first.');
+            return;
+        }
+
+        if (!activeCalibration) {
+            setError('Set valid map GPS bounds before running GPS alignment.');
+            return;
+        }
+
+        if (!liveGps) {
+            setError('Start phone GPS first so current standing position is available.');
+            return;
+        }
+
+        if (!gpsAnchorPoint) {
+            setError('Mark your standing spot on the map first.');
+            return;
+        }
+
+        const projected = mapGpsToPercent(liveGps, activeCalibration);
+        if (!projected) {
+            setError('Current GPS point could not be projected with the active calibration.');
+            return;
+        }
+
+        const latSpan = activeCalibration.northLat - activeCalibration.southLat;
+        const lngSpan = activeCalibration.eastLng - activeCalibration.westLng;
+
+        const deltaXPercent = gpsAnchorPoint.x - projected.x;
+        const deltaYPercent = gpsAnchorPoint.y - projected.y;
+
+        const lngShift = (deltaXPercent / 100) * lngSpan;
+        const latShift = -(deltaYPercent / 100) * latSpan;
+
+        const shiftedCalibration: MapBoundsCalibration = {
+            northLat: Number((activeCalibration.northLat + latShift).toFixed(7)),
+            southLat: Number((activeCalibration.southLat + latShift).toFixed(7)),
+            westLng: Number((activeCalibration.westLng + lngShift).toFixed(7)),
+            eastLng: Number((activeCalibration.eastLng + lngShift).toFixed(7))
+        };
+
+        setNorthLatInput(String(shiftedCalibration.northLat));
+        setSouthLatInput(String(shiftedCalibration.southLat));
+        setWestLngInput(String(shiftedCalibration.westLng));
+        setEastLngInput(String(shiftedCalibration.eastLng));
+
+        const nextCalibrations = {
+            ...readLocalCalibrations(),
+            [selectedMap.id]: shiftedCalibration
+        };
+        saveLocalCalibrations(nextCalibrations);
+
+        setGpsAnchorPickMode(false);
+        setError(null);
+        setStatusMessage('GPS alignment applied. Live pin should now line up with your marked standing spot.');
+    };
+
+    const locateMeOnMap = () => {
+        if (!isGpsTracking) {
+            setGpsError('Start phone GPS first.');
+            return;
+        }
+
+        if (!gpsMapPoint || !gpsMapPoint.insideMap) {
+            setError('Live GPS is outside your calibrated bounds. Mark standing spot and run GPS alignment first.');
+            return;
+        }
+
+        setAutoFollowGps(true);
+        setMapZoomPercent(prev => Math.max(prev, 170));
+        setError(null);
+        setStatusMessage('Map centered on your live GPS location.');
+    };
+
     const stopGpsTracking = () => {
         if (gpsWatchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
             navigator.geolocation.clearWatch(gpsWatchIdRef.current);
@@ -2056,19 +2236,38 @@ export default function PropertyMapPage() {
             navigator.geolocation.clearWatch(gpsWatchIdRef.current);
         }
 
+        const applyGpsFix = (position: GeolocationPosition) => {
+            setLiveGps({
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracyMeters: position.coords.accuracy,
+                heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null,
+                speedMps: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+                altitudeMeters: Number.isFinite(position.coords.altitude) ? position.coords.altitude : null,
+                capturedAtIso: new Date(position.timestamp).toISOString()
+            });
+            setIsGpsTracking(true);
+            setGpsError(null);
+        };
+
+        navigator.geolocation.getCurrentPosition(
+            position => {
+                applyGpsFix(position);
+                setStatusMessage('Live GPS fix acquired.');
+            },
+            () => {
+                // Ignore initial one-shot fix errors; continuous watch may still succeed.
+            },
+            {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 12000
+            }
+        );
+
         gpsWatchIdRef.current = navigator.geolocation.watchPosition(
             position => {
-                setLiveGps({
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                    accuracyMeters: position.coords.accuracy,
-                    heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null,
-                    speedMps: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
-                    altitudeMeters: Number.isFinite(position.coords.altitude) ? position.coords.altitude : null,
-                    capturedAtIso: new Date(position.timestamp).toISOString()
-                });
-                setIsGpsTracking(true);
-                setGpsError(null);
+                applyGpsFix(position);
             },
             err => {
                 setGpsError(err.message || 'Unable to read current GPS location.');
@@ -2076,8 +2275,8 @@ export default function PropertyMapPage() {
             },
             {
                 enableHighAccuracy: true,
-                maximumAge: 3000,
-                timeout: 15000
+                maximumAge: 0,
+                timeout: 12000
             }
         );
     };
@@ -2570,7 +2769,7 @@ export default function PropertyMapPage() {
                     <div style={{ fontSize: '0.84rem', opacity: 0.82 }}>Property Planner</div>
                     <h2 style={{ margin: 0 }}>Property Map: 825 Brockport, New York</h2>
                     <div style={{ opacity: 0.8 }}>
-                        Plan all 40 acres with full-image view, then click the map to place points and draft hiking trails.
+                        Use Simple View for daily map work. Switch to Advanced View for full setup and sync tools.
                     </div>
                     <div style={{ opacity: 0.72, fontSize: '0.88rem' }}>
                         40 acres is about {ESTIMATED_SIDE_LENGTH_FEET} ft x {ESTIMATED_SIDE_LENGTH_FEET} ft when square. Use contain mode to avoid cropping.
@@ -2578,36 +2777,58 @@ export default function PropertyMapPage() {
                     <div style={{ opacity: 0.72, fontSize: '0.86rem' }}>
                         For live phone tracking, open this page from your phone browser over HTTPS, then enable GPS tracking below.
                     </div>
+                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setSimpleLayout(true)}
+                            style={{ borderColor: simpleLayout ? '#22c55e' : '#475569', color: simpleLayout ? '#bbf7d0' : '#cbd5e1' }}
+                        >
+                            Simple View
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => setSimpleLayout(false)}
+                            style={{ borderColor: !simpleLayout ? '#38bdf8' : '#475569', color: !simpleLayout ? '#bae6fd' : '#cbd5e1' }}
+                        >
+                            Advanced View
+                        </button>
+                    </div>
                 </div>
 
-                <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
-                        <img src="/property-map-guides/calibration-guide.svg" alt="GPS calibration guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
-                        <div style={{ fontWeight: 600 }}>1) Calibrate map bounds</div>
-                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Set north/south/west/east edges once, then your phone pin lands in the correct place.</div>
-                    </article>
-                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
-                        <img src="/property-map-guides/trail-edit-guide.svg" alt="Trail editing guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
-                        <div style={{ fontWeight: 600 }}>2) Edit trails point-by-point</div>
-                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Load any saved trail, select a point, and tap map to move it for cleaner trail alignment.</div>
-                    </article>
-                    <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
-                        <img src="/property-map-guides/onx-sync-guide.svg" alt="ONX sync guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
-                        <div style={{ fontWeight: 600 }}>3) ONX Hunt bridge</div>
-                        <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Open ONX quickly, export GPX from here, or import GPX from ONX to keep both tools in sync.</div>
-                    </article>
-                </div>
+                {!simpleLayout && (
+                    <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                        <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                            <img src="/property-map-guides/calibration-guide.svg" alt="GPS calibration guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                            <div style={{ fontWeight: 600 }}>1) Calibrate map bounds</div>
+                            <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Set north/south/west/east edges once, then your phone pin lands in the correct place.</div>
+                        </article>
+                        <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                            <img src="/property-map-guides/trail-edit-guide.svg" alt="Trail editing guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                            <div style={{ fontWeight: 600 }}>2) Edit trails point-by-point</div>
+                            <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Load any saved trail, select a point, and tap map to move it for cleaner trail alignment.</div>
+                        </article>
+                        <article style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.38rem' }}>
+                            <img src="/property-map-guides/onx-sync-guide.svg" alt="ONX sync guide" style={{ width: '100%', borderRadius: 8, border: '1px solid #1f2937' }} />
+                            <div style={{ fontWeight: 600 }}>3) ONX Hunt bridge</div>
+                            <div style={{ fontSize: '0.85rem', opacity: 0.78 }}>Open ONX quickly, export GPX from here, or import GPX from ONX to keep both tools in sync.</div>
+                        </article>
+                    </div>
+                )}
 
                 {statusMessage && <div style={{ color: '#86efac' }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5' }}>{error}</div>}
-                <ConnectionDiagnostics
-                    mode={storageMode}
-                    contextLabel="Property map"
-                    lastOperation={diagnosticLastOperation}
-                    lastUpdatedAt={diagnosticLastUpdatedAt}
-                    errorCode={diagnosticErrorCode}
-                    errorMessage={diagnosticErrorMessage}
-                />
+                {!simpleLayout && (
+                    <ConnectionDiagnostics
+                        mode={storageMode}
+                        contextLabel="Property map"
+                        lastOperation={diagnosticLastOperation}
+                        lastUpdatedAt={diagnosticLastUpdatedAt}
+                        errorCode={diagnosticErrorCode}
+                        errorMessage={diagnosticErrorMessage}
+                    />
+                )}
                 {setupNotice && (
                     <div
                         style={{
@@ -2652,183 +2873,274 @@ export default function PropertyMapPage() {
                     ))}
                 </div>
 
-                <form onSubmit={saveMap} style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Map name</span>
-                        <input value={mapName} onChange={e => setMapName(e.target.value)} placeholder="Family Property Map" />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Address</span>
-                        <input value={mapAddress} onChange={e => setMapAddress(e.target.value)} placeholder={DEFAULT_ADDRESS} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Center latitude</span>
-                        <input value={mapLat} onChange={e => setMapLat(e.target.value)} placeholder={String(DEFAULT_LAT)} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Center longitude</span>
-                        <input value={mapLng} onChange={e => setMapLng(e.target.value)} placeholder={String(DEFAULT_LNG)} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Base map image (optional)</span>
-                        <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            onChange={e => {
-                                const selectedFile = e.target.files?.[0] || null;
-                                if (!selectedFile) {
-                                    setMapImageFile(null);
-                                    return;
-                                }
+                {!simpleLayout && (
+                    <form onSubmit={saveMap} style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Map name</span>
+                            <input value={mapName} onChange={e => setMapName(e.target.value)} placeholder="Family Property Map" />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Address</span>
+                            <input value={mapAddress} onChange={e => setMapAddress(e.target.value)} placeholder={DEFAULT_ADDRESS} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Center latitude</span>
+                            <input value={mapLat} onChange={e => setMapLat(e.target.value)} placeholder={String(DEFAULT_LAT)} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Center longitude</span>
+                            <input value={mapLng} onChange={e => setMapLng(e.target.value)} placeholder={String(DEFAULT_LNG)} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Base map image (optional)</span>
+                            <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif"
+                                onChange={e => {
+                                    const selectedFile = e.target.files?.[0] || null;
+                                    if (!selectedFile) {
+                                        setMapImageFile(null);
+                                        return;
+                                    }
 
-                                if (!selectedFile.type.startsWith('image/')) {
-                                    setError('Please select a valid image file.');
-                                    setMapImageFile(null);
-                                    return;
-                                }
+                                    if (!selectedFile.type.startsWith('image/')) {
+                                        setError('Please select a valid image file.');
+                                        setMapImageFile(null);
+                                        return;
+                                    }
 
-                                if (selectedFile.size > MAX_MAP_IMAGE_BYTES) {
-                                    setError('Image is too large. Please upload an image under 20 MB.');
-                                    setMapImageFile(null);
-                                    return;
-                                }
+                                    if (selectedFile.size > MAX_MAP_IMAGE_BYTES) {
+                                        setError('Image is too large. Please upload an image under 20 MB.');
+                                        setMapImageFile(null);
+                                        return;
+                                    }
 
-                                setError(null);
-                                setMapImageFile(selectedFile);
-                                setStatusMessage(`Selected image: ${selectedFile.name}`);
-                            }}
-                        />
-                        <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>PNG, JPG, WEBP, or GIF up to 20 MB.</span>
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <button type="submit" className="soft-button" disabled={savingMap}>
-                            {savingMap ? 'Saving map...' : selectedMap ? 'Update map' : 'Create map'}
-                        </button>
-                        <a href={mapCenterHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
-                            Open address in Google Maps
-                        </a>
-                        <a href={mapCoordinatesHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
-                            Open lat/lng in Google Maps
-                        </a>
-                    </div>
-                </form>
+                                    setError(null);
+                                    setMapImageFile(selectedFile);
+                                    setStatusMessage(`Selected image: ${selectedFile.name}`);
+                                }}
+                            />
+                            <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>PNG, JPG, WEBP, or GIF up to 20 MB.</span>
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button type="submit" className="soft-button" disabled={savingMap}>
+                                {savingMap ? 'Saving map...' : selectedMap ? 'Update map' : 'Create map'}
+                            </button>
+                            <a href={mapCenterHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
+                                Open address in Google Maps
+                            </a>
+                            <a href={mapCoordinatesHref} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
+                                Open lat/lng in Google Maps
+                            </a>
+                        </div>
+                    </form>
+                )}
 
                 <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.7rem', display: 'grid', gap: '0.55rem' }}>
                     <div style={{ fontWeight: 700 }}>GPS Calibration + Live Tracking</div>
                     <div style={{ opacity: 0.76, fontSize: '0.88rem' }}>
                         Enter map edge coordinates so your phone GPS can be projected on this property image.
                     </div>
-                    <div style={{ display: 'grid', gap: '0.55rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                        <label style={{ display: 'grid', gap: '0.25rem' }}>
-                            <span>North edge latitude</span>
-                            <input value={northLatInput} onChange={e => setNorthLatInput(e.target.value)} placeholder="43.2200000" />
-                        </label>
-                        <label style={{ display: 'grid', gap: '0.25rem' }}>
-                            <span>South edge latitude</span>
-                            <input value={southLatInput} onChange={e => setSouthLatInput(e.target.value)} placeholder="43.2160000" />
-                        </label>
-                        <label style={{ display: 'grid', gap: '0.25rem' }}>
-                            <span>West edge longitude</span>
-                            <input value={westLngInput} onChange={e => setWestLngInput(e.target.value)} placeholder="-77.9820000" />
-                        </label>
-                        <label style={{ display: 'grid', gap: '0.25rem' }}>
-                            <span>East edge longitude</span>
-                            <input value={eastLngInput} onChange={e => setEastLngInput(e.target.value)} placeholder="-77.9730000" />
-                        </label>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                        <button
-                            type="button"
-                            className="soft-button"
-                            onClick={() => {
-                                const lat = Number(mapLat);
-                                const lng = Number(mapLng);
-                                if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                                    setError('Map center coordinates must be valid to estimate 40-acre bounds.');
-                                    return;
-                                }
-                                const estimated = estimateCalibrationFromCenter(lat, lng);
-                                setNorthLatInput(String(estimated.northLat));
-                                setSouthLatInput(String(estimated.southLat));
-                                setWestLngInput(String(estimated.westLng));
-                                setEastLngInput(String(estimated.eastLng));
-                                setStatusMessage('Estimated bounds loaded from map center for 40 acres. Fine tune for best accuracy.');
-                            }}
-                        >
-                            Estimate 40-acre bounds
-                        </button>
-                        <button type="button" className="soft-button" onClick={saveCalibration}>
-                            Save GPS calibration
-                        </button>
-                        {!isGpsTracking ? (
-                            <button type="button" className="soft-button" onClick={startGpsTracking}>
-                                Start phone GPS
-                            </button>
-                        ) : (
-                            <button type="button" className="soft-button" onClick={stopGpsTracking} style={{ borderColor: '#ef4444', color: '#fecaca' }}>
-                                Stop phone GPS
-                            </button>
-                        )}
-                        {!isBreadcrumbTracking ? (
-                            <button type="button" className="soft-button" onClick={startBreadcrumbTracking} disabled={!isGpsTracking}>
-                                Start breadcrumbs
-                            </button>
-                        ) : (
-                            <button type="button" className="soft-button" onClick={stopBreadcrumbTracking}>
-                                Stop breadcrumbs
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            className="soft-button"
-                            onClick={useBreadcrumbAsTrail}
-                            disabled={breadcrumbPoints.length < 2}
-                        >
-                            Create trail from breadcrumbs
-                        </button>
-                        <button
-                            type="button"
-                            className="soft-button"
-                            onClick={dropLandmarkAtGpsPin}
-                            disabled={!liveGps || !gpsMapPoint}
-                        >
-                            Drop landmark at GPS pin
-                        </button>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <input
-                                type="checkbox"
-                                checked={enableGpsSmoothing}
-                                onChange={e => {
-                                    setEnableGpsSmoothing(e.target.checked);
-                                    breadcrumbSmoothPointRef.current = null;
-                                    walkTrailSmoothPointRef.current = null;
+                    {!simpleLayout && (
+                        <div style={{ display: 'grid', gap: '0.55rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                            <label style={{ display: 'grid', gap: '0.25rem' }}>
+                                <span>North edge latitude</span>
+                                <input value={northLatInput} onChange={e => setNorthLatInput(e.target.value)} placeholder="43.2200000" />
+                            </label>
+                            <label style={{ display: 'grid', gap: '0.25rem' }}>
+                                <span>South edge latitude</span>
+                                <input value={southLatInput} onChange={e => setSouthLatInput(e.target.value)} placeholder="43.2160000" />
+                            </label>
+                            <label style={{ display: 'grid', gap: '0.25rem' }}>
+                                <span>West edge longitude</span>
+                                <input value={westLngInput} onChange={e => setWestLngInput(e.target.value)} placeholder="-77.9820000" />
+                            </label>
+                            <label style={{ display: 'grid', gap: '0.25rem' }}>
+                                <span>East edge longitude</span>
+                                <input value={eastLngInput} onChange={e => setEastLngInput(e.target.value)} placeholder="-77.9730000" />
+                            </label>
+                        </div>
+                    )}
+                    {!simpleLayout && (
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => {
+                                    const lat = Number(mapLat);
+                                    const lng = Number(mapLng);
+                                    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                                        setError('Map center coordinates must be valid to estimate 40-acre bounds.');
+                                        return;
+                                    }
+                                    const estimated = estimateCalibrationFromCenter(lat, lng);
+                                    setNorthLatInput(String(estimated.northLat));
+                                    setSouthLatInput(String(estimated.southLat));
+                                    setWestLngInput(String(estimated.westLng));
+                                    setEastLngInput(String(estimated.eastLng));
+                                    setStatusMessage('Estimated bounds loaded from map center for 40 acres. Fine tune for best accuracy.');
                                 }}
-                            />
-                            <span style={{ fontSize: '0.86rem', opacity: 0.84 }}>Smooth GPS jitter</span>
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <span style={{ fontSize: '0.84rem', opacity: 0.78 }}>Smoothing</span>
-                            <input
-                                type="range"
-                                min={10}
-                                max={80}
-                                step={5}
-                                value={Math.round(gpsSmoothingStrength * 100)}
-                                onChange={e => setGpsSmoothingStrength(clamp(Number(e.target.value) / 100, 0.1, 0.8))}
-                                disabled={!enableGpsSmoothing}
-                            />
-                            <span style={{ fontSize: '0.82rem', opacity: 0.72 }}>{Math.round(gpsSmoothingStrength * 100)}%</span>
-                        </label>
-                    </div>
+                            >
+                                Estimate 40-acre bounds
+                            </button>
+                            <button type="button" className="soft-button" onClick={saveCalibration}>
+                                Save GPS calibration
+                            </button>
+                            {!isGpsTracking ? (
+                                <button type="button" className="soft-button" onClick={startGpsTracking}>
+                                    Start phone GPS
+                                </button>
+                            ) : (
+                                <button type="button" className="soft-button" onClick={stopGpsTracking} style={{ borderColor: '#ef4444', color: '#fecaca' }}>
+                                    Stop phone GPS
+                                </button>
+                            )}
+                            <button type="button" className="soft-button" onClick={locateMeOnMap} disabled={!isGpsTracking}>
+                                Locate me on map
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => {
+                                    setGpsAnchorPickMode(prev => !prev);
+                                    if (!gpsAnchorPickMode) {
+                                        setStatusMessage('Tap your current standing location on the map image to set alignment anchor.');
+                                        setError(null);
+                                    }
+                                }}
+                                style={{ borderColor: gpsAnchorPickMode ? '#f97316' : '#475569', color: gpsAnchorPickMode ? '#fed7aa' : '#cbd5e1' }}
+                                disabled={!liveGps}
+                            >
+                                {gpsAnchorPickMode ? 'Cancel standing spot pick' : 'Mark standing spot on map'}
+                            </button>
+                            <button type="button" className="soft-button" onClick={alignGpsToMarkedMapSpot} disabled={!liveGps || !gpsAnchorPoint || !activeCalibration}>
+                                Align GPS to marked spot
+                            </button>
+                            {!isBreadcrumbTracking ? (
+                                <button type="button" className="soft-button" onClick={startBreadcrumbTracking} disabled={!isGpsTracking}>
+                                    Start breadcrumbs
+                                </button>
+                            ) : (
+                                <button type="button" className="soft-button" onClick={stopBreadcrumbTracking}>
+                                    Stop breadcrumbs
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={useBreadcrumbAsTrail}
+                                disabled={breadcrumbPoints.length < 2}
+                            >
+                                Create trail from breadcrumbs
+                            </button>
+                            {!isWalkTrailRecording ? (
+                                <button type="button" className="soft-button" onClick={startWalkTrailRecording} disabled={!isGpsTracking}>
+                                    Start walked trail now
+                                </button>
+                            ) : (
+                                <button type="button" className="soft-button" onClick={stopWalkTrailRecording} style={{ borderColor: '#ef4444', color: '#fecaca' }}>
+                                    Stop walked trail
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={dropLandmarkAtGpsPin}
+                                disabled={!liveGps || !gpsMapPoint}
+                            >
+                                Drop landmark at GPS pin
+                            </button>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={enableGpsSmoothing}
+                                    onChange={e => {
+                                        setEnableGpsSmoothing(e.target.checked);
+                                        breadcrumbSmoothPointRef.current = null;
+                                        walkTrailSmoothPointRef.current = null;
+                                    }}
+                                />
+                                <span style={{ fontSize: '0.86rem', opacity: 0.84 }}>Smooth GPS jitter</span>
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ fontSize: '0.84rem', opacity: 0.78 }}>Smoothing</span>
+                                <input
+                                    type="range"
+                                    min={10}
+                                    max={80}
+                                    step={5}
+                                    value={Math.round(gpsSmoothingStrength * 100)}
+                                    onChange={e => setGpsSmoothingStrength(clamp(Number(e.target.value) / 100, 0.1, 0.8))}
+                                    disabled={!enableGpsSmoothing}
+                                />
+                                <span style={{ fontSize: '0.82rem', opacity: 0.72 }}>{Math.round(gpsSmoothingStrength * 100)}%</span>
+                            </label>
+                        </div>
+                    )}
+                    {simpleLayout && (
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={isGpsTracking ? stopGpsTracking : startGpsTracking}
+                                style={isGpsTracking ? { borderColor: '#ef4444', color: '#fecaca' } : undefined}
+                            >
+                                GPS On/Off
+                            </button>
+                            <button type="button" className="soft-button" onClick={locateMeOnMap} disabled={!isGpsTracking}>
+                                Center Me
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={isWalkTrailRecording ? stopWalkTrailRecording : startWalkTrailRecording}
+                                disabled={!isGpsTracking && !isWalkTrailRecording}
+                                style={isWalkTrailRecording ? { borderColor: '#ef4444', color: '#fecaca' } : undefined}
+                            >
+                                Record Trail
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={saveWalkedTrailNow}
+                                disabled={trailDraftPoints.length < 2 || savingFeature}
+                                style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
+                            >
+                                Save Trail
+                            </button>
+                        </div>
+                    )}
                     {gpsError && <div style={{ color: '#fca5a5' }}>{gpsError}</div>}
                     {liveGps && (
                         <div style={{ opacity: 0.82, fontSize: '0.86rem' }}>
                             GPS: {liveGps.lat.toFixed(6)}, {liveGps.lng.toFixed(6)} | Accuracy: {Math.round(liveGps.accuracyMeters)} m | Speed: {formatGpsSpeedMph(liveGps.speedMps)}
                         </div>
                     )}
+                    {liveGps && gpsConfidence && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.84rem' }}>
+                            <span
+                                style={{
+                                    border: `1px solid ${gpsConfidence.color}`,
+                                    color: gpsConfidence.color,
+                                    borderRadius: 999,
+                                    padding: '0.12rem 0.5rem',
+                                    fontWeight: 700,
+                                    letterSpacing: '0.01em'
+                                }}
+                            >
+                                GPS confidence: {gpsConfidence.label}
+                            </span>
+                            <span style={{ opacity: 0.78 }}>{gpsConfidence.hint}</span>
+                        </div>
+                    )}
                     {liveGps && (
                         <div style={{ opacity: 0.76, fontSize: '0.84rem' }}>
                             Heading: {liveGps.heading === null ? 'N/A' : `${Math.round(liveGps.heading)}°`} | Breadcrumb points: {breadcrumbPoints.length} | Smoothing: {enableGpsSmoothing ? `${Math.round(gpsSmoothingStrength * 100)}%` : 'Off'}
+                        </div>
+                    )}
+                    {gpsAnchorPoint && (
+                        <div style={{ opacity: 0.78, fontSize: '0.84rem' }}>
+                            Standing spot marker: X {gpsAnchorPoint.x.toFixed(2)}%, Y {gpsAnchorPoint.y.toFixed(2)}%
                         </div>
                     )}
                     {liveGps && gpsMapPoint && !gpsMapPoint.insideMap && (
@@ -2838,89 +3150,124 @@ export default function PropertyMapPage() {
                     )}
                 </div>
 
-                <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.7rem', display: 'grid', gap: '0.55rem' }}>
-                    <div style={{ fontWeight: 700 }}>ONX Hunt Access + Sync Bridge</div>
-                    <div style={{ opacity: 0.78, fontSize: '0.88rem' }}>
-                        For paid ONX users: launch ONX quickly from here and share trail updates using GPX import/export.
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                        <button type="button" className="soft-button" onClick={openOnxHuntApp}>
-                            Open ONX Hunt app/web
-                        </button>
-                        <a href={ONX_HUNT_WEBMAP_URL} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
-                            Open ONX Web Map
-                        </a>
-                        <button type="button" className="soft-button" onClick={exportTrailToGpx}>
-                            Export selected trail to GPX
-                        </button>
-                    </div>
-                    <div style={{ display: 'grid', gap: '0.45rem', gridTemplateColumns: 'minmax(180px, 1fr) auto' }}>
-                        <input
-                            type="file"
-                            accept=".gpx,application/gpx+xml,application/xml,text/xml"
-                            onChange={e => {
-                                const file = e.target.files?.[0] || null;
-                                setOnxGpxFile(file);
-                                if (file) {
-                                    setStatusMessage(`Selected GPX: ${file.name}`);
-                                }
-                            }}
-                        />
-                        <button type="button" className="soft-button" onClick={importOnxGpxToDraftTrail}>
-                            Import ONX GPX
-                        </button>
-                    </div>
-                    <div style={{ display: 'grid', gap: '0.5rem', borderTop: '1px solid #334155', paddingTop: '0.55rem' }}>
-                        <div style={{ fontSize: '0.86rem', fontWeight: 600 }}>Near-live shared-folder sync</div>
-                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={onxAutoImportEnabled}
-                                    onChange={e => setOnxAutoImportEnabled(e.target.checked)}
-                                />
-                                <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Enable auto-import</span>
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={onxAutoArchiveEnabled}
-                                    onChange={e => setOnxAutoArchiveEnabled(e.target.checked)}
-                                />
-                                <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Auto-archive imported files</span>
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <span style={{ fontSize: '0.84rem', opacity: 0.78 }}>Poll every</span>
-                                <select
-                                    value={String(onxAutoImportIntervalSec)}
-                                    onChange={e => setOnxAutoImportIntervalSec(Number(e.target.value))}
-                                    disabled={!onxAutoImportEnabled}
-                                >
-                                    <option value="30">30 sec</option>
-                                    <option value="45">45 sec</option>
-                                    <option value="60">60 sec</option>
-                                    <option value="120">120 sec</option>
-                                </select>
-                            </label>
-                            <button
-                                type="button"
-                                className="soft-button"
-                                onClick={() => {
-                                    void runOnxAutoImport(true);
-                                }}
-                                disabled={!selectedMap || !activeCalibration || onxAutoImportInFlight}
-                            >
-                                {onxAutoImportInFlight ? 'Importing...' : 'Run sync now'}
+                {!simpleLayout && (
+                    <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.7rem', display: 'grid', gap: '0.55rem' }}>
+                        <div style={{ fontWeight: 700 }}>ONX Hunt Access + Sync Bridge</div>
+                        <div style={{ opacity: 0.78, fontSize: '0.88rem' }}>
+                            For paid ONX users: launch ONX quickly from here and share trail updates using GPX import/export.
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <button type="button" className="soft-button" onClick={openOnxHuntApp}>
+                                Open ONX Hunt app/web
+                            </button>
+                            <a href={ONX_HUNT_WEBMAP_URL} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none' }}>
+                                Open ONX Web Map
+                            </a>
+                            <button type="button" className="soft-button" onClick={exportTrailToGpx}>
+                                Export selected trail to GPX
                             </button>
                         </div>
-                        <div style={{ fontSize: '0.8rem', opacity: 0.72 }}>
-                            Server reads files from ONX_SHARED_GPX_DIR (or shared-gpx folder in app root). When auto-archive is on, imported files move to shared-gpx/imported. Last run: {onxAutoImportLastRun ? formatDate(onxAutoImportLastRun) : 'Not yet'}
+                        <div
+                            onDragOver={e => {
+                                e.preventDefault();
+                                setOnxDropActive(true);
+                            }}
+                            onDragLeave={() => setOnxDropActive(false)}
+                            onDrop={e => {
+                                e.preventDefault();
+                                const file = e.dataTransfer.files?.[0] || null;
+                                if (file) {
+                                    handleOnxGpxFileSelection(file);
+                                }
+                                setOnxDropActive(false);
+                            }}
+                            style={{
+                                border: `1px dashed ${onxDropActive ? '#38bdf8' : '#475569'}`,
+                                borderRadius: 10,
+                                padding: '0.65rem',
+                                background: onxDropActive ? 'rgba(56, 189, 248, 0.12)' : 'rgba(15, 23, 42, 0.65)',
+                                display: 'grid',
+                                gap: '0.5rem'
+                            }}
+                        >
+                            <div style={{ fontSize: '0.84rem', fontWeight: 600 }}>Drop ONX Hunt GPX here</div>
+                            <div style={{ fontSize: '0.8rem', opacity: 0.72 }}>
+                                Export a trail from ONX Hunt as GPX, then drop it here or browse for it below to pull it into this property map.
+                            </div>
+                            <div style={{ display: 'grid', gap: '0.45rem', gridTemplateColumns: 'minmax(180px, 1fr) auto' }}>
+                                <label style={{ display: 'grid', gap: '0.25rem' }}>
+                                    <span style={{ fontSize: '0.82rem', opacity: 0.8 }}>Choose .gpx file</span>
+                                    <input
+                                        type="file"
+                                        accept=".gpx,application/gpx+xml,application/xml,text/xml"
+                                        onChange={e => {
+                                            const file = e.target.files?.[0] || null;
+                                            handleOnxGpxFileSelection(file);
+                                        }}
+                                    />
+                                </label>
+                                <button type="button" className="soft-button" onClick={importOnxGpxToDraftTrail}>
+                                    Import ONX GPX
+                                </button>
+                            </div>
+                            {onxGpxFile && (
+                                <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>
+                                    Ready to import: {onxGpxFile.name}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ display: 'grid', gap: '0.5rem', borderTop: '1px solid #334155', paddingTop: '0.55rem' }}>
+                            <div style={{ fontSize: '0.86rem', fontWeight: 600 }}>Near-live shared-folder sync</div>
+                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={onxAutoImportEnabled}
+                                        onChange={e => setOnxAutoImportEnabled(e.target.checked)}
+                                    />
+                                    <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Enable auto-import</span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={onxAutoArchiveEnabled}
+                                        onChange={e => setOnxAutoArchiveEnabled(e.target.checked)}
+                                    />
+                                    <span style={{ fontSize: '0.86rem', opacity: 0.86 }}>Auto-archive imported files</span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <span style={{ fontSize: '0.84rem', opacity: 0.78 }}>Poll every</span>
+                                    <select
+                                        value={String(onxAutoImportIntervalSec)}
+                                        onChange={e => setOnxAutoImportIntervalSec(Number(e.target.value))}
+                                        disabled={!onxAutoImportEnabled}
+                                    >
+                                        <option value="30">30 sec</option>
+                                        <option value="45">45 sec</option>
+                                        <option value="60">60 sec</option>
+                                        <option value="120">120 sec</option>
+                                    </select>
+                                </label>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => {
+                                        void runOnxAutoImport(true);
+                                    }}
+                                    disabled={!selectedMap || !activeCalibration || onxAutoImportInFlight}
+                                >
+                                    {onxAutoImportInFlight ? 'Importing...' : 'Run sync now'}
+                                </button>
+                            </div>
+                            <div style={{ fontSize: '0.8rem', opacity: 0.72 }}>
+                                Server reads files from ONX_SHARED_GPX_DIR (or shared-gpx folder in app root). When auto-archive is on, imported files move to shared-gpx/imported. Last run: {onxAutoImportLastRun ? formatDate(onxAutoImportLastRun) : 'Not yet'}
+                            </div>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', opacity: 0.72 }}>
+                            Live automatic sync requires official ONX API access. This bridge provides reliable file-based sync today.
                         </div>
                     </div>
-                    <div style={{ fontSize: '0.82rem', opacity: 0.72 }}>
-                        Live automatic sync requires official ONX API access. This bridge provides reliable file-based sync today.
-                    </div>
-                </div>
+                )}
             </section>
 
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.85rem' }}>
@@ -2960,15 +3307,17 @@ export default function PropertyMapPage() {
                     >
                         {isTrailPlanning ? 'Trail planning on' : 'Start trail planning'}
                     </button>
-                    <button
-                        type="button"
-                        className="soft-button"
-                        onClick={loadSelectedTrailIntoEditor}
-                        disabled={!selectedFeature || selectedFeature.feature_type !== 'trail'}
-                        style={{ borderColor: isTrailEditMode ? '#f59e0b' : '#475569', color: isTrailEditMode ? '#fde68a' : '#cbd5e1' }}
-                    >
-                        {isTrailEditMode ? 'Trail edit mode active' : 'Edit selected trail'}
-                    </button>
+                    {!simpleLayout && (
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={loadSelectedTrailIntoEditor}
+                            disabled={!selectedFeature || selectedFeature.feature_type !== 'trail'}
+                            style={{ borderColor: isTrailEditMode ? '#f59e0b' : '#475569', color: isTrailEditMode ? '#fde68a' : '#cbd5e1' }}
+                        >
+                            {isTrailEditMode ? 'Trail edit mode active' : 'Edit selected trail'}
+                        </button>
+                    )}
                     {!isWalkTrailRecording ? (
                         <button type="button" className="soft-button" onClick={startWalkTrailRecording} disabled={!isGpsTracking}>
                             Start walk-to-map trail
@@ -2978,15 +3327,17 @@ export default function PropertyMapPage() {
                             Stop walk trail
                         </button>
                     )}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Walk trail label</span>
-                        <input
-                            value={walkTrailLabel}
-                            onChange={e => setWalkTrailLabel(e.target.value)}
-                            placeholder="Live hike trail"
-                            style={{ minWidth: 180 }}
-                        />
-                    </label>
+                    {!simpleLayout && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Walk trail label</span>
+                            <input
+                                value={walkTrailLabel}
+                                onChange={e => setWalkTrailLabel(e.target.value)}
+                                placeholder="Live hike trail"
+                                style={{ minWidth: 180 }}
+                            />
+                        </label>
+                    )}
                     <button
                         type="button"
                         className="soft-button"
@@ -3014,64 +3365,83 @@ export default function PropertyMapPage() {
                     <button
                         type="button"
                         className="soft-button"
-                        onClick={() => setTrailDraftPoints(points => points.slice(0, -1))}
-                        disabled={trailDraftPoints.length === 0}
-                    >
-                        Undo trail point
-                    </button>
-                    <button
-                        type="button"
-                        className="soft-button"
-                        onClick={insertDraftPointAfterSelected}
-                        disabled={trailDraftPoints.length < 2}
-                    >
-                        Insert point after selected
-                    </button>
-                    <button
-                        type="button"
-                        className="soft-button"
-                        onClick={removeSelectedDraftPoint}
-                        disabled={selectedDraftPointIndex === null || trailDraftPoints.length <= 2}
-                    >
-                        Remove selected point
-                    </button>
-                    <button
-                        type="button"
-                        className="soft-button"
                         onClick={() => {
-                            setTrailDraftPoints([]);
-                            setSelectedDraftPointIndex(null);
-                            setIsTrailEditMode(false);
+                            setMapZoomPercent(100);
+                            setAutoFollowGps(false);
                         }}
-                        disabled={trailDraftPoints.length === 0}
                     >
-                        Clear draft trail
+                        Recenter map view
                     </button>
-                    {trailDraftPoints.length > 0 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <span style={{ fontSize: '0.86rem', opacity: 0.82 }}>Selected point</span>
-                            <select
-                                value={selectedDraftPointIndex ?? ''}
-                                onChange={e => {
-                                    const raw = e.target.value;
-                                    setSelectedDraftPointIndex(raw === '' ? null : Number(raw));
-                                }}
+                    {!simpleLayout && (
+                        <>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => setTrailDraftPoints(points => points.slice(0, -1))}
+                                disabled={trailDraftPoints.length === 0}
                             >
-                                <option value="">None</option>
-                                {trailDraftPoints.map((_, idx) => (
-                                    <option key={`draft-select-${idx}`} value={idx}>Point {idx + 1}</option>
-                                ))}
-                            </select>
-                        </label>
+                                Undo trail point
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={insertDraftPointAfterSelected}
+                                disabled={trailDraftPoints.length < 2}
+                            >
+                                Insert point after selected
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={removeSelectedDraftPoint}
+                                disabled={selectedDraftPointIndex === null || trailDraftPoints.length <= 2}
+                            >
+                                Remove selected point
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => {
+                                    setTrailDraftPoints([]);
+                                    setSelectedDraftPointIndex(null);
+                                    setIsTrailEditMode(false);
+                                }}
+                                disabled={trailDraftPoints.length === 0}
+                            >
+                                Clear draft trail
+                            </button>
+                            {trailDraftPoints.length > 0 && (
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <span style={{ fontSize: '0.86rem', opacity: 0.82 }}>Selected point</span>
+                                    <select
+                                        value={selectedDraftPointIndex ?? ''}
+                                        onChange={e => {
+                                            const raw = e.target.value;
+                                            setSelectedDraftPointIndex(raw === '' ? null : Number(raw));
+                                        }}
+                                    >
+                                        <option value="">None</option>
+                                        {trailDraftPoints.map((_, idx) => (
+                                            <option key={`draft-select-${idx}`} value={idx}>Point {idx + 1}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                            )}
+                        </>
                     )}
                     {trailDraftPoints.length > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', opacity: 0.8, fontSize: '0.9rem' }}>
                             Draft points: {trailDraftPoints.length}
                         </div>
                     )}
-                    {draftTrailStats && (
+                    {!simpleLayout && draftTrailStats && (
                         <div style={{ display: 'flex', alignItems: 'center', opacity: 0.84, fontSize: '0.88rem' }}>
                             Draft stats: {formatTrailDistance(draftTrailStats.distanceFeet)} | Gain {formatTrailElevation(draftTrailStats.elevationGainFeet)} | Loss {formatTrailElevation(draftTrailStats.elevationLossFeet)} | Time {formatTrailDuration(draftTrailStats.durationSeconds)}
+                        </div>
+                    )}
+                    {autoFollowGps && isGpsTracking && gpsMapPoint && !gpsMapPoint.insideMap && (
+                        <div style={{ display: 'flex', alignItems: 'center', opacity: 0.86, fontSize: '0.86rem', color: '#fcd34d' }}>
+                            GPS is outside current map bounds. Auto-follow pauses until you move back inside the calibrated property.
                         </div>
                     )}
                 </div>
@@ -3097,7 +3467,7 @@ export default function PropertyMapPage() {
                         border: '1px solid #334155',
                         background: 'linear-gradient(145deg, #0b1220, #13213e)',
                         overflow: 'hidden',
-                        cursor: edgeCalibrationMode ? 'crosshair' : isTrailPlanning ? 'copy' : isTrailEditMode ? 'cell' : 'crosshair',
+                        cursor: gpsAnchorPickMode ? 'crosshair' : edgeCalibrationMode ? 'crosshair' : isTrailPlanning ? 'copy' : isTrailEditMode ? 'cell' : 'crosshair',
                         touchAction: 'none'
                     }}
                 >
@@ -3305,6 +3675,22 @@ export default function PropertyMapPage() {
                                     )}
                                 </g>
                             )}
+
+                            {gpsAnchorPoint && (
+                                <g>
+                                    <circle cx={gpsAnchorPoint.x} cy={gpsAnchorPoint.y} r={1.05} fill="#f97316" stroke="#f8fafc" strokeWidth={0.25} />
+                                    <circle cx={gpsAnchorPoint.x} cy={gpsAnchorPoint.y} r={2.1} fill="none" stroke="#fb923c" strokeWidth={0.24} strokeDasharray="0.85 0.85" />
+                                    <text
+                                        x={gpsAnchorPoint.x}
+                                        y={gpsAnchorPoint.y - 2.6}
+                                        textAnchor="middle"
+                                        fontSize="1.18"
+                                        fill="#fdba74"
+                                    >
+                                        Standing spot
+                                    </text>
+                                </g>
+                            )}
                         </svg>
 
                         {features.map(feature => {
@@ -3453,7 +3839,9 @@ export default function PropertyMapPage() {
                     )}
                 </div>
 
-                <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.65rem', display: 'grid', gap: '0.5rem' }}>
+                <details open={!simpleLayout} style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.65rem', display: 'grid', gap: '0.5rem' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Base Image Framing (Advanced)</summary>
+                    <div style={{ height: 6 }} />
                     <div style={{ fontWeight: 700 }}>Base Image Framing</div>
                     <div style={{ opacity: 0.75, fontSize: '0.86rem' }}>
                         Use these controls when your uploaded map image looks too small or off-center.
@@ -3573,6 +3961,13 @@ export default function PropertyMapPage() {
                         >
                             Reset image framing
                         </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={fitPropertyImageToCanvas}
+                        >
+                            Fit property image
+                        </button>
                     </div>
                     {edgeCalibrationMode === 'auto' && edgeCalibrationStartPoint && (
                         <div style={{ display: 'grid', gap: '0.45rem', border: '1px solid #334155', borderRadius: 10, padding: '0.55rem' }}>
@@ -3623,290 +4018,294 @@ export default function PropertyMapPage() {
                     <div style={{ fontSize: '0.82rem', opacity: 0.74 }}>
                         Tip: rotate or flip until property boundary lines align with known roads or north/south direction, then keep Full acreage view selected.
                     </div>
-                </div>
+                </details>
 
-                <form onSubmit={saveFeature} style={{ display: 'grid', gap: '0.55rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Feature label</span>
-                        <input value={featureLabel} onChange={e => setFeatureLabel(e.target.value)} placeholder="North trail extension" required />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Type</span>
-                        <select
-                            value={featureType}
-                            onChange={e => {
-                                const nextType = e.target.value;
-                                setFeatureType(nextType);
-                                if (nextType === 'trail') {
-                                    setFeatureIconKey('trail');
-                                    setFeatureStatus('planned');
-                                } else if (nextType === 'treestand') {
-                                    setFeatureIconKey('stand');
-                                    setFeatureStatus('inactive');
-                                } else if (nextType === 'range') {
-                                    setFeatureIconKey('pin');
-                                    setFeatureStatus('inactive');
-                                } else if (nextType === 'gate') {
-                                    setFeatureIconKey('gate');
-                                    setFeatureStatus('planned');
-                                } else if (nextType === 'water') {
-                                    setFeatureIconKey('water');
-                                    setFeatureStatus('planned');
-                                } else if (nextType === 'note') {
-                                    setFeatureIconKey('note');
-                                    setFeatureStatus('planned');
-                                }
-                                if (nextType !== 'trail') {
-                                    setIsTrailPlanning(false);
-                                    setIsTrailEditMode(false);
-                                    setSelectedDraftPointIndex(null);
-                                    setTrailDraftPoints([]);
-                                }
-                            }}
-                        >
-                            {FEATURE_TYPES.map(option => (
-                                <option key={option} value={option}>{option}</option>
-                            ))}
-                        </select>
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Status</span>
-                        <select value={featureStatus} onChange={e => setFeatureStatus(e.target.value)}>
-                            {FEATURE_STATUS.map(option => (
-                                <option key={option} value={option}>{option}</option>
-                            ))}
-                        </select>
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Landmark icon</span>
-                        <select value={featureIconKey} onChange={e => setFeatureIconKey(e.target.value)}>
-                            {LANDMARK_ICON_OPTIONS.map(option => (
-                                <option key={option.key} value={option.key}>{option.label} ({option.glyph})</option>
-                            ))}
-                        </select>
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>X %</span>
-                        <input value={featureX} onChange={e => setFeatureX(e.target.value)} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Y %</span>
-                        <input value={featureY} onChange={e => setFeatureY(e.target.value)} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Latitude (optional)</span>
-                        <input value={featureLat} onChange={e => setFeatureLat(e.target.value)} placeholder="43.2137" />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem' }}>
-                        <span>Longitude (optional)</span>
-                        <input value={featureLng} onChange={e => setFeatureLng(e.target.value)} placeholder="-77.9417" />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.3rem', gridColumn: '1 / -1' }}>
-                        <span>Description</span>
-                        <textarea value={featureDescription} onChange={e => setFeatureDescription(e.target.value)} rows={3} placeholder="Scope, materials, access, notes..." />
-                    </label>
-                    {featureType === 'trail' && (
-                        <>
-                            <label style={{ display: 'grid', gap: '0.3rem' }}>
-                                <span>Trail color</span>
-                                <input type="color" value={trailColor} onChange={e => setTrailColor(e.target.value)} />
-                            </label>
-                            <label style={{ display: 'grid', gap: '0.3rem' }}>
-                                <span>Trail width {trailWidth.toFixed(1)}</span>
-                                <input
-                                    type="range"
-                                    min={0.6}
-                                    max={2.6}
-                                    step={0.1}
-                                    value={trailWidth}
-                                    onChange={e => setTrailWidth(clamp(Number(e.target.value), 0.6, 2.6))}
-                                />
-                            </label>
-                            <label style={{ display: 'grid', gap: '0.3rem' }}>
-                                <span>Trail style</span>
-                                <select
-                                    value={trailPattern}
-                                    onChange={e => setTrailPattern(e.target.value as 'solid' | 'dashed' | 'dotted')}
-                                >
-                                    <option value="solid">Solid</option>
-                                    <option value="dashed">Dashed</option>
-                                    <option value="dotted">Dotted</option>
-                                </select>
-                            </label>
-                        </>
-                    )}
-                    <label style={{ display: 'grid', gap: '0.3rem', gridColumn: '1 / -1' }}>
-                        <span>Add trail/marker images (optional)</span>
-                        <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            multiple
-                            onChange={e => {
-                                const selectedFiles = Array.from(e.target.files || []);
-                                if (selectedFiles.length === 0) {
-                                    setFeatureImageFiles([]);
-                                    return;
-                                }
-
-                                const invalidFile = selectedFiles.find(file => !file.type.startsWith('image/'));
-                                if (invalidFile) {
-                                    setError('Only image files are allowed for trail/marker attachments.');
-                                    return;
-                                }
-
-                                const oversizedFile = selectedFiles.find(file => file.size > MAX_FEATURE_IMAGE_BYTES);
-                                if (oversizedFile) {
-                                    setError(`Attachment ${oversizedFile.name} is too large. Use images under 10 MB each.`);
-                                    return;
-                                }
-
-                                setError(null);
-                                setFeatureImageFiles(selectedFiles);
-                                setStatusMessage(`${selectedFiles.length} image(s) selected for this feature.`);
-                            }}
-                        />
-                        <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>
-                            Add photos of trail condition, hazards, or fixes. Up to 10 MB each.
-                        </span>
-                    </label>
-
-                    {(existingAttachments.length > 0 || featureImageFiles.length > 0) && (
-                        <div style={{ gridColumn: '1 / -1', display: 'grid', gap: '0.45rem' }}>
-                            <div style={{ fontSize: '0.86rem', opacity: 0.86 }}>Feature images</div>
-                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                                {existingAttachments.map((attachment, idx) => (
-                                    <div
-                                        key={`${attachment.url}-${idx}`}
-                                        style={{
-                                            border: '1px solid #334155',
-                                            borderRadius: 8,
-                                            padding: '0.35rem',
-                                            width: 142,
-                                            display: 'grid',
-                                            gap: '0.25rem'
-                                        }}
-                                    >
-                                        <a href={attachment.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                                            <img
-                                                src={attachment.url}
-                                                alt={attachment.name}
-                                                style={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 6, display: 'block' }}
-                                            />
-                                        </a>
-                                        <div style={{ fontSize: '0.72rem', opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {attachment.name}
-                                        </div>
-                                        <button
-                                            type="button"
-                                            className="soft-button"
-                                            onClick={() => setExistingAttachments(prev => prev.filter((_, existingIdx) => existingIdx !== idx))}
-                                        >
-                                            Remove
-                                        </button>
-                                    </div>
-                                ))}
-
-                                {featureImageFiles.map((file, idx) => (
-                                    <div
-                                        key={`${file.name}-${idx}`}
-                                        style={{
-                                            border: '1px dashed #475569',
-                                            borderRadius: 8,
-                                            padding: '0.35rem',
-                                            width: 142,
-                                            display: 'grid',
-                                            gap: '0.25rem'
-                                        }}
-                                    >
-                                        <div style={{ fontSize: '0.74rem', opacity: 0.9 }}>{file.name}</div>
-                                        <div style={{ fontSize: '0.72rem', opacity: 0.68 }}>Queued for upload</div>
-                                        <button
-                                            type="button"
-                                            className="soft-button"
-                                            onClick={() => setFeatureImageFiles(prev => prev.filter((_, pendingIdx) => pendingIdx !== idx))}
-                                        >
-                                            Remove
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <button type="submit" className="soft-button" disabled={savingFeature || !selectedMap}>
-                            {savingFeature ? 'Saving feature...' : selectedFeature ? 'Update feature' : 'Add feature'}
-                        </button>
-                        {featureType === 'trail' && (
-                            <div style={{ display: 'flex', alignItems: 'center', opacity: 0.78, fontSize: '0.88rem' }}>
-                                Trail features save clicked route points. Use trail edit mode to adjust highlighted points.
-                            </div>
-                        )}
-                        {selectedFeature && (
-                            <button type="button" onClick={deleteFeature} className="soft-button" style={{ borderColor: '#ef4444', color: '#fecaca' }}>
-                                Delete feature
-                            </button>
-                        )}
-                        {selectedFeature && (
-                            <button
-                                type="button"
-                                onClick={() => setSelectedFeatureId('')}
-                                className="soft-button"
-                                style={{ borderColor: '#64748b', color: '#cbd5e1' }}
+                <details open={!simpleLayout} style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.65rem' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Feature Editor (Advanced)</summary>
+                    <div style={{ height: 10 }} />
+                    <form onSubmit={saveFeature} style={{ display: 'grid', gap: '0.55rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Feature label</span>
+                            <input value={featureLabel} onChange={e => setFeatureLabel(e.target.value)} placeholder="North trail extension" required />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Type</span>
+                            <select
+                                value={featureType}
+                                onChange={e => {
+                                    const nextType = e.target.value;
+                                    setFeatureType(nextType);
+                                    if (nextType === 'trail') {
+                                        setFeatureIconKey('trail');
+                                        setFeatureStatus('planned');
+                                    } else if (nextType === 'treestand') {
+                                        setFeatureIconKey('stand');
+                                        setFeatureStatus('inactive');
+                                    } else if (nextType === 'range') {
+                                        setFeatureIconKey('pin');
+                                        setFeatureStatus('inactive');
+                                    } else if (nextType === 'gate') {
+                                        setFeatureIconKey('gate');
+                                        setFeatureStatus('planned');
+                                    } else if (nextType === 'water') {
+                                        setFeatureIconKey('water');
+                                        setFeatureStatus('planned');
+                                    } else if (nextType === 'note') {
+                                        setFeatureIconKey('note');
+                                        setFeatureStatus('planned');
+                                    }
+                                    if (nextType !== 'trail') {
+                                        setIsTrailPlanning(false);
+                                        setIsTrailEditMode(false);
+                                        setSelectedDraftPointIndex(null);
+                                        setTrailDraftPoints([]);
+                                    }
+                                }}
                             >
-                                Clear selection
-                            </button>
+                                {FEATURE_TYPES.map(option => (
+                                    <option key={option} value={option}>{option}</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Status</span>
+                            <select value={featureStatus} onChange={e => setFeatureStatus(e.target.value)}>
+                                {FEATURE_STATUS.map(option => (
+                                    <option key={option} value={option}>{option}</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Landmark icon</span>
+                            <select value={featureIconKey} onChange={e => setFeatureIconKey(e.target.value)}>
+                                {LANDMARK_ICON_OPTIONS.map(option => (
+                                    <option key={option.key} value={option.key}>{option.label} ({option.glyph})</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>X %</span>
+                            <input value={featureX} onChange={e => setFeatureX(e.target.value)} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Y %</span>
+                            <input value={featureY} onChange={e => setFeatureY(e.target.value)} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Latitude (optional)</span>
+                            <input value={featureLat} onChange={e => setFeatureLat(e.target.value)} placeholder="43.2137" />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem' }}>
+                            <span>Longitude (optional)</span>
+                            <input value={featureLng} onChange={e => setFeatureLng(e.target.value)} placeholder="-77.9417" />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.3rem', gridColumn: '1 / -1' }}>
+                            <span>Description</span>
+                            <textarea value={featureDescription} onChange={e => setFeatureDescription(e.target.value)} rows={3} placeholder="Scope, materials, access, notes..." />
+                        </label>
+                        {featureType === 'trail' && (
+                            <>
+                                <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                    <span>Trail color</span>
+                                    <input type="color" value={trailColor} onChange={e => setTrailColor(e.target.value)} />
+                                </label>
+                                <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                    <span>Trail width {trailWidth.toFixed(1)}</span>
+                                    <input
+                                        type="range"
+                                        min={0.6}
+                                        max={2.6}
+                                        step={0.1}
+                                        value={trailWidth}
+                                        onChange={e => setTrailWidth(clamp(Number(e.target.value), 0.6, 2.6))}
+                                    />
+                                </label>
+                                <label style={{ display: 'grid', gap: '0.3rem' }}>
+                                    <span>Trail style</span>
+                                    <select
+                                        value={trailPattern}
+                                        onChange={e => setTrailPattern(e.target.value as 'solid' | 'dashed' | 'dotted')}
+                                    >
+                                        <option value="solid">Solid</option>
+                                        <option value="dashed">Dashed</option>
+                                        <option value="dotted">Dotted</option>
+                                    </select>
+                                </label>
+                            </>
                         )}
-                    </div>
-                </form>
+                        <label style={{ display: 'grid', gap: '0.3rem', gridColumn: '1 / -1' }}>
+                            <span>Add trail/marker images (optional)</span>
+                            <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif"
+                                multiple
+                                onChange={e => {
+                                    const selectedFiles = Array.from(e.target.files || []);
+                                    if (selectedFiles.length === 0) {
+                                        setFeatureImageFiles([]);
+                                        return;
+                                    }
 
-                <div style={{ display: 'grid', gap: '0.45rem' }}>
-                    <div style={{ fontWeight: 700 }}>Feature Database</div>
-                    {features.length === 0 && <div style={{ opacity: 0.75 }}>No features yet for this map.</div>}
-                    {features.map(feature => (
-                        <button
-                            key={feature.id}
-                            onClick={() => setSelectedFeatureId(feature.id)}
-                            style={{
-                                textAlign: 'left',
-                                border: feature.id === selectedFeatureId ? '1px solid #60a5fa' : '1px solid #334155',
-                                borderRadius: 10,
-                                background: 'rgba(15, 23, 42, 0.78)',
-                                color: '#e2e8f0',
-                                padding: '0.65rem',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            {(() => {
-                                const trailSummary = trailByFeatureId.get(feature.id);
-                                const attachmentCount = parseFeatureAttachmentsFromDescription(feature.description).length;
-                                return (
-                                    <>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                            <div style={{ fontWeight: 600 }}>{feature.label}</div>
-                                            <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>{feature.feature_type} • {feature.status}</div>
-                                        </div>
-                                        <div style={{ opacity: 0.8, fontSize: '0.9rem', marginTop: '0.2rem' }}>
-                                            X:{' '}{feature.x_percent.toFixed(2)}% Y:{' '}{feature.y_percent.toFixed(2)}%
-                                            {feature.lat !== null && feature.lng !== null ? ` • Lat/Lng: ${feature.lat}, ${feature.lng}` : ''}
-                                            {feature.feature_type === 'trail' && trailSummary ? ` • Trail points: ${trailSummary.points.length}` : ''}
-                                            {attachmentCount > 0
-                                                ? ` • Images: ${attachmentCount}`
-                                                : ''}
-                                        </div>
-                                        {feature.feature_type === 'trail' && trailSummary?.stats && (
-                                            <div style={{ opacity: 0.78, fontSize: '0.84rem', marginTop: '0.12rem' }}>
-                                                Distance: {formatTrailDistance(trailSummary.stats.distanceFeet)} | Gain: {formatTrailElevation(trailSummary.stats.elevationGainFeet)} | Loss: {formatTrailElevation(trailSummary.stats.elevationLossFeet)} | Duration: {formatTrailDuration(trailSummary.stats.durationSeconds)}
+                                    const invalidFile = selectedFiles.find(file => !file.type.startsWith('image/'));
+                                    if (invalidFile) {
+                                        setError('Only image files are allowed for trail/marker attachments.');
+                                        return;
+                                    }
+
+                                    const oversizedFile = selectedFiles.find(file => file.size > MAX_FEATURE_IMAGE_BYTES);
+                                    if (oversizedFile) {
+                                        setError(`Attachment ${oversizedFile.name} is too large. Use images under 10 MB each.`);
+                                        return;
+                                    }
+
+                                    setError(null);
+                                    setFeatureImageFiles(selectedFiles);
+                                    setStatusMessage(`${selectedFiles.length} image(s) selected for this feature.`);
+                                }}
+                            />
+                            <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>
+                                Add photos of trail condition, hazards, or fixes. Up to 10 MB each.
+                            </span>
+                        </label>
+
+                        {(existingAttachments.length > 0 || featureImageFiles.length > 0) && (
+                            <div style={{ gridColumn: '1 / -1', display: 'grid', gap: '0.45rem' }}>
+                                <div style={{ fontSize: '0.86rem', opacity: 0.86 }}>Feature images</div>
+                                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                    {existingAttachments.map((attachment, idx) => (
+                                        <div
+                                            key={`${attachment.url}-${idx}`}
+                                            style={{
+                                                border: '1px solid #334155',
+                                                borderRadius: 8,
+                                                padding: '0.35rem',
+                                                width: 142,
+                                                display: 'grid',
+                                                gap: '0.25rem'
+                                            }}
+                                        >
+                                            <a href={attachment.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                                                <img
+                                                    src={attachment.url}
+                                                    alt={attachment.name}
+                                                    style={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 6, display: 'block' }}
+                                                />
+                                            </a>
+                                            <div style={{ fontSize: '0.72rem', opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {attachment.name}
                                             </div>
-                                        )}
-                                        <div style={{ opacity: 0.68, fontSize: '0.82rem', marginTop: '0.15rem' }}>
-                                            Updated: {formatDate(feature.updated_at)}
+                                            <button
+                                                type="button"
+                                                className="soft-button"
+                                                onClick={() => setExistingAttachments(prev => prev.filter((_, existingIdx) => existingIdx !== idx))}
+                                            >
+                                                Remove
+                                            </button>
                                         </div>
-                                    </>
-                                );
-                            })()}
-                        </button>
-                    ))}
-                </div>
+                                    ))}
+
+                                    {featureImageFiles.map((file, idx) => (
+                                        <div
+                                            key={`${file.name}-${idx}`}
+                                            style={{
+                                                border: '1px dashed #475569',
+                                                borderRadius: 8,
+                                                padding: '0.35rem',
+                                                width: 142,
+                                                display: 'grid',
+                                                gap: '0.25rem'
+                                            }}
+                                        >
+                                            <div style={{ fontSize: '0.74rem', opacity: 0.9 }}>{file.name}</div>
+                                            <div style={{ fontSize: '0.72rem', opacity: 0.68 }}>Queued for upload</div>
+                                            <button
+                                                type="button"
+                                                className="soft-button"
+                                                onClick={() => setFeatureImageFiles(prev => prev.filter((_, pendingIdx) => pendingIdx !== idx))}
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button type="submit" className="soft-button" disabled={savingFeature || !selectedMap}>
+                                {savingFeature ? 'Saving feature...' : selectedFeature ? 'Update feature' : 'Add feature'}
+                            </button>
+                            {featureType === 'trail' && (
+                                <div style={{ display: 'flex', alignItems: 'center', opacity: 0.78, fontSize: '0.88rem' }}>
+                                    Trail features save clicked route points. Use trail edit mode to adjust highlighted points.
+                                </div>
+                            )}
+                            {selectedFeature && (
+                                <button type="button" onClick={deleteFeature} className="soft-button" style={{ borderColor: '#ef4444', color: '#fecaca' }}>
+                                    Delete feature
+                                </button>
+                            )}
+                            {selectedFeature && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFeatureId('')}
+                                    className="soft-button"
+                                    style={{ borderColor: '#64748b', color: '#cbd5e1' }}
+                                >
+                                    Clear selection
+                                </button>
+                            )}
+                        </div>
+                    </form>
+
+                    <div style={{ display: 'grid', gap: '0.45rem' }}>
+                        <div style={{ fontWeight: 700 }}>Feature Database</div>
+                        {features.length === 0 && <div style={{ opacity: 0.75 }}>No features yet for this map.</div>}
+                        {features.map(feature => (
+                            <button
+                                key={feature.id}
+                                onClick={() => setSelectedFeatureId(feature.id)}
+                                style={{
+                                    textAlign: 'left',
+                                    border: feature.id === selectedFeatureId ? '1px solid #60a5fa' : '1px solid #334155',
+                                    borderRadius: 10,
+                                    background: 'rgba(15, 23, 42, 0.78)',
+                                    color: '#e2e8f0',
+                                    padding: '0.65rem',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                {(() => {
+                                    const trailSummary = trailByFeatureId.get(feature.id);
+                                    const attachmentCount = parseFeatureAttachmentsFromDescription(feature.description).length;
+                                    return (
+                                        <>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                                <div style={{ fontWeight: 600 }}>{feature.label}</div>
+                                                <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>{feature.feature_type} • {feature.status}</div>
+                                            </div>
+                                            <div style={{ opacity: 0.8, fontSize: '0.9rem', marginTop: '0.2rem' }}>
+                                                X:{' '}{feature.x_percent.toFixed(2)}% Y:{' '}{feature.y_percent.toFixed(2)}%
+                                                {feature.lat !== null && feature.lng !== null ? ` • Lat/Lng: ${feature.lat}, ${feature.lng}` : ''}
+                                                {feature.feature_type === 'trail' && trailSummary ? ` • Trail points: ${trailSummary.points.length}` : ''}
+                                                {attachmentCount > 0
+                                                    ? ` • Images: ${attachmentCount}`
+                                                    : ''}
+                                            </div>
+                                            {feature.feature_type === 'trail' && trailSummary?.stats && (
+                                                <div style={{ opacity: 0.78, fontSize: '0.84rem', marginTop: '0.12rem' }}>
+                                                    Distance: {formatTrailDistance(trailSummary.stats.distanceFeet)} | Gain: {formatTrailElevation(trailSummary.stats.elevationGainFeet)} | Loss: {formatTrailElevation(trailSummary.stats.elevationLossFeet)} | Duration: {formatTrailDuration(trailSummary.stats.durationSeconds)}
+                                                </div>
+                                            )}
+                                            <div style={{ opacity: 0.68, fontSize: '0.82rem', marginTop: '0.15rem' }}>
+                                                Updated: {formatDate(feature.updated_at)}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </button>
+                        ))}
+                    </div>
+                </details>
             </section>
         </div>
     );

@@ -21,6 +21,16 @@ type PropertyMap = {
     updated_at: string;
 };
 
+type MapImageFraming = {
+    fitMode: 'contain' | 'cover';
+    scalePercent: number;
+    offsetXPercent: number;
+    offsetYPercent: number;
+    rotationDeg: number;
+    flipX: boolean;
+    flipY: boolean;
+};
+
 type PropertyMapFeature = {
     id: string;
     map_id: string;
@@ -60,11 +70,13 @@ type PropertyAccessRequest = {
 const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
 const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
 const LOCAL_PROPERTY_ACCESS_REQUESTS_KEY = 'family-land-local-property-access-requests';
+const LOCAL_MAP_IMAGE_FRAMING_KEY = 'family-land-map-image-framing';
 const PROPERTY_MAP_TABLES = ['property_maps', 'property_map_features'];
 const ACCESS_REQUEST_TABLES = ['property_map_access_requests'];
 const FEATURE_TYPES = ['treestand', 'range'];
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const parseJson = <T,>(raw: string | null, fallback: T) => {
     if (!raw) return fallback;
@@ -95,6 +107,16 @@ const featureStatusColor = (status: string) => {
     if (status === 'blocked') return '#ef4444';
     if (status === 'completed') return '#10b981';
     return '#1d4ed8';
+};
+
+const defaultMapImageFraming: MapImageFraming = {
+    fitMode: 'contain',
+    scalePercent: 100,
+    offsetXPercent: 0,
+    offsetYPercent: 0,
+    rotationDeg: 0,
+    flipX: false,
+    flipY: false
 };
 
 export default function TreestandsPage() {
@@ -136,6 +158,32 @@ export default function TreestandsPage() {
         () => treestandFeatures.find(feature => feature.id === selectedFeatureId) || treestandFeatures[0] || null,
         [treestandFeatures, selectedFeatureId]
     );
+
+    const selectedMapImageFraming = useMemo(() => {
+        if (typeof window === 'undefined' || !selectedMapId) {
+            return defaultMapImageFraming;
+        }
+
+        const framingByMapId = parseJson<Record<string, MapImageFraming>>(
+            window.localStorage.getItem(LOCAL_MAP_IMAGE_FRAMING_KEY),
+            {}
+        );
+        const stored = framingByMapId[selectedMapId];
+
+        if (!stored) {
+            return defaultMapImageFraming;
+        }
+
+        return {
+            fitMode: stored.fitMode === 'cover' ? 'cover' : 'contain',
+            scalePercent: clamp(Number(stored.scalePercent), 70, 220),
+            offsetXPercent: clamp(Number(stored.offsetXPercent), -40, 40),
+            offsetYPercent: clamp(Number(stored.offsetYPercent), -40, 40),
+            rotationDeg: clamp(Number(stored.rotationDeg), -180, 180),
+            flipX: Boolean(stored.flipX),
+            flipY: Boolean(stored.flipY)
+        };
+    }, [selectedMapId]);
 
     const requestsByFeatureId = useMemo(() => {
         const lookup = new Map<string, PropertyAccessRequest[]>();
@@ -563,7 +611,14 @@ export default function TreestandsPage() {
                                 <img
                                     src={displayImageUrl}
                                     alt="Property map base"
-                                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                                    style={{
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: selectedMapImageFraming.fitMode === 'cover' ? 'cover' : 'contain',
+                                        transform: `translate(${selectedMapImageFraming.offsetXPercent}%, ${selectedMapImageFraming.offsetYPercent}%) rotate(${selectedMapImageFraming.rotationDeg}deg) scale(${selectedMapImageFraming.scalePercent / 100}) scaleX(${selectedMapImageFraming.flipX ? -1 : 1}) scaleY(${selectedMapImageFraming.flipY ? -1 : 1})`,
+                                        transformOrigin: 'center',
+                                        display: 'block'
+                                    }}
                                 />
                             ) : (
                                 <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', opacity: 0.8, padding: '1rem', textAlign: 'center' }}>
