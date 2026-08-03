@@ -173,7 +173,6 @@ const PROPERTY_FOCUS_PADDING_PERCENT = 8;
 const MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT = 2;
 const MAP_MIN_ZOOM_PERCENT = 100;
 const MAP_DEFAULT_MAX_ZOOM_PERCENT = 350;
-const MAP_BOUNDARY_MAX_ZOOM_PERCENT = 1200;
 
 const intersectBounds = (first: MapContentBounds, second: MapContentBounds): MapContentBounds | null => {
     const minX = Math.max(first.minX, second.minX);
@@ -806,7 +805,7 @@ const buildMapTransform = (
     followPoint: { x: number; y: number } | null,
     contentBounds: MapContentBounds | null
 ) => {
-    const scale = clamp(zoomPercent, MAP_MIN_ZOOM_PERCENT, MAP_BOUNDARY_MAX_ZOOM_PERCENT) / 100;
+    const scale = clamp(zoomPercent, MAP_MIN_ZOOM_PERCENT, MAP_DEFAULT_MAX_ZOOM_PERCENT) / 100;
 
     if (!followPoint) {
         return {
@@ -1214,12 +1213,11 @@ export default function PropertyMapPage() {
         return { minX, maxX, minY, maxY } as MapContentBounds;
     }, [propertyBoundaryBox, features, savedTrails, trailDraftPoints, gpsMapPoint]);
 
-    const mapZoomMaxPercent = (propertyBoundaryBox || boundaryBoxDraft) ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT;
+    const mapZoomMaxPercent = MAP_DEFAULT_MAX_ZOOM_PERCENT;
 
     useEffect(() => {
-        if (propertyBoundaryBox) return;
         setMapZoomPercent(prev => clamp(prev, MAP_MIN_ZOOM_PERCENT, MAP_DEFAULT_MAX_ZOOM_PERCENT));
-    }, [propertyBoundaryBox]);
+    }, [propertyBoundaryBox, boundaryBoxDraft]);
 
     const mapTransform = useMemo(() => {
         let followPoint = autoFollowGps && isGpsTracking && gpsMapPoint
@@ -1638,7 +1636,7 @@ export default function PropertyMapPage() {
             setMapImageFlipY(Boolean(storedFraming.flipY));
         } else {
             setSelectedMapHasStoredFraming(false);
-            setMapImageFitMode('cover');
+            setMapImageFitMode('contain');
             setMapImageScalePercent(100);
             setMapImageOffsetXPercent(0);
             setMapImageOffsetYPercent(0);
@@ -1723,23 +1721,7 @@ export default function PropertyMapPage() {
 
     useEffect(() => {
         if (!selectedMap?.id || !displayImageUrl || !mapImageNaturalSize || selectedMapHasStoredFraming) return;
-
-        const ratio = mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height);
-        const shouldUseFillCanvas = ratio < 1.2;
-
-        if (
-            shouldUseFillCanvas &&
-            mapImageFitMode === 'contain' &&
-            mapImageScalePercent === 100 &&
-            mapImageOffsetXPercent === 0 &&
-            mapImageOffsetYPercent === 0 &&
-            Math.abs(mapImageRotationDeg) < 0.01 &&
-            !mapImageFlipX &&
-            !mapImageFlipY
-        ) {
-            setMapImageFitMode('cover');
-            setStatusMessage('Smart fit applied: map now fills canvas width for easier property-line viewing.');
-        }
+        // Keep default framing stable in contain mode to avoid accidental top/bottom clipping.
     }, [
         selectedMap?.id,
         displayImageUrl,
@@ -2193,15 +2175,14 @@ export default function PropertyMapPage() {
         maxZoomPercent: number = mapZoomMaxPercent
     ) => {
         if (!bounds) return MAP_MIN_ZOOM_PERCENT;
-        const minDimensionPercent = mode === 'cover' ? 2 : 12;
-        const width = Math.max(minDimensionPercent, bounds.maxX - bounds.minX);
-        const height = Math.max(minDimensionPercent, bounds.maxY - bounds.minY);
+        const width = Math.max(12, bounds.maxX - bounds.minX);
+        const height = Math.max(12, bounds.maxY - bounds.minY);
         const scaleToFitWidth = 100 / width;
         const scaleToFitHeight = 100 / height;
         const targetScale = mode === 'cover'
             ? Math.max(scaleToFitWidth, scaleToFitHeight)
             : Math.min(scaleToFitWidth, scaleToFitHeight);
-        const scalePadding = mode === 'cover' ? 101 : 94;
+        const scalePadding = mode === 'cover' ? 96 : 94;
         return clamp(Math.round(targetScale * scalePadding), MAP_MIN_ZOOM_PERCENT, maxZoomPercent);
     };
 
@@ -2209,17 +2190,8 @@ export default function PropertyMapPage() {
         setAutoFollowGps(false);
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
-        const fitMode: 'contain' | 'cover' = propertyBoundaryBox ? 'cover' : 'contain';
-        if (fitMode === 'cover') {
-            setMapImageFitMode('cover');
-        }
-        setMapZoomPercent(
-            getPropertyFitZoomPercent(
-                propertyFocusBounds,
-                fitMode,
-                fitMode === 'cover' ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT
-            )
-        );
+        setMapImageFitMode('contain');
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds, 'contain', MAP_DEFAULT_MAX_ZOOM_PERCENT));
         setStatusMessage('Map recentered to the full property frame.');
     };
 
@@ -2241,13 +2213,13 @@ export default function PropertyMapPage() {
         setBoundaryBoxFirstPoint(null);
         setBoundaryBoxDraft(null);
         setIsBoundaryBoxMode(false);
-        setMapImageFitMode('cover');
+        setMapImageFitMode('contain');
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
         setAutoFollowGps(false);
-        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds, 'cover', MAP_BOUNDARY_MAX_ZOOM_PERCENT));
+        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds, 'contain', MAP_DEFAULT_MAX_ZOOM_PERCENT));
         setError(null);
-        setStatusMessage('Property boundary box saved and fit to full canvas.');
+        setStatusMessage('Property boundary box saved and fit to show full boundary.');
     };
 
     const adjustMapZoom = (delta: number) => {
@@ -2642,7 +2614,7 @@ export default function PropertyMapPage() {
         }
 
         const hasManualBoundary = Boolean(propertyBoundaryBox);
-        setMapImageFitMode(hasManualBoundary ? 'cover' : 'contain');
+        setMapImageFitMode('contain');
         setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
@@ -2651,13 +2623,13 @@ export default function PropertyMapPage() {
         setMapZoomPercent(
             getPropertyFitZoomPercent(
                 propertyFocusBounds,
-                hasManualBoundary ? 'cover' : 'contain',
-                hasManualBoundary ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT
+                'contain',
+                MAP_DEFAULT_MAX_ZOOM_PERCENT
             )
         );
         setError(null);
         setStatusMessage(hasManualBoundary
-            ? 'Canvas fit reset and matched to your saved boundary using full-canvas framing.'
+            ? 'Canvas fit reset and matched to your saved boundary.'
             : 'Canvas fit reset and matched to full-property framing.');
     };
 
@@ -4268,14 +4240,6 @@ export default function PropertyMapPage() {
                             <input type="checkbox" checked={autoFollowGps} onChange={e => setAutoFollowGps(e.target.checked)} />
                             <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Auto-follow GPS</span>
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <input type="checkbox" checked={lockToImageBounds} onChange={e => setLockToImageBounds(e.target.checked)} />
-                            <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Lock to image bounds</span>
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <input type="checkbox" checked={keepPropertyFramed} onChange={e => setKeepPropertyFramed(e.target.checked)} />
-                            <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Keep property framed</span>
-                        </label>
                         <button
                             type="button"
                             className="soft-button"
@@ -4322,21 +4286,6 @@ export default function PropertyMapPage() {
                         </button>
                         <button type="button" className="soft-button" onClick={zoomToTrailDetailView}>
                             Trail detail zoom
-                        </button>
-                        <button
-                            type="button"
-                            className="soft-button"
-                            onClick={recenterToPropertyFrame}
-                        >
-                            Recenter map view
-                        </button>
-                        <button
-                            type="button"
-                            className="soft-button"
-                            onClick={optimizeMapCanvasFit}
-                            disabled={!displayImageUrl}
-                        >
-                            Auto-fix canvas fit
                         </button>
                         {!simpleLayout && (
                             <>
