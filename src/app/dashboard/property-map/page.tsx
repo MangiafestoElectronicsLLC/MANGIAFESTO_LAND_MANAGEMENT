@@ -114,6 +114,19 @@ type MapContentBounds = {
     maxY: number;
 };
 
+type BoundsAccumulator = {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    count: number;
+};
+
+type PropertyBoundaryBox = {
+    nw: MapPercentPoint;
+    se: MapPercentPoint;
+};
+
 type LiveGpsState = {
     lat: number;
     lng: number;
@@ -143,6 +156,7 @@ const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
 const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
 const LOCAL_MAP_CALIBRATIONS_KEY = 'family-land-map-calibrations';
 const LOCAL_MAP_IMAGE_FRAMING_KEY = 'family-land-map-image-framing';
+const LOCAL_PROPERTY_BOUNDARY_BOXES_KEY = 'family-land-property-boundary-boxes';
 const LOCAL_ONX_IMPORT_CURSOR_KEY = 'family-land-onx-import-cursor';
 const LOCAL_ONX_IMPORTED_SIGNATURES_KEY = 'family-land-onx-imported-signatures';
 const TRAIL_META_PREFIX = '[trail-plan]';
@@ -155,6 +169,32 @@ const ONX_HUNT_APP_DEEP_LINK = 'onxhunt://';
 const DEFAULT_TRAIL_COLOR = '#22d3ee';
 const DEFAULT_TRAIL_WIDTH = 1;
 const DEFAULT_TRAIL_PATTERN: 'solid' | 'dashed' | 'dotted' = 'solid';
+const PROPERTY_FOCUS_PADDING_PERCENT = 8;
+
+const intersectBounds = (first: MapContentBounds, second: MapContentBounds): MapContentBounds | null => {
+    const minX = Math.max(first.minX, second.minX);
+    const maxX = Math.min(first.maxX, second.maxX);
+    const minY = Math.max(first.minY, second.minY);
+    const maxY = Math.min(first.maxY, second.maxY);
+
+    if (maxX - minX <= 5 || maxY - minY <= 5) {
+        return null;
+    }
+
+    return { minX, maxX, minY, maxY };
+};
+
+const normalizeBoundaryBox = (box: PropertyBoundaryBox): PropertyBoundaryBox => {
+    const minX = clamp(Math.min(box.nw.x, box.se.x), 0, 100);
+    const maxX = clamp(Math.max(box.nw.x, box.se.x), 0, 100);
+    const minY = clamp(Math.min(box.nw.y, box.se.y), 0, 100);
+    const maxY = clamp(Math.max(box.nw.y, box.se.y), 0, 100);
+
+    return {
+        nw: { x: minX, y: minY },
+        se: { x: maxX, y: maxY }
+    };
+};
 
 const getFeatureStatusColor = (status: string) => {
     if (status === 'active') return '#22c55e';
@@ -440,6 +480,16 @@ const readLocalMapImageFraming = () => {
 const saveLocalMapImageFraming = (nextFraming: Record<string, MapImageFraming>) => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(LOCAL_MAP_IMAGE_FRAMING_KEY, JSON.stringify(nextFraming));
+};
+
+const readLocalPropertyBoundaryBoxes = () => {
+    if (typeof window === 'undefined') return {} as Record<string, PropertyBoundaryBox>;
+    return parseJson<Record<string, PropertyBoundaryBox>>(window.localStorage.getItem(LOCAL_PROPERTY_BOUNDARY_BOXES_KEY), {});
+};
+
+const saveLocalPropertyBoundaryBoxes = (nextBoxes: Record<string, PropertyBoundaryBox>) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LOCAL_PROPERTY_BOUNDARY_BOXES_KEY, JSON.stringify(nextBoxes));
 };
 
 const mapGpsToPercent = (gps: LiveGpsState, calibration: MapBoundsCalibration) => {
@@ -911,6 +961,10 @@ export default function PropertyMapPage() {
     const mockGpsTimerRef = useRef<number | null>(null);
     const [mapZoomPercent, setMapZoomPercent] = useState(145);
     const [lockToImageBounds, setLockToImageBounds] = useState(true);
+    const [keepPropertyFramed, setKeepPropertyFramed] = useState(true);
+    const [isBoundaryBoxMode, setIsBoundaryBoxMode] = useState(false);
+    const [boundaryBoxFirstPoint, setBoundaryBoxFirstPoint] = useState<MapPercentPoint | null>(null);
+    const [propertyBoundaryBox, setPropertyBoundaryBox] = useState<PropertyBoundaryBox | null>(null);
     const [breadcrumbPoints, setBreadcrumbPoints] = useState<TrailPoint[]>([]);
     const [isBreadcrumbTracking, setIsBreadcrumbTracking] = useState(false);
     const [isWalkTrailRecording, setIsWalkTrailRecording] = useState(false);
@@ -1091,12 +1145,84 @@ export default function PropertyMapPage() {
         mapImageRotationDeg
     ]);
 
+    const propertyFocusBounds = useMemo(() => {
+        if (propertyBoundaryBox) {
+            const normalized = normalizeBoundaryBox(propertyBoundaryBox);
+            const minX = clamp(normalized.nw.x - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+            const maxX = clamp(normalized.se.x + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+            const minY = clamp(normalized.nw.y - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+            const maxY = clamp(normalized.se.y + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+
+            if (maxX - minX >= 6 && maxY - minY >= 6) {
+                return { minX, maxX, minY, maxY } as MapContentBounds;
+            }
+        }
+
+        const accumulator: BoundsAccumulator = {
+            minX: Number.POSITIVE_INFINITY,
+            maxX: Number.NEGATIVE_INFINITY,
+            minY: Number.POSITIVE_INFINITY,
+            maxY: Number.NEGATIVE_INFINITY,
+            count: 0
+        };
+
+        const includePoint = (x: number, y: number) => {
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+            accumulator.minX = Math.min(accumulator.minX, x);
+            accumulator.maxX = Math.max(accumulator.maxX, x);
+            accumulator.minY = Math.min(accumulator.minY, y);
+            accumulator.maxY = Math.max(accumulator.maxY, y);
+            accumulator.count += 1;
+        };
+
+        for (const feature of features) {
+            includePoint(feature.x_percent, feature.y_percent);
+        }
+
+        for (const trail of savedTrails) {
+            for (const point of trail.points) {
+                includePoint(point.x, point.y);
+            }
+        }
+
+        for (const point of trailDraftPoints) {
+            includePoint(point.x, point.y);
+        }
+
+        if (gpsMapPoint && !gpsMapPoint.clamped) {
+            includePoint(gpsMapPoint.x, gpsMapPoint.y);
+        }
+
+        if (accumulator.count < 2) {
+            return null;
+        }
+
+        const minX = clamp(accumulator.minX - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+        const maxX = clamp(accumulator.maxX + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+        const minY = clamp(accumulator.minY - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+        const maxY = clamp(accumulator.maxY + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+
+        if (maxX - minX < 10 || maxY - minY < 10) {
+            return null;
+        }
+
+        return { minX, maxX, minY, maxY } as MapContentBounds;
+    }, [propertyBoundaryBox, features, savedTrails, trailDraftPoints, gpsMapPoint]);
+
     const mapTransform = useMemo(() => {
         let followPoint = autoFollowGps && isGpsTracking && gpsMapPoint
             ? { x: gpsMapPoint.x, y: gpsMapPoint.y }
             : null;
 
-        const lockBounds = lockToImageBounds ? mapImageContentBounds : null;
+        const focusBounds = keepPropertyFramed ? propertyFocusBounds : null;
+        const imageBounds = lockToImageBounds ? mapImageContentBounds : null;
+
+        let lockBounds = imageBounds;
+        if (focusBounds && imageBounds) {
+            lockBounds = intersectBounds(focusBounds, imageBounds) || focusBounds;
+        } else if (focusBounds) {
+            lockBounds = focusBounds;
+        }
 
         if (!followPoint && lockBounds) {
             followPoint = {
@@ -1106,7 +1232,16 @@ export default function PropertyMapPage() {
         }
 
         return buildMapTransform(mapZoomPercent, followPoint, lockBounds);
-    }, [autoFollowGps, isGpsTracking, gpsMapPoint, mapZoomPercent, lockToImageBounds, mapImageContentBounds]);
+    }, [
+        autoFollowGps,
+        isGpsTracking,
+        gpsMapPoint,
+        mapZoomPercent,
+        lockToImageBounds,
+        mapImageContentBounds,
+        keepPropertyFramed,
+        propertyFocusBounds
+    ]);
 
     const mapNorthCompassAngleDeg = useMemo(() => {
         return normalizeSignedAngle(mapImageRotationDeg + (mapImageFlipY ? 180 : 0));
@@ -1500,6 +1635,11 @@ export default function PropertyMapPage() {
             setMapImageFlipY(false);
         }
 
+        const storedBoundaryBox = readLocalPropertyBoundaryBoxes()[selectedMap.id];
+        setPropertyBoundaryBox(storedBoundaryBox ? normalizeBoundaryBox(storedBoundaryBox) : null);
+        setBoundaryBoxFirstPoint(null);
+        setIsBoundaryBoxMode(false);
+
         const storedCalibration = readLocalCalibrations()[selectedMap.id];
         if (storedCalibration) {
             setNorthLatInput(String(storedCalibration.northLat));
@@ -1543,6 +1683,22 @@ export default function PropertyMapPage() {
         mapImageFlipX,
         mapImageFlipY
     ]);
+
+    useEffect(() => {
+        if (!selectedMap?.id) return;
+
+        const nextBoxes = {
+            ...readLocalPropertyBoundaryBoxes()
+        };
+
+        if (propertyBoundaryBox) {
+            nextBoxes[selectedMap.id] = normalizeBoundaryBox(propertyBoundaryBox);
+        } else {
+            delete nextBoxes[selectedMap.id];
+        }
+
+        saveLocalPropertyBoundaryBoxes(nextBoxes);
+    }, [selectedMap?.id, propertyBoundaryBox]);
 
     useEffect(() => {
         resolveMapImageUrl(selectedMap);
@@ -1870,6 +2026,27 @@ export default function PropertyMapPage() {
         const { x: clampedX, y: clampedY } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
         setLastMapClickPoint({ x: clampedX, y: clampedY });
 
+        if (isBoundaryBoxMode) {
+            if (!boundaryBoxFirstPoint) {
+                setBoundaryBoxFirstPoint({ x: clampedX, y: clampedY });
+                setError(null);
+                setStatusMessage('Boundary step 1 set (NW corner). Tap SE corner to finish property boundary box.');
+                return;
+            }
+
+            const nextBox = normalizeBoundaryBox({
+                nw: boundaryBoxFirstPoint,
+                se: { x: clampedX, y: clampedY }
+            });
+            setPropertyBoundaryBox(nextBox);
+            setBoundaryBoxFirstPoint(null);
+            setIsBoundaryBoxMode(false);
+            setKeepPropertyFramed(true);
+            setError(null);
+            setStatusMessage('Property boundary box saved. Framing now prioritizes this rectangle.');
+            return;
+        }
+
         if (gpsAnchorPickMode) {
             setGpsAnchorPoint({ x: clampedX, y: clampedY });
             setGpsAnchorPickMode(false);
@@ -1954,6 +2131,28 @@ export default function PropertyMapPage() {
         setFeatureY(String(clampedY));
     };
 
+    const toggleBoundaryBoxMode = () => {
+        setIsBoundaryBoxMode(prev => {
+            const next = !prev;
+            if (next) {
+                setBoundaryBoxFirstPoint(null);
+                setError(null);
+                setStatusMessage('Boundary mode on: tap NW corner, then tap SE corner.');
+            } else {
+                setBoundaryBoxFirstPoint(null);
+                setStatusMessage('Boundary mode canceled.');
+            }
+            return next;
+        });
+    };
+
+    const clearBoundaryBox = () => {
+        setPropertyBoundaryBox(null);
+        setBoundaryBoxFirstPoint(null);
+        setIsBoundaryBoxMode(false);
+        setStatusMessage('Manual property boundary box cleared.');
+    };
+
     const adjustMapZoom = (delta: number) => {
         setMapZoomPercent(prev => clamp(prev + delta, 100, 350));
     };
@@ -1965,12 +2164,21 @@ export default function PropertyMapPage() {
         setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
-        setMapZoomPercent(100);
+        const targetBounds = keepPropertyFramed ? propertyFocusBounds : null;
+        if (targetBounds) {
+            const width = Math.max(8, targetBounds.maxX - targetBounds.minX);
+            const height = Math.max(8, targetBounds.maxY - targetBounds.minY);
+            const maxScaleToFit = Math.min(100 / width, 100 / height);
+            const targetZoom = clamp(Math.round(maxScaleToFit * 100), 100, 260);
+            setMapZoomPercent(targetZoom);
+        } else {
+            setMapZoomPercent(100);
+        }
         setAutoFollowGps(false);
         setStatusMessage(
             shouldFillWidth
-                ? 'Acreage view applied with full-width smart fit for this map image.'
-                : 'Acreage view fit applied for the 40-acre property.'
+                ? 'Acreage view applied with full-width smart fit and property-focused framing.'
+                : 'Acreage view fit applied with property-focused framing.'
         );
     };
 
@@ -3865,6 +4073,14 @@ export default function PropertyMapPage() {
                     </div>
                 </div>
 
+                {isBoundaryBoxMode && (
+                    <div style={{ border: '1px solid #f59e0b', borderRadius: 10, padding: '0.5rem 0.6rem', background: 'rgba(120, 53, 15, 0.36)', color: '#fde68a', fontSize: '0.86rem' }}>
+                        {boundaryBoxFirstPoint
+                            ? 'Boundary mode step 2: tap the SE property corner to finish the boundary box.'
+                            : 'Boundary mode step 1: tap the NW property corner.'}
+                    </div>
+                )}
+
                 {isTrailFieldMode ? (
                     <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.25rem', background: 'rgba(15, 23, 42, 0.72)' }}>
                         <div style={{ fontWeight: 700 }}>Trail Field Mode Active</div>
@@ -3965,6 +4181,26 @@ export default function PropertyMapPage() {
                             <input type="checkbox" checked={lockToImageBounds} onChange={e => setLockToImageBounds(e.target.checked)} />
                             <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Lock to image bounds</span>
                         </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <input type="checkbox" checked={keepPropertyFramed} onChange={e => setKeepPropertyFramed(e.target.checked)} />
+                            <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Keep property framed</span>
+                        </label>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={toggleBoundaryBoxMode}
+                            style={{ borderColor: isBoundaryBoxMode ? '#f59e0b' : '#475569', color: isBoundaryBoxMode ? '#fde68a' : '#cbd5e1' }}
+                        >
+                            {isBoundaryBoxMode ? 'Cancel boundary mode' : 'Set property boundary box'}
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={clearBoundaryBox}
+                            disabled={!propertyBoundaryBox && !isBoundaryBoxMode}
+                        >
+                            Clear boundary box
+                        </button>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', border: '1px solid #334155', borderRadius: 8, padding: '0.2rem 0.35rem' }}>
                             <button type="button" className="soft-button" onClick={() => adjustMapZoom(-15)}>-</button>
                             <span style={{ fontSize: '0.88rem', opacity: 0.84, minWidth: 68, textAlign: 'center' }}>Zoom {mapZoomPercent}%</span>
@@ -4165,6 +4401,33 @@ export default function PropertyMapPage() {
                             preserveAspectRatio="none"
                             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
                         >
+                            {propertyBoundaryBox && (
+                                <g>
+                                    <rect
+                                        x={propertyBoundaryBox.nw.x}
+                                        y={propertyBoundaryBox.nw.y}
+                                        width={Math.max(0.2, propertyBoundaryBox.se.x - propertyBoundaryBox.nw.x)}
+                                        height={Math.max(0.2, propertyBoundaryBox.se.y - propertyBoundaryBox.nw.y)}
+                                        fill="rgba(56, 189, 248, 0.08)"
+                                        stroke="#38bdf8"
+                                        strokeWidth={0.5}
+                                        strokeDasharray="1.2 0.85"
+                                    />
+                                    <circle cx={propertyBoundaryBox.nw.x} cy={propertyBoundaryBox.nw.y} r={0.95} fill="#22d3ee" stroke="#f8fafc" strokeWidth={0.2} />
+                                    <circle cx={propertyBoundaryBox.se.x} cy={propertyBoundaryBox.se.y} r={0.95} fill="#0ea5e9" stroke="#f8fafc" strokeWidth={0.2} />
+                                    <text x={propertyBoundaryBox.nw.x + 0.6} y={propertyBoundaryBox.nw.y - 0.55} fontSize="1.05" fill="#bae6fd">NW</text>
+                                    <text x={propertyBoundaryBox.se.x + 0.6} y={propertyBoundaryBox.se.y - 0.55} fontSize="1.05" fill="#bae6fd">SE</text>
+                                </g>
+                            )}
+
+                            {isBoundaryBoxMode && boundaryBoxFirstPoint && (
+                                <g>
+                                    <circle cx={boundaryBoxFirstPoint.x} cy={boundaryBoxFirstPoint.y} r={1.2} fill="#f59e0b" stroke="#f8fafc" strokeWidth={0.25} />
+                                    <circle cx={boundaryBoxFirstPoint.x} cy={boundaryBoxFirstPoint.y} r={2} fill="none" stroke="#fbbf24" strokeWidth={0.22} strokeDasharray="0.82 0.82" />
+                                    <text x={boundaryBoxFirstPoint.x + 0.6} y={boundaryBoxFirstPoint.y - 0.6} fontSize="1.05" fill="#fde68a">NW set</text>
+                                </g>
+                            )}
+
                             {savedTrails.map(({ feature, points }) => {
                                 const start = points[0];
                                 const end = points[points.length - 1];
@@ -5169,6 +5432,33 @@ export default function PropertyMapPage() {
                     >
                         {lockToImageBounds ? 'Bounds Lock On' : 'Bounds Lock Off'}
                     </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => setKeepPropertyFramed(prev => !prev)}
+                        style={{ minHeight: 44, fontWeight: 700, borderColor: keepPropertyFramed ? '#22c55e' : '#475569', color: keepPropertyFramed ? '#bbf7d0' : '#e2e8f0' }}
+                    >
+                        {keepPropertyFramed ? 'Property Frame On' : 'Property Frame Off'}
+                    </button>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.45rem' }}>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={toggleBoundaryBoxMode}
+                            style={{ minHeight: 44, fontWeight: 700, borderColor: isBoundaryBoxMode ? '#f59e0b' : '#475569', color: isBoundaryBoxMode ? '#fde68a' : '#e2e8f0' }}
+                        >
+                            {isBoundaryBoxMode ? 'Cancel Boundary' : 'Set Boundary'}
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={clearBoundaryBox}
+                            disabled={!propertyBoundaryBox && !isBoundaryBoxMode}
+                            style={{ minHeight: 44, fontWeight: 700 }}
+                        >
+                            Clear Boundary
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
