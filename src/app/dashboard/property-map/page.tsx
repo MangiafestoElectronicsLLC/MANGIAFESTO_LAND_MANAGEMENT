@@ -102,6 +102,18 @@ type MapImageFraming = {
     flipY: boolean;
 };
 
+type ImageNaturalSize = {
+    width: number;
+    height: number;
+};
+
+type MapContentBounds = {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+};
+
 type LiveGpsState = {
     lat: number;
     lng: number;
@@ -735,7 +747,11 @@ const buildCheckpointIndexes = (pointCount: number) => {
     return Array.from(new Set(checkpoints));
 };
 
-const buildMapTransform = (zoomPercent: number, followPoint: { x: number; y: number } | null) => {
+const buildMapTransform = (
+    zoomPercent: number,
+    followPoint: { x: number; y: number } | null,
+    contentBounds: MapContentBounds | null
+) => {
     const scale = clamp(zoomPercent, 100, 350) / 100;
 
     if (!followPoint) {
@@ -746,15 +762,33 @@ const buildMapTransform = (zoomPercent: number, followPoint: { x: number; y: num
         };
     }
 
-    const minTranslatePercent = 100 / scale - 100;
-    const maxTranslatePercent = 0;
+    const unclampedMinTranslatePercent = 100 / scale - 100;
+    const unclampedMaxTranslatePercent = 0;
+
+    const minTranslateXPercent = contentBounds
+        ? Math.max(unclampedMinTranslatePercent, 50 / scale - contentBounds.maxX)
+        : unclampedMinTranslatePercent;
+    const maxTranslateXPercent = contentBounds
+        ? Math.min(unclampedMaxTranslatePercent, 50 / scale - contentBounds.minX)
+        : unclampedMaxTranslatePercent;
+    const minTranslateYPercent = contentBounds
+        ? Math.max(unclampedMinTranslatePercent, 50 / scale - contentBounds.maxY)
+        : unclampedMinTranslatePercent;
+    const maxTranslateYPercent = contentBounds
+        ? Math.min(unclampedMaxTranslatePercent, 50 / scale - contentBounds.minY)
+        : unclampedMaxTranslatePercent;
+
+    const safeMinTranslateX = minTranslateXPercent <= maxTranslateXPercent ? minTranslateXPercent : unclampedMinTranslatePercent;
+    const safeMaxTranslateX = minTranslateXPercent <= maxTranslateXPercent ? maxTranslateXPercent : unclampedMaxTranslatePercent;
+    const safeMinTranslateY = minTranslateYPercent <= maxTranslateYPercent ? minTranslateYPercent : unclampedMinTranslatePercent;
+    const safeMaxTranslateY = minTranslateYPercent <= maxTranslateYPercent ? maxTranslateYPercent : unclampedMaxTranslatePercent;
     const targetTx = 50 / scale - followPoint.x;
     const targetTy = 50 / scale - followPoint.y;
 
     return {
         scale,
-        translateXPercent: clamp(targetTx, minTranslatePercent, maxTranslatePercent),
-        translateYPercent: clamp(targetTy, minTranslatePercent, maxTranslatePercent)
+        translateXPercent: clamp(targetTx, safeMinTranslateX, safeMaxTranslateX),
+        translateYPercent: clamp(targetTy, safeMinTranslateY, safeMaxTranslateY)
     };
 };
 
@@ -825,6 +859,7 @@ export default function PropertyMapPage() {
     const [featureLng, setFeatureLng] = useState('');
 
     const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
+    const [mapImageNaturalSize, setMapImageNaturalSize] = useState<ImageNaturalSize | null>(null);
     const [mapImageFitMode, setMapImageFitMode] = useState<'contain' | 'cover'>('contain');
     const [mapImageScalePercent, setMapImageScalePercent] = useState(100);
     const [mapImageOffsetXPercent, setMapImageOffsetXPercent] = useState(0);
@@ -874,6 +909,7 @@ export default function PropertyMapPage() {
     const [mockGpsEnabled, setMockGpsEnabled] = useState(false);
     const mockGpsTimerRef = useRef<number | null>(null);
     const [mapZoomPercent, setMapZoomPercent] = useState(145);
+    const [lockToImageBounds, setLockToImageBounds] = useState(true);
     const [breadcrumbPoints, setBreadcrumbPoints] = useState<TrailPoint[]>([]);
     const [isBreadcrumbTracking, setIsBreadcrumbTracking] = useState(false);
     const [isWalkTrailRecording, setIsWalkTrailRecording] = useState(false);
@@ -986,12 +1022,90 @@ export default function PropertyMapPage() {
         return gpsConfidenceFromAccuracy(liveGps.accuracyMeters);
     }, [liveGps]);
 
+    const mapCanvasAspectRatio = useMemo(() => {
+        const defaultRatio = isMobileViewport ? 4 / 3 : 16 / 9;
+        if (!displayImageUrl || !mapImageNaturalSize || mapImageNaturalSize.width <= 0 || mapImageNaturalSize.height <= 0) {
+            return defaultRatio;
+        }
+
+        if (mapImageFitMode === 'cover') {
+            return defaultRatio;
+        }
+
+        const rawRatio = mapImageNaturalSize.width / mapImageNaturalSize.height;
+        const minRatio = isMobileViewport ? 0.82 : 1.1;
+        const maxRatio = isMobileViewport ? 1.85 : 2.25;
+        return clamp(rawRatio, minRatio, maxRatio);
+    }, [displayImageUrl, mapImageNaturalSize, mapImageFitMode, isMobileViewport]);
+
+    const mapImageContentBounds = useMemo(() => {
+        if (!displayImageUrl || !mapImageNaturalSize || mapImageNaturalSize.width <= 0 || mapImageNaturalSize.height <= 0) {
+            return null;
+        }
+
+        if (Math.abs(mapImageRotationDeg) > 0.1) {
+            return null;
+        }
+
+        const imageRatio = mapImageNaturalSize.width / mapImageNaturalSize.height;
+        const canvasRatio = Math.max(0.1, mapCanvasAspectRatio);
+        const imageScale = clamp(mapImageScalePercent / 100, 0.7, 2.2);
+
+        let renderedWidth = 100;
+        let renderedHeight = 100;
+
+        if (mapImageFitMode === 'contain') {
+            if (canvasRatio > imageRatio) {
+                renderedWidth = clamp((imageRatio / canvasRatio) * 100, 20, 100);
+                renderedHeight = 100;
+            } else {
+                renderedWidth = 100;
+                renderedHeight = clamp((canvasRatio / imageRatio) * 100, 20, 100);
+            }
+        }
+
+        const scaledWidth = renderedWidth * imageScale;
+        const scaledHeight = renderedHeight * imageScale;
+        const centerX = 50 + mapImageOffsetXPercent;
+        const centerY = 50 + mapImageOffsetYPercent;
+
+        const minX = clamp(centerX - scaledWidth / 2, 0, 100);
+        const maxX = clamp(centerX + scaledWidth / 2, 0, 100);
+        const minY = clamp(centerY - scaledHeight / 2, 0, 100);
+        const maxY = clamp(centerY + scaledHeight / 2, 0, 100);
+
+        if (maxX - minX < 10 || maxY - minY < 10) {
+            return null;
+        }
+
+        return { minX, maxX, minY, maxY } as MapContentBounds;
+    }, [
+        displayImageUrl,
+        mapImageNaturalSize,
+        mapImageFitMode,
+        mapCanvasAspectRatio,
+        mapImageScalePercent,
+        mapImageOffsetXPercent,
+        mapImageOffsetYPercent,
+        mapImageRotationDeg
+    ]);
+
     const mapTransform = useMemo(() => {
-        const followPoint = autoFollowGps && isGpsTracking && gpsMapPoint
+        let followPoint = autoFollowGps && isGpsTracking && gpsMapPoint
             ? { x: gpsMapPoint.x, y: gpsMapPoint.y }
             : null;
-        return buildMapTransform(mapZoomPercent, followPoint);
-    }, [autoFollowGps, isGpsTracking, gpsMapPoint, mapZoomPercent]);
+
+        const lockBounds = lockToImageBounds ? mapImageContentBounds : null;
+
+        if (!followPoint && lockBounds) {
+            followPoint = {
+                x: (lockBounds.minX + lockBounds.maxX) / 2,
+                y: (lockBounds.minY + lockBounds.maxY) / 2
+            };
+        }
+
+        return buildMapTransform(mapZoomPercent, followPoint, lockBounds);
+    }, [autoFollowGps, isGpsTracking, gpsMapPoint, mapZoomPercent, lockToImageBounds, mapImageContentBounds]);
 
     const mapNorthCompassAngleDeg = useMemo(() => {
         return normalizeSignedAngle(mapImageRotationDeg + (mapImageFlipY ? 180 : 0));
@@ -1430,6 +1544,10 @@ export default function PropertyMapPage() {
     useEffect(() => {
         resolveMapImageUrl(selectedMap);
     }, [selectedMap?.id, selectedMap?.base_image_path, selectedMap?.base_image_url, storageMode]);
+
+    useEffect(() => {
+        setMapImageNaturalSize(null);
+    }, [displayImageUrl]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -2170,6 +2288,27 @@ export default function PropertyMapPage() {
         setMapImageOffsetYPercent(0);
         setError(null);
         setStatusMessage('Property image auto-centered using current fit, scale, and rotation settings.');
+    };
+
+    const optimizeMapCanvasFit = () => {
+        if (!mapImageNaturalSize) {
+            setError('Load a property image first, then run auto-fix canvas fit.');
+            return;
+        }
+
+        const ratio = mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height);
+        const portraitLike = ratio < 1;
+
+        setMapImageFitMode(portraitLike ? 'cover' : 'contain');
+        setMapImageScalePercent(portraitLike ? 118 : 100);
+        setMapImageOffsetXPercent(0);
+        setMapImageOffsetYPercent(0);
+        setError(null);
+        setStatusMessage(
+            portraitLike
+                ? 'Canvas fit auto-fixed for a portrait-style image (fill mode enabled).'
+                : 'Canvas fit auto-fixed for a landscape image (full acreage mode enabled).'
+        );
     };
 
     const alignGpsToMarkedMapSpot = () => {
@@ -3769,6 +3908,10 @@ export default function PropertyMapPage() {
                             <input type="checkbox" checked={autoFollowGps} onChange={e => setAutoFollowGps(e.target.checked)} />
                             <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Auto-follow GPS</span>
                         </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <input type="checkbox" checked={lockToImageBounds} onChange={e => setLockToImageBounds(e.target.checked)} />
+                            <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Lock to image bounds</span>
+                        </label>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', border: '1px solid #334155', borderRadius: 8, padding: '0.2rem 0.35rem' }}>
                             <button type="button" className="soft-button" onClick={() => adjustMapZoom(-15)}>-</button>
                             <span style={{ fontSize: '0.88rem', opacity: 0.84, minWidth: 68, textAlign: 'center' }}>Zoom {mapZoomPercent}%</span>
@@ -3800,6 +3943,14 @@ export default function PropertyMapPage() {
                             }}
                         >
                             Recenter map view
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={optimizeMapCanvasFit}
+                            disabled={!displayImageUrl}
+                        >
+                            Auto-fix canvas fit
                         </button>
                         {!simpleLayout && (
                             <>
@@ -3898,7 +4049,9 @@ export default function PropertyMapPage() {
                     style={{
                         position: 'relative',
                         width: '100%',
+                        aspectRatio: String(mapCanvasAspectRatio),
                         minHeight: isMobileViewport ? 360 : 420,
+                        maxHeight: isMobileViewport ? '78vh' : '72vh',
                         borderRadius: 14,
                         border: '1px solid #334155',
                         background: 'linear-gradient(145deg, #0b1220, #13213e)',
@@ -3932,6 +4085,15 @@ export default function PropertyMapPage() {
                                 <img
                                     src={displayImageUrl}
                                     alt="Property map base"
+                                    onLoad={event => {
+                                        const target = event.currentTarget;
+                                        if (target.naturalWidth > 0 && target.naturalHeight > 0) {
+                                            setMapImageNaturalSize({
+                                                width: target.naturalWidth,
+                                                height: target.naturalHeight
+                                            });
+                                        }
+                                    }}
                                     style={{
                                         width: '100%',
                                         height: '100%',
@@ -4945,6 +5107,15 @@ export default function PropertyMapPage() {
                         <button type="button" className="soft-button" onClick={zoomToAcreageView} style={{ minHeight: 46, fontWeight: 700 }}>Acreage</button>
                         <button type="button" className="soft-button" onClick={() => adjustMapZoom(15)} style={{ minHeight: 46, fontWeight: 700 }}>+ Zoom</button>
                     </div>
+
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => setLockToImageBounds(prev => !prev)}
+                        style={{ minHeight: 44, fontWeight: 700, borderColor: lockToImageBounds ? '#22c55e' : '#475569', color: lockToImageBounds ? '#bbf7d0' : '#e2e8f0' }}
+                    >
+                        {lockToImageBounds ? 'Bounds Lock On' : 'Bounds Lock Off'}
+                    </button>
                 </div>
             )}
         </div>
