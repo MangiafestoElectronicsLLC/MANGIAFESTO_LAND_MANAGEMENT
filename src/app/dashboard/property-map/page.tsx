@@ -2016,6 +2016,43 @@ export default function PropertyMapPage() {
         };
     };
 
+    const captureBoundaryBoxTap = (point: MapPercentPoint) => {
+        if (!isBoundaryBoxMode) return false;
+
+        if (!boundaryBoxFirstPoint) {
+            setBoundaryBoxFirstPoint({ x: point.x, y: point.y });
+            setError(null);
+            setStatusMessage('Boundary step 1 set (NW corner). Tap SE corner to finish property boundary box.');
+            return true;
+        }
+
+        const nextBox = normalizeBoundaryBox({
+            nw: boundaryBoxFirstPoint,
+            se: { x: point.x, y: point.y }
+        });
+        setPropertyBoundaryBox(nextBox);
+        setBoundaryBoxFirstPoint(null);
+        setIsBoundaryBoxMode(false);
+        setKeepPropertyFramed(true);
+        setError(null);
+        setStatusMessage('Property boundary box saved. Framing now prioritizes this rectangle.');
+        return true;
+    };
+
+    const onMapPointerDownCapture = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (!isBoundaryBoxMode) return;
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        const point = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
+        setLastMapClickPoint(point);
+        const handled = captureBoundaryBoxTap(point);
+        if (handled) {
+            suppressNextMapClickRef.current = true;
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    };
+
     const onMapClick = (event: React.MouseEvent<HTMLDivElement>) => {
         if (suppressNextMapClickRef.current) {
             suppressNextMapClickRef.current = false;
@@ -2026,24 +2063,7 @@ export default function PropertyMapPage() {
         const { x: clampedX, y: clampedY } = mapPercentFromClientPoint(event.clientX, event.clientY, rect);
         setLastMapClickPoint({ x: clampedX, y: clampedY });
 
-        if (isBoundaryBoxMode) {
-            if (!boundaryBoxFirstPoint) {
-                setBoundaryBoxFirstPoint({ x: clampedX, y: clampedY });
-                setError(null);
-                setStatusMessage('Boundary step 1 set (NW corner). Tap SE corner to finish property boundary box.');
-                return;
-            }
-
-            const nextBox = normalizeBoundaryBox({
-                nw: boundaryBoxFirstPoint,
-                se: { x: clampedX, y: clampedY }
-            });
-            setPropertyBoundaryBox(nextBox);
-            setBoundaryBoxFirstPoint(null);
-            setIsBoundaryBoxMode(false);
-            setKeepPropertyFramed(true);
-            setError(null);
-            setStatusMessage('Property boundary box saved. Framing now prioritizes this rectangle.');
+        if (captureBoundaryBoxTap({ x: clampedX, y: clampedY })) {
             return;
         }
 
@@ -4319,6 +4339,7 @@ export default function PropertyMapPage() {
 
                 <div
                     ref={mapCanvasRef}
+                    onPointerDownCapture={onMapPointerDownCapture}
                     onClick={onMapClick}
                     onWheel={onMapWheel}
                     onPointerMove={onMapPointerMove}
