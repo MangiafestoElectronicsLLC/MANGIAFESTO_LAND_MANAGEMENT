@@ -860,6 +860,7 @@ export default function PropertyMapPage() {
 
     const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
     const [mapImageNaturalSize, setMapImageNaturalSize] = useState<ImageNaturalSize | null>(null);
+    const [selectedMapHasStoredFraming, setSelectedMapHasStoredFraming] = useState(false);
     const [mapImageFitMode, setMapImageFitMode] = useState<'contain' | 'cover'>('contain');
     const [mapImageScalePercent, setMapImageScalePercent] = useState(100);
     const [mapImageOffsetXPercent, setMapImageOffsetXPercent] = useState(0);
@@ -1480,6 +1481,7 @@ export default function PropertyMapPage() {
 
         const storedFraming = readLocalMapImageFraming()[selectedMap.id];
         if (storedFraming) {
+            setSelectedMapHasStoredFraming(true);
             setMapImageFitMode(storedFraming.fitMode === 'cover' ? 'cover' : 'contain');
             setMapImageScalePercent(clamp(Number(storedFraming.scalePercent), 70, 220));
             setMapImageOffsetXPercent(clamp(Number(storedFraming.offsetXPercent), -40, 40));
@@ -1488,7 +1490,8 @@ export default function PropertyMapPage() {
             setMapImageFlipX(Boolean(storedFraming.flipX));
             setMapImageFlipY(Boolean(storedFraming.flipY));
         } else {
-            setMapImageFitMode('contain');
+            setSelectedMapHasStoredFraming(false);
+            setMapImageFitMode('cover');
             setMapImageScalePercent(100);
             setMapImageOffsetXPercent(0);
             setMapImageOffsetYPercent(0);
@@ -1548,6 +1551,39 @@ export default function PropertyMapPage() {
     useEffect(() => {
         setMapImageNaturalSize(null);
     }, [displayImageUrl]);
+
+    useEffect(() => {
+        if (!selectedMap?.id || !displayImageUrl || !mapImageNaturalSize || selectedMapHasStoredFraming) return;
+
+        const ratio = mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height);
+        const shouldUseFillCanvas = ratio < 1.2;
+
+        if (
+            shouldUseFillCanvas &&
+            mapImageFitMode === 'contain' &&
+            mapImageScalePercent === 100 &&
+            mapImageOffsetXPercent === 0 &&
+            mapImageOffsetYPercent === 0 &&
+            Math.abs(mapImageRotationDeg) < 0.01 &&
+            !mapImageFlipX &&
+            !mapImageFlipY
+        ) {
+            setMapImageFitMode('cover');
+            setStatusMessage('Smart fit applied: map now fills canvas width for easier property-line viewing.');
+        }
+    }, [
+        selectedMap?.id,
+        displayImageUrl,
+        mapImageNaturalSize,
+        selectedMapHasStoredFraming,
+        mapImageFitMode,
+        mapImageScalePercent,
+        mapImageOffsetXPercent,
+        mapImageOffsetYPercent,
+        mapImageRotationDeg,
+        mapImageFlipX,
+        mapImageFlipY
+    ]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -1923,10 +1959,19 @@ export default function PropertyMapPage() {
     };
 
     const zoomToAcreageView = () => {
-        setMapImageFitMode('contain');
+        const ratio = mapImageNaturalSize ? mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height) : 1.4;
+        const shouldFillWidth = ratio < 1.2;
+        setMapImageFitMode(shouldFillWidth ? 'cover' : 'contain');
+        setMapImageScalePercent(100);
+        setMapImageOffsetXPercent(0);
+        setMapImageOffsetYPercent(0);
         setMapZoomPercent(100);
         setAutoFollowGps(false);
-        setStatusMessage('Acreage view fit applied for the 40-acre property.');
+        setStatusMessage(
+            shouldFillWidth
+                ? 'Acreage view applied with full-width smart fit for this map image.'
+                : 'Acreage view fit applied for the 40-acre property.'
+        );
     };
 
     const zoomToTrailDetailView = () => {
@@ -2284,10 +2329,18 @@ export default function PropertyMapPage() {
     };
 
     const fitPropertyImageToCanvas = () => {
+        const ratio = mapImageNaturalSize ? mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height) : 1.4;
+        const shouldFillWidth = ratio < 1.2;
+        setMapImageFitMode(shouldFillWidth ? 'cover' : 'contain');
+        setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
         setError(null);
-        setStatusMessage('Property image auto-centered using current fit, scale, and rotation settings.');
+        setStatusMessage(
+            shouldFillWidth
+                ? 'Property image auto-centered and width-optimized for this canvas.'
+                : 'Property image auto-centered using acreage fit and current rotation settings.'
+        );
     };
 
     const optimizeMapCanvasFit = () => {
@@ -2297,10 +2350,10 @@ export default function PropertyMapPage() {
         }
 
         const ratio = mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height);
-        const portraitLike = ratio < 1;
+        const portraitLike = ratio < 1.2;
 
         setMapImageFitMode(portraitLike ? 'cover' : 'contain');
-        setMapImageScalePercent(portraitLike ? 118 : 100);
+        setMapImageScalePercent(portraitLike ? 108 : 100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
         setError(null);
