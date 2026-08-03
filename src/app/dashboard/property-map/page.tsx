@@ -2176,19 +2176,25 @@ export default function PropertyMapPage() {
         setStatusMessage('Manual property boundary box cleared.');
     };
 
-    const getPropertyFitZoomPercent = (bounds: MapContentBounds | null) => {
+    const getPropertyFitZoomPercent = (bounds: MapContentBounds | null, mode: 'contain' | 'cover' = 'contain') => {
         if (!bounds) return 100;
         const width = Math.max(12, bounds.maxX - bounds.minX);
         const height = Math.max(12, bounds.maxY - bounds.minY);
-        const maxScaleToFit = Math.min(100 / width, 100 / height);
-        return clamp(Math.round(maxScaleToFit * 94), 100, 240);
+        const scaleToFitWidth = 100 / width;
+        const scaleToFitHeight = 100 / height;
+        const targetScale = mode === 'cover'
+            ? Math.max(scaleToFitWidth, scaleToFitHeight)
+            : Math.min(scaleToFitWidth, scaleToFitHeight);
+        const scalePadding = mode === 'cover' ? 102 : 94;
+        return clamp(Math.round(targetScale * scalePadding), 100, 350);
     };
 
     const recenterToPropertyFrame = () => {
         setAutoFollowGps(false);
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
-        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
+        const fitMode: 'contain' | 'cover' = propertyBoundaryBox ? 'cover' : 'contain';
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds, fitMode));
         setStatusMessage('Map recentered to the full property frame.');
     };
 
@@ -2210,12 +2216,13 @@ export default function PropertyMapPage() {
         setBoundaryBoxFirstPoint(null);
         setBoundaryBoxDraft(null);
         setIsBoundaryBoxMode(false);
+        setMapImageFitMode('cover');
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
         setAutoFollowGps(false);
-        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds));
+        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds, 'cover'));
         setError(null);
-        setStatusMessage('Property boundary box saved and fit to boundary.');
+        setStatusMessage('Property boundary box saved and fit to full canvas.');
     };
 
     const adjustMapZoom = (delta: number) => {
@@ -2609,15 +2616,18 @@ export default function PropertyMapPage() {
             return;
         }
 
-        setMapImageFitMode('contain');
+        const hasManualBoundary = Boolean(propertyBoundaryBox);
+        setMapImageFitMode(hasManualBoundary ? 'cover' : 'contain');
         setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
-        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds, hasManualBoundary ? 'cover' : 'contain'));
         setError(null);
-        setStatusMessage('Canvas fit reset and matched to full-property framing.');
+        setStatusMessage(hasManualBoundary
+            ? 'Canvas fit reset and matched to your saved boundary using full-canvas framing.'
+            : 'Canvas fit reset and matched to full-property framing.');
     };
 
     const alignGpsToMarkedMapSpot = () => {
