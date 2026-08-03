@@ -2153,33 +2153,36 @@ export default function PropertyMapPage() {
         setStatusMessage('Manual property boundary box cleared.');
     };
 
+    const getPropertyFitZoomPercent = (bounds: MapContentBounds | null) => {
+        if (!bounds) return 100;
+        const width = Math.max(12, bounds.maxX - bounds.minX);
+        const height = Math.max(12, bounds.maxY - bounds.minY);
+        const maxScaleToFit = Math.min(100 / width, 100 / height);
+        return clamp(Math.round(maxScaleToFit * 94), 100, 240);
+    };
+
+    const recenterToPropertyFrame = () => {
+        setAutoFollowGps(false);
+        setKeepPropertyFramed(true);
+        setLockToImageBounds(true);
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
+        setStatusMessage('Map recentered to the full property frame.');
+    };
+
     const adjustMapZoom = (delta: number) => {
         setMapZoomPercent(prev => clamp(prev + delta, 100, 350));
     };
 
     const zoomToAcreageView = () => {
-        const ratio = mapImageNaturalSize ? mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height) : 1.4;
-        const shouldFillWidth = ratio < 1.2;
-        setMapImageFitMode(shouldFillWidth ? 'cover' : 'contain');
+        setMapImageFitMode('contain');
         setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
-        const targetBounds = keepPropertyFramed ? propertyFocusBounds : null;
-        if (targetBounds) {
-            const width = Math.max(8, targetBounds.maxX - targetBounds.minX);
-            const height = Math.max(8, targetBounds.maxY - targetBounds.minY);
-            const maxScaleToFit = Math.min(100 / width, 100 / height);
-            const targetZoom = clamp(Math.round(maxScaleToFit * 100), 100, 260);
-            setMapZoomPercent(targetZoom);
-        } else {
-            setMapZoomPercent(100);
-        }
+        setKeepPropertyFramed(true);
+        setLockToImageBounds(true);
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
         setAutoFollowGps(false);
-        setStatusMessage(
-            shouldFillWidth
-                ? 'Acreage view applied with full-width smart fit and property-focused framing.'
-                : 'Acreage view fit applied with property-focused framing.'
-        );
+        setStatusMessage('Full acreage view applied using full-property framing.');
     };
 
     const zoomToTrailDetailView = () => {
@@ -2557,19 +2560,15 @@ export default function PropertyMapPage() {
             return;
         }
 
-        const ratio = mapImageNaturalSize.width / Math.max(1, mapImageNaturalSize.height);
-        const portraitLike = ratio < 1.2;
-
-        setMapImageFitMode(portraitLike ? 'cover' : 'contain');
-        setMapImageScalePercent(portraitLike ? 108 : 100);
+        setMapImageFitMode('contain');
+        setMapImageScalePercent(100);
         setMapImageOffsetXPercent(0);
         setMapImageOffsetYPercent(0);
+        setKeepPropertyFramed(true);
+        setLockToImageBounds(true);
+        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
         setError(null);
-        setStatusMessage(
-            portraitLike
-                ? 'Canvas fit auto-fixed for a portrait-style image (fill mode enabled).'
-                : 'Canvas fit auto-fixed for a landscape image (full acreage mode enabled).'
-        );
+        setStatusMessage('Canvas fit reset and matched to full-property framing.');
     };
 
     const alignGpsToMarkedMapSpot = () => {
@@ -4226,10 +4225,7 @@ export default function PropertyMapPage() {
                         <button
                             type="button"
                             className="soft-button"
-                            onClick={() => {
-                                setMapZoomPercent(100);
-                                setAutoFollowGps(false);
-                            }}
+                            onClick={recenterToPropertyFrame}
                         >
                             Recenter map view
                         </button>
