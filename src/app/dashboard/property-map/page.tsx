@@ -159,6 +159,7 @@ const LOCAL_MAP_IMAGE_FRAMING_KEY = 'family-land-map-image-framing';
 const LOCAL_PROPERTY_BOUNDARY_BOXES_KEY = 'family-land-property-boundary-boxes';
 const LOCAL_ONX_IMPORT_CURSOR_KEY = 'family-land-onx-import-cursor';
 const LOCAL_ONX_IMPORTED_SIGNATURES_KEY = 'family-land-onx-imported-signatures';
+const LOCAL_SIMPLE_MORE_TOOLS_OPEN_KEY = 'family-land-simple-more-tools-open';
 const TRAIL_META_PREFIX = '[trail-plan]';
 const ATTACHMENTS_META_PREFIX = '[feature-attachments]';
 const VISUAL_META_PREFIX = '[feature-visual]';
@@ -171,7 +172,7 @@ const DEFAULT_TRAIL_WIDTH = 1;
 const DEFAULT_TRAIL_PATTERN: 'solid' | 'dashed' | 'dotted' = 'solid';
 const PROPERTY_FOCUS_PADDING_PERCENT = 8;
 const MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT = 2;
-const MAP_MIN_ZOOM_PERCENT = 100;
+const MAP_MIN_ZOOM_PERCENT = 70;
 const MAP_DEFAULT_MAX_ZOOM_PERCENT = 350;
 
 const intersectBounds = (first: MapContentBounds, second: MapContentBounds): MapContentBounds | null => {
@@ -962,7 +963,7 @@ export default function PropertyMapPage() {
     const [mockGpsPlaybackIndex, setMockGpsPlaybackIndex] = useState(0);
     const [mockGpsEnabled, setMockGpsEnabled] = useState(false);
     const mockGpsTimerRef = useRef<number | null>(null);
-    const [mapZoomPercent, setMapZoomPercent] = useState(145);
+    const [mapZoomPercent, setMapZoomPercent] = useState(100);
     const [lockToImageBounds, setLockToImageBounds] = useState(true);
     const [keepPropertyFramed, setKeepPropertyFramed] = useState(true);
     const [isBoundaryBoxMode, setIsBoundaryBoxMode] = useState(false);
@@ -982,6 +983,7 @@ export default function PropertyMapPage() {
     const [simpleLayout, setSimpleLayout] = useState(true);
     const [isMobileViewport, setIsMobileViewport] = useState(false);
     const [isTrailFieldMode, setIsTrailFieldMode] = useState(false);
+    const [isSimpleMoreToolsOpen, setIsSimpleMoreToolsOpen] = useState(false);
     const [savingMap, setSavingMap] = useState(false);
     const [savingFeature, setSavingFeature] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1076,6 +1078,17 @@ export default function PropertyMapPage() {
         return gpsAccuracyMetersToPercent(liveGps.accuracyMeters, activeCalibration);
     }, [liveGps, activeCalibration]);
 
+    const gpsInsideBoundary = useMemo(() => {
+        if (!gpsMapPoint || gpsMapPoint.clamped || !propertyBoundaryBox) return null;
+        const normalizedBoundary = normalizeBoundaryBox(propertyBoundaryBox);
+        return (
+            gpsMapPoint.x >= normalizedBoundary.nw.x &&
+            gpsMapPoint.x <= normalizedBoundary.se.x &&
+            gpsMapPoint.y >= normalizedBoundary.nw.y &&
+            gpsMapPoint.y <= normalizedBoundary.se.y
+        );
+    }, [gpsMapPoint, propertyBoundaryBox]);
+
     const gpsConfidence = useMemo(() => {
         if (!liveGps) return null;
         return gpsConfidenceFromAccuracy(liveGps.accuracyMeters);
@@ -1092,8 +1105,8 @@ export default function PropertyMapPage() {
         }
 
         const rawRatio = mapImageNaturalSize.width / mapImageNaturalSize.height;
-        const minRatio = isMobileViewport ? 0.82 : 1.1;
-        const maxRatio = isMobileViewport ? 1.85 : 2.25;
+        const minRatio = isMobileViewport ? 0.7 : 0.75;
+        const maxRatio = isMobileViewport ? 1.65 : 2.1;
         return clamp(rawRatio, minRatio, maxRatio);
     }, [displayImageUrl, mapImageNaturalSize, mapImageFitMode, isMobileViewport]);
 
@@ -2572,6 +2585,18 @@ export default function PropertyMapPage() {
         };
     }, [onxAutoImportEnabled, onxAutoImportIntervalSec, selectedMap?.id, activeCalibration, onxAutoArchiveEnabled]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const raw = window.localStorage.getItem(LOCAL_SIMPLE_MORE_TOOLS_OPEN_KEY);
+        if (!raw) return;
+        setIsSimpleMoreToolsOpen(raw === '1');
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem(LOCAL_SIMPLE_MORE_TOOLS_OPEN_KEY, isSimpleMoreToolsOpen ? '1' : '0');
+    }, [isSimpleMoreToolsOpen]);
+
     const saveCalibration = () => {
         if (!selectedMap?.id) {
             setError('Create or select a property map first.');
@@ -3999,6 +4024,16 @@ export default function PropertyMapPage() {
                             Projected point clamped to the nearest valid map edge so the marker still appears on the canvas.
                         </div>
                     )}
+                    {gpsInsideBoundary === true && (
+                        <div style={{ color: '#86efac', fontSize: '0.86rem' }}>
+                            Boundary status: You are inside the saved property boundary.
+                        </div>
+                    )}
+                    {gpsInsideBoundary === false && (
+                        <div style={{ color: '#fca5a5', fontSize: '0.86rem', fontWeight: 600 }}>
+                            Boundary alert: You are outside the saved property boundary.
+                        </div>
+                    )}
                 </div>
 
                 {!simpleLayout && (
@@ -4151,6 +4186,133 @@ export default function PropertyMapPage() {
                             One-thumb controls are pinned to the bottom of the screen. Tap the map to set points, then use Add Tap Point or Add GPS Point.
                         </div>
                     </div>
+                ) : simpleLayout ? (
+                    <div style={{ display: 'grid', gap: '0.5rem' }}>
+                        <div style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={zoomToAcreageView}
+                                style={{ borderColor: '#38bdf8' }}
+                            >
+                                Fit full property
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={locateMeOnMap}
+                                disabled={!isGpsTracking}
+                            >
+                                Center me
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={isWalkTrailRecording ? stopWalkTrailRecording : startWalkTrailRecording}
+                                disabled={!isGpsTracking && !isWalkTrailRecording}
+                                style={isWalkTrailRecording ? { borderColor: '#ef4444', color: '#fecaca' } : undefined}
+                            >
+                                {isWalkTrailRecording ? 'Stop recording trail' : 'Record trail'}
+                            </button>
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={saveWalkedTrailNow}
+                                disabled={trailDraftPoints.length < 2 || savingFeature}
+                                style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
+                            >
+                                Save trail
+                            </button>
+                        </div>
+
+                        <details
+                            open={isSimpleMoreToolsOpen}
+                            onToggle={event => setIsSimpleMoreToolsOpen((event.currentTarget as HTMLDetailsElement).open)}
+                            style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.45rem 0.55rem', background: 'rgba(15, 23, 42, 0.6)' }}
+                        >
+                            <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem' }}>More tools</summary>
+                            <div style={{ height: 8 }} />
+                            <div style={{ display: 'grid', gap: '0.45rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={recenterToPropertyFrame}
+                                >
+                                    Recenter map
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => {
+                                        setIsTrailPlanning(prev => !prev);
+                                        setIsTrailEditMode(false);
+                                        setFeatureType('trail');
+                                    }}
+                                    style={{ borderColor: isTrailPlanning ? '#22c55e' : '#475569', color: isTrailPlanning ? '#bbf7d0' : '#cbd5e1' }}
+                                >
+                                    {isTrailPlanning ? 'Trail planning on' : 'Trail planning'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={addLastClickPointToTrailDraft}
+                                >
+                                    Add tap point
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={addCurrentGpsPointToTrailDraft}
+                                    disabled={!liveGps || !gpsMapPoint}
+                                >
+                                    Add GPS point
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => setAutoFollowGps(prev => !prev)}
+                                    style={{ borderColor: autoFollowGps ? '#22c55e' : '#475569', color: autoFollowGps ? '#bbf7d0' : '#cbd5e1' }}
+                                >
+                                    {autoFollowGps ? 'Auto-follow on' : 'Auto-follow off'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={toggleBoundaryBoxMode}
+                                    style={{ borderColor: isBoundaryBoxMode ? '#f59e0b' : '#475569', color: isBoundaryBoxMode ? '#fde68a' : '#cbd5e1' }}
+                                >
+                                    {isBoundaryBoxMode ? 'Cancel boundary mode' : 'Set property boundary box'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={saveBoundaryBoxDraft}
+                                    disabled={!isBoundaryBoxMode || !boundaryBoxDraft}
+                                    style={{ borderColor: boundaryBoxDraft ? '#22c55e' : '#475569', color: boundaryBoxDraft ? '#bbf7d0' : '#cbd5e1' }}
+                                >
+                                    Save boundary box
+                                </button>
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={clearBoundaryBox}
+                                    disabled={!propertyBoundaryBox && !isBoundaryBoxMode}
+                                >
+                                    Clear boundary box
+                                </button>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', border: '1px solid #334155', borderRadius: 8, padding: '0.2rem 0.35rem' }}>
+                                    <button type="button" className="soft-button" onClick={() => adjustMapZoom(-10)}>-</button>
+                                    <span style={{ fontSize: '0.88rem', opacity: 0.84, minWidth: 68, textAlign: 'center' }}>Zoom {mapZoomPercent}%</span>
+                                    <button type="button" className="soft-button" onClick={() => adjustMapZoom(10)}>+</button>
+                                </div>
+                                {trailDraftPoints.length > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', opacity: 0.8, fontSize: '0.9rem' }}>
+                                        Draft points: {trailDraftPoints.length}
+                                    </div>
+                                )}
+                            </div>
+                        </details>
+                    </div>
                 ) : (
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                         <button
@@ -4159,7 +4321,7 @@ export default function PropertyMapPage() {
                             onClick={zoomToAcreageView}
                             style={{ borderColor: mapImageFitMode === 'contain' ? '#38bdf8' : '#475569' }}
                         >
-                            Full acreage view
+                            Fit full property
                         </button>
                         <button
                             type="button"
@@ -4167,7 +4329,14 @@ export default function PropertyMapPage() {
                             onClick={() => setMapImageFitMode('cover')}
                             style={{ borderColor: mapImageFitMode === 'cover' ? '#38bdf8' : '#475569' }}
                         >
-                            Fill canvas
+                            Fill screen (crop edges)
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={recenterToPropertyFrame}
+                        >
+                            Recenter map
                         </button>
                         <button
                             type="button"
@@ -4209,11 +4378,11 @@ export default function PropertyMapPage() {
                         )}
                         {!isWalkTrailRecording ? (
                             <button type="button" className="soft-button" onClick={startWalkTrailRecording} disabled={!isGpsTracking}>
-                                Start walk-to-map trail
+                                Start recording trail
                             </button>
                         ) : (
                             <button type="button" className="soft-button" onClick={stopWalkTrailRecording} style={{ borderColor: '#ef4444', color: '#fecaca' }}>
-                                Stop walk trail
+                                Stop recording trail
                             </button>
                         )}
                         {!simpleLayout && (
@@ -4234,7 +4403,7 @@ export default function PropertyMapPage() {
                             disabled={trailDraftPoints.length < 2 || savingFeature}
                             style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
                         >
-                            Save walked trail now
+                            Save trail now
                         </button>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                             <input type="checkbox" checked={autoFollowGps} onChange={e => setAutoFollowGps(e.target.checked)} />
@@ -4386,8 +4555,8 @@ export default function PropertyMapPage() {
                         position: 'relative',
                         width: '100%',
                         aspectRatio: String(mapCanvasAspectRatio),
-                        minHeight: isMobileViewport ? 360 : 420,
-                        maxHeight: isMobileViewport ? '78vh' : '72vh',
+                        minHeight: isMobileViewport ? 380 : 520,
+                        maxHeight: isMobileViewport ? '82vh' : '84vh',
                         borderRadius: 14,
                         border: '1px solid #334155',
                         background: 'linear-gradient(145deg, #0b1220, #13213e)',
@@ -4670,7 +4839,7 @@ export default function PropertyMapPage() {
                             )}
                         </svg>
 
-                        {liveGps && gpsMapPoint && (
+                        {!simpleLayout && liveGps && gpsMapPoint && (
                             <div style={{ position: 'absolute', top: 12, right: 12, width: 'min(280px, 48vw)', border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', background: 'rgba(2, 6, 23, 0.86)', boxShadow: '0 10px 40px rgba(2, 6, 23, 0.35)', display: 'grid', gap: '0.34rem', fontSize: '0.78rem', zIndex: 6 }}>
                                 <div style={{ fontWeight: 700, color: '#e2e8f0' }}>GPS Debug</div>
                                 <div style={{ color: '#cbd5e1' }}>Raw GPS: {liveGps.lat.toFixed(6)}, {liveGps.lng.toFixed(6)}</div>
