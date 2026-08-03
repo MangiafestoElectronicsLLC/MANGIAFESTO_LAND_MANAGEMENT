@@ -170,6 +170,10 @@ const DEFAULT_TRAIL_COLOR = '#22d3ee';
 const DEFAULT_TRAIL_WIDTH = 1;
 const DEFAULT_TRAIL_PATTERN: 'solid' | 'dashed' | 'dotted' = 'solid';
 const PROPERTY_FOCUS_PADDING_PERCENT = 8;
+const MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT = 2;
+const MAP_MIN_ZOOM_PERCENT = 100;
+const MAP_DEFAULT_MAX_ZOOM_PERCENT = 350;
+const MAP_BOUNDARY_MAX_ZOOM_PERCENT = 700;
 
 const intersectBounds = (first: MapContentBounds, second: MapContentBounds): MapContentBounds | null => {
     const minX = Math.max(first.minX, second.minX);
@@ -802,7 +806,7 @@ const buildMapTransform = (
     followPoint: { x: number; y: number } | null,
     contentBounds: MapContentBounds | null
 ) => {
-    const scale = clamp(zoomPercent, 100, 350) / 100;
+    const scale = clamp(zoomPercent, MAP_MIN_ZOOM_PERCENT, MAP_BOUNDARY_MAX_ZOOM_PERCENT) / 100;
 
     if (!followPoint) {
         return {
@@ -1149,10 +1153,10 @@ export default function PropertyMapPage() {
     const propertyFocusBounds = useMemo(() => {
         if (propertyBoundaryBox) {
             const normalized = normalizeBoundaryBox(propertyBoundaryBox);
-            const minX = clamp(normalized.nw.x - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
-            const maxX = clamp(normalized.se.x + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
-            const minY = clamp(normalized.nw.y - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
-            const maxY = clamp(normalized.se.y + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100);
+            const minX = clamp(normalized.nw.x - MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100);
+            const maxX = clamp(normalized.se.x + MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100);
+            const minY = clamp(normalized.nw.y - MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100);
+            const maxY = clamp(normalized.se.y + MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100);
 
             if (maxX - minX >= 6 && maxY - minY >= 6) {
                 return { minX, maxX, minY, maxY } as MapContentBounds;
@@ -1209,6 +1213,13 @@ export default function PropertyMapPage() {
 
         return { minX, maxX, minY, maxY } as MapContentBounds;
     }, [propertyBoundaryBox, features, savedTrails, trailDraftPoints, gpsMapPoint]);
+
+    const mapZoomMaxPercent = propertyBoundaryBox ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT;
+
+    useEffect(() => {
+        if (propertyBoundaryBox) return;
+        setMapZoomPercent(prev => clamp(prev, MAP_MIN_ZOOM_PERCENT, MAP_DEFAULT_MAX_ZOOM_PERCENT));
+    }, [propertyBoundaryBox]);
 
     const mapTransform = useMemo(() => {
         let followPoint = autoFollowGps && isGpsTracking && gpsMapPoint
@@ -2177,7 +2188,7 @@ export default function PropertyMapPage() {
     };
 
     const getPropertyFitZoomPercent = (bounds: MapContentBounds | null, mode: 'contain' | 'cover' = 'contain') => {
-        if (!bounds) return 100;
+        if (!bounds) return MAP_MIN_ZOOM_PERCENT;
         const width = Math.max(12, bounds.maxX - bounds.minX);
         const height = Math.max(12, bounds.maxY - bounds.minY);
         const scaleToFitWidth = 100 / width;
@@ -2185,8 +2196,8 @@ export default function PropertyMapPage() {
         const targetScale = mode === 'cover'
             ? Math.max(scaleToFitWidth, scaleToFitHeight)
             : Math.min(scaleToFitWidth, scaleToFitHeight);
-        const scalePadding = mode === 'cover' ? 102 : 94;
-        return clamp(Math.round(targetScale * scalePadding), 100, 350);
+        const scalePadding = mode === 'cover' ? 100 : 94;
+        return clamp(Math.round(targetScale * scalePadding), MAP_MIN_ZOOM_PERCENT, mapZoomMaxPercent);
     };
 
     const recenterToPropertyFrame = () => {
@@ -2206,10 +2217,10 @@ export default function PropertyMapPage() {
 
         const normalized = normalizeBoundaryBox(boundaryBoxDraft);
         const targetBounds: MapContentBounds = {
-            minX: clamp(normalized.nw.x - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
-            maxX: clamp(normalized.se.x + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
-            minY: clamp(normalized.nw.y - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
-            maxY: clamp(normalized.se.y + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100)
+            minX: clamp(normalized.nw.x - MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100),
+            maxX: clamp(normalized.se.x + MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100),
+            minY: clamp(normalized.nw.y - MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100),
+            maxY: clamp(normalized.se.y + MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT, 0, 100)
         };
 
         setPropertyBoundaryBox(normalized);
@@ -2226,7 +2237,7 @@ export default function PropertyMapPage() {
     };
 
     const adjustMapZoom = (delta: number) => {
-        setMapZoomPercent(prev => clamp(prev + delta, 100, 350));
+        setMapZoomPercent(prev => clamp(prev + delta, MAP_MIN_ZOOM_PERCENT, mapZoomMaxPercent));
     };
 
     const zoomToAcreageView = () => {
@@ -4279,11 +4290,11 @@ export default function PropertyMapPage() {
                             <span style={{ fontSize: '0.88rem', opacity: 0.82 }}>Fine zoom</span>
                             <input
                                 type="range"
-                                min={100}
-                                max={350}
+                                min={MAP_MIN_ZOOM_PERCENT}
+                                max={mapZoomMaxPercent}
                                 step={5}
                                 value={mapZoomPercent}
-                                onChange={e => setMapZoomPercent(Number(e.target.value))}
+                                onChange={e => setMapZoomPercent(clamp(Number(e.target.value), MAP_MIN_ZOOM_PERCENT, mapZoomMaxPercent))}
                             />
                         </label>
                         <button type="button" className="soft-button" onClick={() => setMapZoomPercent(145)}>
