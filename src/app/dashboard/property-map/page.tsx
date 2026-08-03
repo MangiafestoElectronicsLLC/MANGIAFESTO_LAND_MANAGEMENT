@@ -173,7 +173,7 @@ const PROPERTY_FOCUS_PADDING_PERCENT = 8;
 const MANUAL_BOUNDARY_FOCUS_PADDING_PERCENT = 2;
 const MAP_MIN_ZOOM_PERCENT = 100;
 const MAP_DEFAULT_MAX_ZOOM_PERCENT = 350;
-const MAP_BOUNDARY_MAX_ZOOM_PERCENT = 700;
+const MAP_BOUNDARY_MAX_ZOOM_PERCENT = 1200;
 
 const intersectBounds = (first: MapContentBounds, second: MapContentBounds): MapContentBounds | null => {
     const minX = Math.max(first.minX, second.minX);
@@ -1214,7 +1214,7 @@ export default function PropertyMapPage() {
         return { minX, maxX, minY, maxY } as MapContentBounds;
     }, [propertyBoundaryBox, features, savedTrails, trailDraftPoints, gpsMapPoint]);
 
-    const mapZoomMaxPercent = propertyBoundaryBox ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT;
+    const mapZoomMaxPercent = (propertyBoundaryBox || boundaryBoxDraft) ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT;
 
     useEffect(() => {
         if (propertyBoundaryBox) return;
@@ -2187,17 +2187,22 @@ export default function PropertyMapPage() {
         setStatusMessage('Manual property boundary box cleared.');
     };
 
-    const getPropertyFitZoomPercent = (bounds: MapContentBounds | null, mode: 'contain' | 'cover' = 'contain') => {
+    const getPropertyFitZoomPercent = (
+        bounds: MapContentBounds | null,
+        mode: 'contain' | 'cover' = 'contain',
+        maxZoomPercent: number = mapZoomMaxPercent
+    ) => {
         if (!bounds) return MAP_MIN_ZOOM_PERCENT;
-        const width = Math.max(12, bounds.maxX - bounds.minX);
-        const height = Math.max(12, bounds.maxY - bounds.minY);
+        const minDimensionPercent = mode === 'cover' ? 2 : 12;
+        const width = Math.max(minDimensionPercent, bounds.maxX - bounds.minX);
+        const height = Math.max(minDimensionPercent, bounds.maxY - bounds.minY);
         const scaleToFitWidth = 100 / width;
         const scaleToFitHeight = 100 / height;
         const targetScale = mode === 'cover'
             ? Math.max(scaleToFitWidth, scaleToFitHeight)
             : Math.min(scaleToFitWidth, scaleToFitHeight);
-        const scalePadding = mode === 'cover' ? 100 : 94;
-        return clamp(Math.round(targetScale * scalePadding), MAP_MIN_ZOOM_PERCENT, mapZoomMaxPercent);
+        const scalePadding = mode === 'cover' ? 101 : 94;
+        return clamp(Math.round(targetScale * scalePadding), MAP_MIN_ZOOM_PERCENT, maxZoomPercent);
     };
 
     const recenterToPropertyFrame = () => {
@@ -2205,7 +2210,16 @@ export default function PropertyMapPage() {
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
         const fitMode: 'contain' | 'cover' = propertyBoundaryBox ? 'cover' : 'contain';
-        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds, fitMode));
+        if (fitMode === 'cover') {
+            setMapImageFitMode('cover');
+        }
+        setMapZoomPercent(
+            getPropertyFitZoomPercent(
+                propertyFocusBounds,
+                fitMode,
+                fitMode === 'cover' ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT
+            )
+        );
         setStatusMessage('Map recentered to the full property frame.');
     };
 
@@ -2231,7 +2245,7 @@ export default function PropertyMapPage() {
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
         setAutoFollowGps(false);
-        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds, 'cover'));
+        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds, 'cover', MAP_BOUNDARY_MAX_ZOOM_PERCENT));
         setError(null);
         setStatusMessage('Property boundary box saved and fit to full canvas.');
     };
@@ -2634,7 +2648,13 @@ export default function PropertyMapPage() {
         setMapImageOffsetYPercent(0);
         setKeepPropertyFramed(true);
         setLockToImageBounds(true);
-        setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds, hasManualBoundary ? 'cover' : 'contain'));
+        setMapZoomPercent(
+            getPropertyFitZoomPercent(
+                propertyFocusBounds,
+                hasManualBoundary ? 'cover' : 'contain',
+                hasManualBoundary ? MAP_BOUNDARY_MAX_ZOOM_PERCENT : MAP_DEFAULT_MAX_ZOOM_PERCENT
+            )
+        );
         setError(null);
         setStatusMessage(hasManualBoundary
             ? 'Canvas fit reset and matched to your saved boundary using full-canvas framing.'
