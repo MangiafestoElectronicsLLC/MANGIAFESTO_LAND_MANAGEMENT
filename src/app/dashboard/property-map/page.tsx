@@ -964,6 +964,7 @@ export default function PropertyMapPage() {
     const [keepPropertyFramed, setKeepPropertyFramed] = useState(true);
     const [isBoundaryBoxMode, setIsBoundaryBoxMode] = useState(false);
     const [boundaryBoxFirstPoint, setBoundaryBoxFirstPoint] = useState<MapPercentPoint | null>(null);
+    const [boundaryBoxDraft, setBoundaryBoxDraft] = useState<PropertyBoundaryBox | null>(null);
     const [propertyBoundaryBox, setPropertyBoundaryBox] = useState<PropertyBoundaryBox | null>(null);
     const [breadcrumbPoints, setBreadcrumbPoints] = useState<TrailPoint[]>([]);
     const [isBreadcrumbTracking, setIsBreadcrumbTracking] = useState(false);
@@ -1638,6 +1639,7 @@ export default function PropertyMapPage() {
         const storedBoundaryBox = readLocalPropertyBoundaryBoxes()[selectedMap.id];
         setPropertyBoundaryBox(storedBoundaryBox ? normalizeBoundaryBox(storedBoundaryBox) : null);
         setBoundaryBoxFirstPoint(null);
+        setBoundaryBoxDraft(null);
         setIsBoundaryBoxMode(false);
 
         const storedCalibration = readLocalCalibrations()[selectedMap.id];
@@ -2021,21 +2023,19 @@ export default function PropertyMapPage() {
 
         if (!boundaryBoxFirstPoint) {
             setBoundaryBoxFirstPoint({ x: point.x, y: point.y });
+            setBoundaryBoxDraft(null);
             setError(null);
             setStatusMessage('Boundary step 1 set (NW corner). Tap SE corner to finish property boundary box.');
             return true;
         }
 
-        const nextBox = normalizeBoundaryBox({
+        const nextDraft = normalizeBoundaryBox({
             nw: boundaryBoxFirstPoint,
             se: { x: point.x, y: point.y }
         });
-        setPropertyBoundaryBox(nextBox);
-        setBoundaryBoxFirstPoint(null);
-        setIsBoundaryBoxMode(false);
-        setKeepPropertyFramed(true);
+        setBoundaryBoxDraft(nextDraft);
         setError(null);
-        setStatusMessage('Property boundary box saved. Framing now prioritizes this rectangle.');
+        setStatusMessage('Boundary step 2 set (SE corner). Click Save boundary box to apply framing, or tap again to adjust SE corner.');
         return true;
     };
 
@@ -2156,10 +2156,12 @@ export default function PropertyMapPage() {
             const next = !prev;
             if (next) {
                 setBoundaryBoxFirstPoint(null);
+                setBoundaryBoxDraft(null);
                 setError(null);
                 setStatusMessage('Boundary mode on: tap NW corner, then tap SE corner.');
             } else {
                 setBoundaryBoxFirstPoint(null);
+                setBoundaryBoxDraft(null);
                 setStatusMessage('Boundary mode canceled.');
             }
             return next;
@@ -2169,6 +2171,7 @@ export default function PropertyMapPage() {
     const clearBoundaryBox = () => {
         setPropertyBoundaryBox(null);
         setBoundaryBoxFirstPoint(null);
+        setBoundaryBoxDraft(null);
         setIsBoundaryBoxMode(false);
         setStatusMessage('Manual property boundary box cleared.');
     };
@@ -2187,6 +2190,32 @@ export default function PropertyMapPage() {
         setLockToImageBounds(true);
         setMapZoomPercent(getPropertyFitZoomPercent(propertyFocusBounds));
         setStatusMessage('Map recentered to the full property frame.');
+    };
+
+    const saveBoundaryBoxDraft = () => {
+        if (!boundaryBoxDraft) {
+            setError('Set NW and SE corners first, then click Save boundary box.');
+            return;
+        }
+
+        const normalized = normalizeBoundaryBox(boundaryBoxDraft);
+        const targetBounds: MapContentBounds = {
+            minX: clamp(normalized.nw.x - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
+            maxX: clamp(normalized.se.x + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
+            minY: clamp(normalized.nw.y - PROPERTY_FOCUS_PADDING_PERCENT, 0, 100),
+            maxY: clamp(normalized.se.y + PROPERTY_FOCUS_PADDING_PERCENT, 0, 100)
+        };
+
+        setPropertyBoundaryBox(normalized);
+        setBoundaryBoxFirstPoint(null);
+        setBoundaryBoxDraft(null);
+        setIsBoundaryBoxMode(false);
+        setKeepPropertyFramed(true);
+        setLockToImageBounds(true);
+        setAutoFollowGps(false);
+        setMapZoomPercent(getPropertyFitZoomPercent(targetBounds));
+        setError(null);
+        setStatusMessage('Property boundary box saved and fit to boundary.');
     };
 
     const adjustMapZoom = (delta: number) => {
@@ -4094,9 +4123,11 @@ export default function PropertyMapPage() {
 
                 {isBoundaryBoxMode && (
                     <div style={{ border: '1px solid #f59e0b', borderRadius: 10, padding: '0.5rem 0.6rem', background: 'rgba(120, 53, 15, 0.36)', color: '#fde68a', fontSize: '0.86rem' }}>
-                        {boundaryBoxFirstPoint
-                            ? 'Boundary mode step 2: tap the SE property corner to finish the boundary box.'
-                            : 'Boundary mode step 1: tap the NW property corner.'}
+                        {!boundaryBoxFirstPoint
+                            ? 'Boundary mode step 1: tap the NW property corner.'
+                            : boundaryBoxDraft
+                                ? 'Boundary mode step 3: click Save boundary box to apply and fit to this boundary.'
+                                : 'Boundary mode step 2: tap the SE property corner.'}
                     </div>
                 )}
 
@@ -4219,6 +4250,15 @@ export default function PropertyMapPage() {
                             disabled={!propertyBoundaryBox && !isBoundaryBoxMode}
                         >
                             Clear boundary box
+                        </button>
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={saveBoundaryBoxDraft}
+                            disabled={!isBoundaryBoxMode || !boundaryBoxDraft}
+                            style={{ borderColor: boundaryBoxDraft ? '#22c55e' : '#475569', color: boundaryBoxDraft ? '#bbf7d0' : '#cbd5e1' }}
+                        >
+                            Save boundary box
                         </button>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', border: '1px solid #334155', borderRadius: 8, padding: '0.2rem 0.35rem' }}>
                             <button type="button" className="soft-button" onClick={() => adjustMapZoom(-15)}>-</button>
@@ -4442,6 +4482,22 @@ export default function PropertyMapPage() {
                                     <circle cx={boundaryBoxFirstPoint.x} cy={boundaryBoxFirstPoint.y} r={1.2} fill="#f59e0b" stroke="#f8fafc" strokeWidth={0.25} />
                                     <circle cx={boundaryBoxFirstPoint.x} cy={boundaryBoxFirstPoint.y} r={2} fill="none" stroke="#fbbf24" strokeWidth={0.22} strokeDasharray="0.82 0.82" />
                                     <text x={boundaryBoxFirstPoint.x + 0.6} y={boundaryBoxFirstPoint.y - 0.6} fontSize="1.05" fill="#fde68a">NW set</text>
+                                </g>
+                            )}
+
+                            {isBoundaryBoxMode && boundaryBoxDraft && (
+                                <g>
+                                    <rect
+                                        x={boundaryBoxDraft.nw.x}
+                                        y={boundaryBoxDraft.nw.y}
+                                        width={Math.max(0.2, boundaryBoxDraft.se.x - boundaryBoxDraft.nw.x)}
+                                        height={Math.max(0.2, boundaryBoxDraft.se.y - boundaryBoxDraft.nw.y)}
+                                        fill="rgba(245, 158, 11, 0.08)"
+                                        stroke="#f59e0b"
+                                        strokeWidth={0.55}
+                                        strokeDasharray="1.15 0.78"
+                                    />
+                                    <text x={boundaryBoxDraft.nw.x + 0.65} y={boundaryBoxDraft.nw.y + 1.4} fontSize="1.02" fill="#fde68a">Draft boundary</text>
                                 </g>
                             )}
 
@@ -5476,6 +5532,15 @@ export default function PropertyMapPage() {
                             Clear Boundary
                         </button>
                     </div>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={saveBoundaryBoxDraft}
+                        disabled={!isBoundaryBoxMode || !boundaryBoxDraft}
+                        style={{ minHeight: 44, fontWeight: 700, borderColor: boundaryBoxDraft ? '#22c55e' : '#475569', color: boundaryBoxDraft ? '#bbf7d0' : '#e2e8f0' }}
+                    >
+                        Save Boundary
+                    </button>
                 </div>
             )}
         </div>
