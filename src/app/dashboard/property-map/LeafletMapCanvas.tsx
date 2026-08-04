@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
-import { Circle, CircleMarker, MapContainer, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { useEffect, useRef } from 'react';
+import { Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { boundaryCenter } from './boundary-manager';
 import {
@@ -37,9 +37,69 @@ type Props = {
     liveGps: GpsFix | null;
     autoFollow: boolean;
     basemapMode: BasemapMode;
+    boundaryEditEnabled: boolean;
+    onBoundaryDraftPointDrag: (index: number, position: LatLngTuple) => void;
+    onBoundaryDraftInsertFromMidpoint: (edgeIndex: number, position: LatLngTuple) => number;
     onMapClick: (position: LatLngTuple) => void;
     onMapReady: (actions: MapActions) => void;
 };
+
+const boundaryHandleIcon = L.divIcon({
+    className: 'boundary-handle-icon',
+    html: '<span style="display:block;width:14px;height:14px;border-radius:50%;background:#f59e0b;border:2px solid #111827;box-shadow:0 0 0 2px rgba(255,255,255,0.5);"></span>',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+});
+
+const boundaryMidpointIcon = L.divIcon({
+    className: 'boundary-midpoint-icon',
+    html: '<span style="display:block;width:12px;height:12px;border-radius:50%;background:#38bdf8;border:2px solid #0f172a;box-shadow:0 0 0 2px rgba(255,255,255,0.5);"></span>',
+    iconSize: [12, 12],
+    iconAnchor: [6, 6]
+});
+
+function BoundaryMidpointHandle({
+    edgeIndex,
+    position,
+    onBoundaryDraftInsertFromMidpoint,
+    onBoundaryDraftPointDrag
+}: {
+    edgeIndex: number;
+    position: LatLngTuple;
+    onBoundaryDraftInsertFromMidpoint: (edgeIndex: number, position: LatLngTuple) => number;
+    onBoundaryDraftPointDrag: (index: number, position: LatLngTuple) => void;
+}) {
+    const insertedIndexRef = useRef<number | null>(null);
+
+    return (
+        <Marker
+            position={position}
+            icon={boundaryMidpointIcon}
+            draggable
+            eventHandlers={{
+                dragstart: event => {
+                    const current = event.target.getLatLng();
+                    insertedIndexRef.current = onBoundaryDraftInsertFromMidpoint(edgeIndex, [current.lat, current.lng]);
+                },
+                drag: event => {
+                    if (insertedIndexRef.current === null) return;
+                    const current = event.target.getLatLng();
+                    onBoundaryDraftPointDrag(insertedIndexRef.current, [current.lat, current.lng]);
+                },
+                dragend: event => {
+                    if (insertedIndexRef.current === null) return;
+                    const current = event.target.getLatLng();
+                    onBoundaryDraftPointDrag(insertedIndexRef.current, [current.lat, current.lng]);
+                    insertedIndexRef.current = null;
+                }
+            }}
+        >
+            <Tooltip direction="top" offset={[0, -8]}>
+                Drag to add corner
+            </Tooltip>
+        </Marker>
+    );
+}
 
 function MapInteractions({ onMapClick }: { onMapClick: (position: LatLngTuple) => void }) {
     useMapEvents({
@@ -114,6 +174,9 @@ export default function LeafletMapCanvas({
     liveGps,
     autoFollow,
     basemapMode,
+    boundaryEditEnabled,
+    onBoundaryDraftPointDrag,
+    onBoundaryDraftInsertFromMidpoint,
     onMapClick,
     onMapReady
 }: Props) {
@@ -151,6 +214,43 @@ export default function LeafletMapCanvas({
                     pathOptions={{ color: '#f59e0b', weight: 3, dashArray: '6 10' }}
                 />
             )}
+
+            {boundaryEditEnabled &&
+                boundaryDraft.map((point, index) => (
+                    <Marker
+                        key={`boundary-handle-${index}`}
+                        position={point}
+                        icon={boundaryHandleIcon}
+                        draggable
+                        eventHandlers={{
+                            dragend: event => {
+                                const next = event.target.getLatLng();
+                                onBoundaryDraftPointDrag(index, [next.lat, next.lng]);
+                            }
+                        }}
+                    >
+                        <Tooltip direction="top" offset={[0, -8]}>
+                            Corner {index + 1}
+                        </Tooltip>
+                    </Marker>
+                ))}
+
+            {boundaryEditEnabled &&
+                boundaryDraft.length >= 3 &&
+                boundaryDraft.map((point, index) => {
+                    const next = boundaryDraft[(index + 1) % boundaryDraft.length];
+                    const midpoint: LatLngTuple = [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2];
+
+                    return (
+                        <BoundaryMidpointHandle
+                            key={`boundary-midpoint-${index}`}
+                            edgeIndex={index}
+                            position={midpoint}
+                            onBoundaryDraftInsertFromMidpoint={onBoundaryDraftInsertFromMidpoint}
+                            onBoundaryDraftPointDrag={onBoundaryDraftPointDrag}
+                        />
+                    );
+                })}
 
             {trails.map(trail => (
                 <Polyline

@@ -108,6 +108,14 @@ const buildElevationPath = (series: Array<{ distanceMeters: number; altitudeMete
         .join(' ');
 };
 
+const metersToLat = (meters: number) => meters / 111320;
+
+const metersToLng = (meters: number, atLatitude: number) => {
+    const cosLat = Math.cos((atLatitude * Math.PI) / 180);
+    const denominator = Math.max(0.0001, 111320 * Math.abs(cosLat));
+    return meters / denominator;
+};
+
 export default function PropertyMapWorkspace() {
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState('Loading property map...');
@@ -375,6 +383,35 @@ export default function PropertyMapWorkspace() {
         mapActionsRef.current = actions;
     }, []);
 
+    const onBoundaryDraftPointDrag = useCallback((index: number, position: LatLngTuple) => {
+        setBoundaryDraft(previous => {
+            if (index < 0 || index >= previous.length) return previous;
+            return previous.map((point, pointIndex) => (pointIndex === index ? position : point));
+        });
+        setStatus(`Moved boundary corner ${index + 1}. Save Boundary Polygon when alignment looks right.`);
+    }, []);
+
+    const onBoundaryDraftInsertFromMidpoint = useCallback((edgeIndex: number, position: LatLngTuple) => {
+        let insertedIndex = -1;
+
+        setBoundaryDraft(previous => {
+            if (previous.length < 3) return previous;
+
+            const safeEdgeIndex = Math.max(0, Math.min(edgeIndex, previous.length - 1));
+            insertedIndex = safeEdgeIndex + 1;
+
+            const next = [...previous];
+            next.splice(insertedIndex, 0, position);
+            return next;
+        });
+
+        if (insertedIndex >= 0) {
+            setStatus(`Added boundary corner ${insertedIndex + 1}. Drag to fine-tune, then save boundary.`);
+        }
+
+        return insertedIndex;
+    }, []);
+
     const onMapClick = (position: LatLngTuple) => {
         setError(null);
 
@@ -639,6 +676,72 @@ export default function PropertyMapWorkspace() {
         window.location.reload();
     };
 
+    const retrySupabaseConnection = () => {
+        setStatus('Retrying Supabase connection...');
+        setError(null);
+        window.location.reload();
+    };
+
+    const loadCurrentBoundaryIntoDraft = () => {
+        if (boundary.polygon.length < 3) {
+            setError('Current boundary is not available yet.');
+            return;
+        }
+
+        setBoundaryDraft(boundary.polygon.map(point => [point[0], point[1]]));
+        setToolMode('boundary');
+        setStatus('Loaded current boundary into draft. Use nudge/resize controls and save when aligned.');
+    };
+
+    const toggleBoundaryEditMode = () => {
+        setToolMode(previous => {
+            if (previous === 'boundary') {
+                setStatus('Boundary edit mode off.');
+                return 'idle';
+            }
+
+            if (boundaryDraft.length < 3 && boundary.polygon.length >= 3) {
+                setBoundaryDraft(boundary.polygon.map(point => [point[0], point[1]]));
+                setStatus('Boundary edit mode on. Drag corner handles directly on map and save when ready.');
+            } else {
+                setStatus('Boundary edit mode on. Drag corner handles directly on map and save when ready.');
+            }
+            return 'boundary';
+        });
+    };
+
+    const nudgeBoundaryDraft = (northMeters: number, eastMeters: number) => {
+        setBoundaryDraft(previous => {
+            const source = previous.length >= 3 ? previous : boundary.polygon;
+            if (source.length < 3) return previous;
+
+            return source.map(point => {
+                const nextLat = point[0] + metersToLat(northMeters);
+                const nextLng = point[1] + metersToLng(eastMeters, point[0]);
+                return [nextLat, nextLng] as LatLngTuple;
+            });
+        });
+        setToolMode('boundary');
+        setStatus(`Boundary nudged ${northMeters !== 0 ? `${northMeters > 0 ? 'north' : 'south'} ${Math.abs(northMeters)}m` : ''}${northMeters !== 0 && eastMeters !== 0 ? ' and ' : ''}${eastMeters !== 0 ? `${eastMeters > 0 ? 'east' : 'west'} ${Math.abs(eastMeters)}m` : ''}.`);
+    };
+
+    const scaleBoundaryDraft = (factor: number) => {
+        setBoundaryDraft(previous => {
+            const source = previous.length >= 3 ? previous : boundary.polygon;
+            if (source.length < 3) return previous;
+
+            const centerLat = source.reduce((sum, point) => sum + point[0], 0) / source.length;
+            const centerLng = source.reduce((sum, point) => sum + point[1], 0) / source.length;
+
+            return source.map(point => [
+                centerLat + (point[0] - centerLat) * factor,
+                centerLng + (point[1] - centerLng) * factor
+            ] as LatLngTuple);
+        });
+        setToolMode('boundary');
+        setStatus(factor > 1 ? 'Boundary draft expanded.' : 'Boundary draft tightened.');
+    };
+
     const selectedTrail = useMemo(() => trails.find(trail => trail.id === selectedTrailId) || trails[0] || null, [selectedTrailId, trails]);
     const selectedTrailSplits = useMemo(() => (selectedTrail ? buildTrailSplits(selectedTrail.points) : []), [selectedTrail]);
     const selectedTrailElevation = useMemo(() => (selectedTrail ? buildElevationSeries(selectedTrail.points) : []), [selectedTrail]);
@@ -713,6 +816,9 @@ export default function PropertyMapWorkspace() {
                             liveGps={liveGps}
                             autoFollow={autoFollow}
                             basemapMode={basemapMode}
+                            boundaryEditEnabled={toolMode === 'boundary'}
+                            onBoundaryDraftPointDrag={onBoundaryDraftPointDrag}
+                            onBoundaryDraftInsertFromMidpoint={onBoundaryDraftInsertFromMidpoint}
                             onMapClick={onMapClick}
                             onMapReady={onMapReady}
                         />
@@ -780,6 +886,9 @@ export default function PropertyMapWorkspace() {
                     <div className={styles.errorBox}>
                         <div>{error}</div>
                         <div className={styles.inlineActions} style={{ marginTop: '0.55rem' }}>
+                            <button type="button" className="soft-button" onClick={retrySupabaseConnection}>
+                                Retry Connection
+                            </button>
                             <button type="button" className="soft-button" onClick={resetOfflineCache}>
                                 Reset Offline Cache
                             </button>
@@ -805,7 +914,7 @@ export default function PropertyMapWorkspace() {
                 {drawerTab === 'boundary' && (
                     <div className={styles.drawerContent}>
                         <div className={styles.inlineActions}>
-                            <button type="button" className="soft-button" onClick={() => setToolMode(prev => (prev === 'boundary' ? 'idle' : 'boundary'))}>
+                            <button type="button" className="soft-button" onClick={toggleBoundaryEditMode}>
                                 {toolMode === 'boundary' ? 'Stop Editing Boundary' : 'Edit Boundary'}
                             </button>
                             <button type="button" className="soft-button" onClick={() => setBoundaryDraft(prev => prev.slice(0, -1))} disabled={boundaryDraft.length === 0}>
@@ -820,9 +929,32 @@ export default function PropertyMapWorkspace() {
                             <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()}>
                                 Fit Full Property
                             </button>
+                            <button type="button" className="soft-button" onClick={loadCurrentBoundaryIntoDraft}>
+                                Load Current Boundary
+                            </button>
+                        </div>
+                        <div className={styles.inlineActions}>
+                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(8, 0)}>
+                                Nudge North
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(-8, 0)}>
+                                Nudge South
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, -8)}>
+                                Nudge West
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, 8)}>
+                                Nudge East
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(1.01)}>
+                                Expand 1%
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(0.99)}>
+                                Tighten 1%
+                            </button>
                         </div>
                         <div className={styles.helpText}>
-                            Boundary polygon is synced to Supabase and shared with all family devices.
+                            Boundary polygon is synced to Supabase and shared with all family devices. Drag orange corners to move points, or drag blue midpoint handles to add new corners.
                         </div>
                     </div>
                 )}
