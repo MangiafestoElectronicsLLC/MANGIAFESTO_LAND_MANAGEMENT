@@ -4,7 +4,20 @@ import { useEffect } from 'react';
 import { Circle, CircleMarker, MapContainer, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { boundaryCenter } from './boundary-manager';
-import { buildTrailSplits, DEFAULT_CENTER, DEFAULT_ZOOM, MAP_TILE_ATTRIBUTION, MAP_TILE_URL, clampZoom, formatDistance } from './map-engine';
+import {
+    BasemapMode,
+    buildTrailSplits,
+    DEFAULT_CENTER,
+    DEFAULT_ZOOM,
+    SATELLITE_LABEL_TILE_ATTRIBUTION,
+    SATELLITE_LABEL_TILE_URL,
+    SATELLITE_TILE_ATTRIBUTION,
+    SATELLITE_TILE_URL,
+    STREET_TILE_ATTRIBUTION,
+    STREET_TILE_URL,
+    clampZoom,
+    formatDistance
+} from './map-engine';
 import { GpsFix, LatLngTuple, Pinpoint, PropertyBoundary, Trail } from './types';
 
 export type MapActions = {
@@ -23,6 +36,7 @@ type Props = {
     boundaryDraft: LatLngTuple[];
     liveGps: GpsFix | null;
     autoFollow: boolean;
+    basemapMode: BasemapMode;
     onMapClick: (position: LatLngTuple) => void;
     onMapReady: (actions: MapActions) => void;
 };
@@ -49,6 +63,21 @@ function MapController({
     onMapReady: (actions: MapActions) => void;
 }) {
     const map = useMap();
+
+    useEffect(() => {
+        const invalidate = () => map.invalidateSize({ animate: false });
+
+        // Leaflet can mis-measure width right after mount in complex grid layouts.
+        const timerA = window.setTimeout(invalidate, 0);
+        const timerB = window.setTimeout(invalidate, 220);
+        window.addEventListener('resize', invalidate);
+
+        return () => {
+            window.clearTimeout(timerA);
+            window.clearTimeout(timerB);
+            window.removeEventListener('resize', invalidate);
+        };
+    }, [map]);
 
     useEffect(() => {
         const actions: MapActions = {
@@ -84,6 +113,7 @@ export default function LeafletMapCanvas({
     boundaryDraft,
     liveGps,
     autoFollow,
+    basemapMode,
     onMapClick,
     onMapReady
 }: Props) {
@@ -96,7 +126,14 @@ export default function LeafletMapCanvas({
             scrollWheelZoom
             style={{ height: '100%', width: '100%', background: '#0b1220' }}
         >
-            <TileLayer attribution={MAP_TILE_ATTRIBUTION} url={MAP_TILE_URL} />
+            {basemapMode === 'satellite' ? (
+                <>
+                    <TileLayer attribution={SATELLITE_TILE_ATTRIBUTION} url={SATELLITE_TILE_URL} />
+                    <TileLayer attribution={SATELLITE_LABEL_TILE_ATTRIBUTION} url={SATELLITE_LABEL_TILE_URL} opacity={0.28} />
+                </>
+            ) : (
+                <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} />
+            )}
 
             <MapInteractions onMapClick={onMapClick} />
             <MapController boundary={boundary} liveGps={liveGps} autoFollow={autoFollow} onMapReady={onMapReady} />

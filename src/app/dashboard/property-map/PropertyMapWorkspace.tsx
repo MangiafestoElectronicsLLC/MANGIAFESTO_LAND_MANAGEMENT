@@ -9,6 +9,7 @@ import { supabaseClient } from '@/lib/supabaseClient';
 import { boundaryCenter, buildBoundary } from './boundary-manager';
 import { startGpsTracking, type GpsTrackingHandle } from './gps-tracking';
 import {
+    type BasemapMode,
     buildDefaultBoundary,
     buildElevationSeries,
     buildTrailSplits,
@@ -18,7 +19,14 @@ import {
     formatPace,
     haversineMeters
 } from './map-engine';
-import { enqueueSnapshotSync, loadCachedSnapshot, loadSyncQueue, removeQueueItem, saveCachedSnapshot } from './offline-sync';
+import {
+    clearOfflineSnapshotCache,
+    enqueueSnapshotSync,
+    loadCachedSnapshot,
+    loadSyncQueue,
+    removeQueueItem,
+    saveCachedSnapshot
+} from './offline-sync';
 import { filesToAttachments, removeAttachmentById } from './photo-attachments';
 import { createPinpoint, createTrail, exportTrailGpx, importTrailFromGpx } from './trail-manager';
 import { ensureSharedMap, loadSnapshotFromSupabase, syncSnapshotToSupabase } from './supabase-map-sync';
@@ -49,6 +57,8 @@ const defaultSnapshot: PropertyMapSnapshot = {
     trails: [],
     pinpoints: []
 };
+
+const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
 
 const updateTrail = (trails: Trail[], trailId: string, updater: (trail: Trail) => Trail) =>
     trails.map(trail => (trail.id === trailId ? updater(trail) : trail));
@@ -110,6 +120,7 @@ export default function PropertyMapWorkspace() {
     const [gpsEnabled, setGpsEnabled] = useState(false);
     const [autoFollow, setAutoFollow] = useState(true);
     const [recordingTrail, setRecordingTrail] = useState(false);
+    const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite');
 
     const [liveGps, setLiveGps] = useState<GpsFix | null>(null);
     const [walkedTrailDraft, setWalkedTrailDraft] = useState<TrailPoint[]>([]);
@@ -184,6 +195,19 @@ export default function PropertyMapWorkspace() {
     }, [profileId, supabase]);
 
     useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const stored = window.localStorage.getItem(BASEMAP_MODE_STORAGE_KEY);
+        if (stored === 'street' || stored === 'satellite') {
+            setBasemapMode(stored);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem(BASEMAP_MODE_STORAGE_KEY, basemapMode);
+    }, [basemapMode]);
+
+    useEffect(() => {
         const hydrate = async () => {
             const cached = loadCachedSnapshot();
             if (cached) {
@@ -215,11 +239,17 @@ export default function PropertyMapWorkspace() {
 
                 await flushQueue();
             } catch (err: any) {
+                const rawMessage = err?.message || '';
+                const isFetchError = /failed to fetch/i.test(rawMessage);
                 if (!cached) {
                     setSnapshot(defaultSnapshot);
                 }
                 setStatus('Using offline map cache. Changes will sync once connection is restored.');
-                setError(err?.message || null);
+                setError(
+                    isFetchError
+                        ? 'Could not reach Supabase from this device. Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel and verify network access.'
+                        : (err?.message || null)
+                );
                 setSyncState('offline');
             } finally {
                 setLoading(false);
@@ -598,6 +628,17 @@ export default function PropertyMapWorkspace() {
         downloadTextFile(`${trail.name.replace(/\s+/g, '-').toLowerCase() || createId('trail')}.gpx`, exportTrailGpx(trail), 'application/gpx+xml');
     };
 
+    const resetOfflineCache = () => {
+        clearOfflineSnapshotCache();
+        setSnapshot(defaultSnapshot);
+        setBoundaryDraft([]);
+        setPlannedTrailDraft([]);
+        setWalkedTrailDraft([]);
+        setStatus('Local property-map cache cleared. Reloading shared map...');
+        setError(null);
+        window.location.reload();
+    };
+
     const selectedTrail = useMemo(() => trails.find(trail => trail.id === selectedTrailId) || trails[0] || null, [selectedTrailId, trails]);
     const selectedTrailSplits = useMemo(() => (selectedTrail ? buildTrailSplits(selectedTrail.points) : []), [selectedTrail]);
     const selectedTrailElevation = useMemo(() => (selectedTrail ? buildElevationSeries(selectedTrail.points) : []), [selectedTrail]);
@@ -630,6 +671,7 @@ export default function PropertyMapWorkspace() {
                     <span className={styles.badge}>{autoFollow ? 'Auto-follow On' : 'Auto-follow Off'}</span>
                     <span className={styles.badge}>{trails.length} trails</span>
                     <span className={styles.badge}>{pinpoints.length} pinpoints</span>
+                    <span className={styles.badge}>Map: {basemapMode === 'satellite' ? 'Satellite' : 'Street'}</span>
                     <span className={styles.badge}>Sync: {syncState}</span>
                 </div>
             </section>
@@ -670,6 +712,7 @@ export default function PropertyMapWorkspace() {
                             boundaryDraft={boundaryDraft}
                             liveGps={liveGps}
                             autoFollow={autoFollow}
+                            basemapMode={basemapMode}
                             onMapClick={onMapClick}
                             onMapReady={onMapReady}
                         />
@@ -705,6 +748,13 @@ export default function PropertyMapWorkspace() {
                         <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.fitBoundary()}>
                             Recenter Map
                         </button>
+                        <button
+                            type="button"
+                            className={styles.toolBtn}
+                            onClick={() => setBasemapMode(previous => (previous === 'satellite' ? 'street' : 'satellite'))}
+                        >
+                            {basemapMode === 'satellite' ? 'Switch to Street' : 'Switch to Satellite'}
+                        </button>
                     </aside>
                 </div>
 
@@ -726,7 +776,16 @@ export default function PropertyMapWorkspace() {
                         </span>
                     )}
                 </div>
-                {error && <div className={styles.errorBox}>{error}</div>}
+                {error && (
+                    <div className={styles.errorBox}>
+                        <div>{error}</div>
+                        <div className={styles.inlineActions} style={{ marginTop: '0.55rem' }}>
+                            <button type="button" className="soft-button" onClick={resetOfflineCache}>
+                                Reset Offline Cache
+                            </button>
+                        </div>
+                    </div>
+                )}
             </section>
 
             <section className={`panel ${styles.drawer}`}>

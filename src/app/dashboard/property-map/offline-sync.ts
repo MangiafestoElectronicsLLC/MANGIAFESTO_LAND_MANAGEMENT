@@ -13,11 +13,59 @@ const parseJson = <T,>(raw: string | null, fallback: T) => {
     }
 };
 
-export const loadCachedSnapshot = () =>
-    parseJson<PropertyMapSnapshot | null>(
+const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
+
+const isLatLngTuple = (value: unknown): value is [number, number] =>
+    Array.isArray(value) &&
+    value.length === 2 &&
+    isFiniteNumber(value[0]) &&
+    isFiniteNumber(value[1]) &&
+    value[0] >= -90 &&
+    value[0] <= 90 &&
+    value[1] >= -180 &&
+    value[1] <= 180;
+
+const isTrailPoint = (value: unknown): value is { lat: number; lng: number } => {
+    if (!value || typeof value !== 'object') return false;
+    const point = value as { lat?: unknown; lng?: unknown };
+    return isFiniteNumber(point.lat) && isFiniteNumber(point.lng);
+};
+
+const isValidSnapshot = (value: unknown): value is PropertyMapSnapshot => {
+    if (!value || typeof value !== 'object') return false;
+
+    const snapshot = value as {
+        boundary?: { polygon?: unknown };
+        trails?: Array<{ points?: unknown }>;
+        pinpoints?: Array<{ position?: unknown }>;
+    };
+
+    const polygon = snapshot.boundary?.polygon;
+    if (!Array.isArray(polygon) || polygon.length < 3 || !polygon.every(point => isLatLngTuple(point))) {
+        return false;
+    }
+
+    const trailsValid = Array.isArray(snapshot.trails)
+        ? snapshot.trails.every(trail => Array.isArray(trail?.points) && trail.points.every(point => isTrailPoint(point)))
+        : false;
+    if (!trailsValid) return false;
+
+    const pinsValid = Array.isArray(snapshot.pinpoints)
+        ? snapshot.pinpoints.every(pin => isLatLngTuple(pin?.position))
+        : false;
+
+    return pinsValid;
+};
+
+export const loadCachedSnapshot = () => {
+    const parsed = parseJson<PropertyMapSnapshot | null>(
         typeof window === 'undefined' ? null : window.localStorage.getItem(SNAPSHOT_CACHE_KEY),
         null
     );
+
+    return isValidSnapshot(parsed) ? parsed : null;
+};
 
 export const saveCachedSnapshot = (snapshot: PropertyMapSnapshot) => {
     if (typeof window === 'undefined') return;
@@ -49,3 +97,8 @@ export const removeQueueItem = (itemId: string) => {
 };
 
 export const queueLength = () => loadSyncQueue().length;
+
+export const clearOfflineSnapshotCache = () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(SNAPSHOT_CACHE_KEY);
+};

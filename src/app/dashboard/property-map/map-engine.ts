@@ -3,8 +3,16 @@ import { LatLngTuple, PropertyBoundary, Trail, TrailPoint } from './types';
 export const DEFAULT_CENTER: LatLngTuple = [43.2180558, -77.9778462];
 export const DEFAULT_ZOOM = 17;
 
-export const MAP_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-export const MAP_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+export type BasemapMode = 'satellite' | 'street';
+
+export const SATELLITE_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+export const SATELLITE_TILE_ATTRIBUTION = 'Tiles &copy; Esri, Maxar, Earthstar Geographics';
+
+export const STREET_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const STREET_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+
+export const SATELLITE_LABEL_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const SATELLITE_LABEL_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
 
 export const createId = (_prefix?: string) => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
