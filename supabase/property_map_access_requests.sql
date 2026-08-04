@@ -42,6 +42,7 @@ CREATE POLICY "Authenticated users can delete property map access requests"
   ON property_map_access_requests FOR DELETE
   USING (auth.role() = 'authenticated');
 
+DROP TRIGGER IF EXISTS property_map_access_requests_touch_updated_at ON property_map_access_requests;
 CREATE TRIGGER property_map_access_requests_touch_updated_at
 BEFORE UPDATE ON property_map_access_requests
 FOR EACH ROW EXECUTE FUNCTION touch_property_map_updated_at();
