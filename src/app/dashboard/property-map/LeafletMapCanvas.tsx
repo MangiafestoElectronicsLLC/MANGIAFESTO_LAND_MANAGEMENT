@@ -72,29 +72,21 @@ function BoundaryMidpointHandle({
     onBoundaryDraftPointDrag: (index: number, position: LatLngTuple) => void;
     onDragStateChange: (isDragging: boolean) => void;
 }) {
-    const insertedIndexRef = useRef<number | null>(null);
-
     return (
         <Marker
             position={position}
             icon={boundaryMidpointIcon}
             draggable
             eventHandlers={{
-                dragstart: event => {
+                dragstart: () => {
                     onDragStateChange(true);
-                    const current = event.target.getLatLng();
-                    insertedIndexRef.current = onBoundaryDraftInsertFromMidpoint(edgeIndex, [current.lat, current.lng]);
-                },
-                drag: event => {
-                    if (insertedIndexRef.current === null) return;
-                    const current = event.target.getLatLng();
-                    onBoundaryDraftPointDrag(insertedIndexRef.current, [current.lat, current.lng]);
                 },
                 dragend: event => {
-                    if (insertedIndexRef.current === null) return;
                     const current = event.target.getLatLng();
-                    onBoundaryDraftPointDrag(insertedIndexRef.current, [current.lat, current.lng]);
-                    insertedIndexRef.current = null;
+                    const insertedIndex = onBoundaryDraftInsertFromMidpoint(edgeIndex, [current.lat, current.lng]);
+                    if (insertedIndex >= 0) {
+                        onBoundaryDraftPointDrag(insertedIndex, [current.lat, current.lng]);
+                    }
                     window.setTimeout(() => onDragStateChange(false), 90);
                 }
             }}

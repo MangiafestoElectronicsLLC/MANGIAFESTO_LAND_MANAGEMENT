@@ -288,8 +288,13 @@ export default function PropertyMapWorkspace() {
     }, [flushQueue, router, runSync, supabase, supabase.auth]);
 
     useEffect(() => {
-        if (loading || !snapshot.mapId) return;
+        if (loading) return;
         saveCachedSnapshot(snapshot);
+
+        if (!snapshot.mapId) {
+            return;
+        }
+
         dirtyRef.current = true;
         const timer = window.setTimeout(() => {
             void runSync();
