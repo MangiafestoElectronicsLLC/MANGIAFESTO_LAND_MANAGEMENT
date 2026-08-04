@@ -347,6 +347,23 @@ export default function PropertyMapWorkspace() {
         };
     }, [gpsEnabled, recordingTrail]);
 
+    useEffect(() => {
+        if (toolMode !== 'boundary') return;
+
+        const refreshNow = window.setTimeout(() => {
+            mapActionsRef.current?.refresh();
+        }, 0);
+
+        const refreshAfterLayout = window.setTimeout(() => {
+            mapActionsRef.current?.refresh();
+        }, 180);
+
+        return () => {
+            window.clearTimeout(refreshNow);
+            window.clearTimeout(refreshAfterLayout);
+        };
+    }, [toolMode]);
+
     const gpsInsideBoundary = useMemo(() => {
         if (!liveGps || boundary.polygon.length < 3) return null;
 
@@ -385,8 +402,9 @@ export default function PropertyMapWorkspace() {
 
     const onBoundaryDraftPointDrag = useCallback((index: number, position: LatLngTuple) => {
         setBoundaryDraft(previous => {
-            if (index < 0 || index >= previous.length) return previous;
-            return previous.map((point, pointIndex) => (pointIndex === index ? position : point));
+            if (previous.length === 0) return previous;
+            const safeIndex = Math.max(0, Math.min(index, previous.length - 1));
+            return previous.map((point, pointIndex) => (pointIndex === safeIndex ? position : point));
         });
         setStatus(`Moved boundary corner ${index + 1}. Save Boundary Polygon when alignment looks right.`);
     }, []);
@@ -853,6 +871,16 @@ export default function PropertyMapWorkspace() {
                         </button>
                         <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.fitBoundary()}>
                             Recenter Map
+                        </button>
+                        <button
+                            type="button"
+                            className={styles.toolBtn}
+                            onClick={() => {
+                                mapActionsRef.current?.refresh();
+                                setStatus('Map tiles refreshed.');
+                            }}
+                        >
+                            Refresh Map Tiles
                         </button>
                         <button
                             type="button"

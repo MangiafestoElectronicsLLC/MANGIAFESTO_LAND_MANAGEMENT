@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { type MutableRefObject, useEffect, useRef } from 'react';
 import { Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { boundaryCenter } from './boundary-manager';
@@ -24,6 +24,7 @@ export type MapActions = {
     recenter: () => void;
     centerOnGps: () => void;
     fitBoundary: () => void;
+    refresh: () => void;
 };
 
 type Props = {
@@ -62,12 +63,14 @@ function BoundaryMidpointHandle({
     edgeIndex,
     position,
     onBoundaryDraftInsertFromMidpoint,
-    onBoundaryDraftPointDrag
+    onBoundaryDraftPointDrag,
+    onDragStateChange
 }: {
     edgeIndex: number;
     position: LatLngTuple;
     onBoundaryDraftInsertFromMidpoint: (edgeIndex: number, position: LatLngTuple) => number;
     onBoundaryDraftPointDrag: (index: number, position: LatLngTuple) => void;
+    onDragStateChange: (isDragging: boolean) => void;
 }) {
     const insertedIndexRef = useRef<number | null>(null);
 
@@ -78,6 +81,7 @@ function BoundaryMidpointHandle({
             draggable
             eventHandlers={{
                 dragstart: event => {
+                    onDragStateChange(true);
                     const current = event.target.getLatLng();
                     insertedIndexRef.current = onBoundaryDraftInsertFromMidpoint(edgeIndex, [current.lat, current.lng]);
                 },
@@ -91,6 +95,7 @@ function BoundaryMidpointHandle({
                     const current = event.target.getLatLng();
                     onBoundaryDraftPointDrag(insertedIndexRef.current, [current.lat, current.lng]);
                     insertedIndexRef.current = null;
+                    window.setTimeout(() => onDragStateChange(false), 90);
                 }
             }}
         >
@@ -101,9 +106,18 @@ function BoundaryMidpointHandle({
     );
 }
 
-function MapInteractions({ onMapClick }: { onMapClick: (position: LatLngTuple) => void }) {
+function MapInteractions({
+    onMapClick,
+    isBoundaryDragInProgressRef
+}: {
+    onMapClick: (position: LatLngTuple) => void;
+    isBoundaryDragInProgressRef: MutableRefObject<boolean>;
+}) {
     useMapEvents({
         click: event => {
+            if (isBoundaryDragInProgressRef.current) {
+                return;
+            }
             onMapClick([event.latlng.lat, event.latlng.lng]);
         }
     });
@@ -130,12 +144,16 @@ function MapController({
         // Leaflet can mis-measure width right after mount in complex grid layouts.
         const timerA = window.setTimeout(invalidate, 0);
         const timerB = window.setTimeout(invalidate, 220);
+        const timerC = window.setTimeout(invalidate, 800);
         window.addEventListener('resize', invalidate);
+        window.addEventListener('visibilitychange', invalidate);
 
         return () => {
             window.clearTimeout(timerA);
             window.clearTimeout(timerB);
+            window.clearTimeout(timerC);
             window.removeEventListener('resize', invalidate);
+            window.removeEventListener('visibilitychange', invalidate);
         };
     }, [map]);
 
@@ -149,6 +167,15 @@ function MapController({
             fitBoundary: () => {
                 if (boundary.polygon.length < 3) return;
                 map.fitBounds(L.latLngBounds(boundary.polygon), { padding: [26, 26], animate: true });
+            },
+            refresh: () => {
+                map.invalidateSize({ animate: false });
+                map.eachLayer(layer => {
+                    const tileLayer = layer as L.TileLayer;
+                    if (typeof tileLayer.redraw === 'function') {
+                        tileLayer.redraw();
+                    }
+                });
             }
         };
 
@@ -181,6 +208,11 @@ export default function LeafletMapCanvas({
     onMapReady
 }: Props) {
     const initialCenter = boundary.polygon.length >= 3 ? boundaryCenter(boundary) : DEFAULT_CENTER;
+    const boundaryDragInProgressRef = useRef(false);
+
+    const onHandleDragStateChange = (isDragging: boolean) => {
+        boundaryDragInProgressRef.current = isDragging;
+    };
 
     return (
         <MapContainer
@@ -191,6 +223,7 @@ export default function LeafletMapCanvas({
         >
             {basemapMode === 'satellite' ? (
                 <>
+                    <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} />
                     <TileLayer attribution={SATELLITE_TILE_ATTRIBUTION} url={SATELLITE_TILE_URL} />
                     <TileLayer attribution={SATELLITE_LABEL_TILE_ATTRIBUTION} url={SATELLITE_LABEL_TILE_URL} opacity={0.28} />
                 </>
@@ -198,7 +231,7 @@ export default function LeafletMapCanvas({
                 <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} />
             )}
 
-            <MapInteractions onMapClick={onMapClick} />
+            <MapInteractions onMapClick={onMapClick} isBoundaryDragInProgressRef={boundaryDragInProgressRef} />
             <MapController boundary={boundary} liveGps={liveGps} autoFollow={autoFollow} onMapReady={onMapReady} />
 
             {boundary.polygon.length >= 3 && (
@@ -223,9 +256,13 @@ export default function LeafletMapCanvas({
                         icon={boundaryHandleIcon}
                         draggable
                         eventHandlers={{
+                            dragstart: () => {
+                                onHandleDragStateChange(true);
+                            },
                             dragend: event => {
                                 const next = event.target.getLatLng();
                                 onBoundaryDraftPointDrag(index, [next.lat, next.lng]);
+                                window.setTimeout(() => onHandleDragStateChange(false), 90);
                             }
                         }}
                     >
@@ -248,6 +285,7 @@ export default function LeafletMapCanvas({
                             position={midpoint}
                             onBoundaryDraftInsertFromMidpoint={onBoundaryDraftInsertFromMidpoint}
                             onBoundaryDraftPointDrag={onBoundaryDraftPointDrag}
+                            onDragStateChange={onHandleDragStateChange}
                         />
                     );
                 })}
