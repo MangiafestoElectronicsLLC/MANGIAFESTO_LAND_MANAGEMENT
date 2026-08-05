@@ -30,18 +30,18 @@ export const createId = (_prefix?: string) => {
 export const roundCoord = (value: number, digits = 7) => Number(value.toFixed(digits));
 
 export const buildDefaultBoundary = (): PropertyBoundary => {
-    const [lat, lng] = DEFAULT_CENTER;
-    const latDelta = 0.0018;
-    const lngDelta = 0.00245;
-
+    // 6-point polygon matching the BARLOW DUANE F parcel shape from ONX Hunt
+    // (L-shape: Campfire Creek LLC occupies the NW notch)
     return {
         id: createId('boundary'),
         name: 'Family Land Boundary',
         polygon: [
-            [roundCoord(lat + latDelta), roundCoord(lng - lngDelta)],
-            [roundCoord(lat + latDelta), roundCoord(lng + lngDelta)],
-            [roundCoord(lat - latDelta), roundCoord(lng + lngDelta)],
-            [roundCoord(lat - latDelta), roundCoord(lng - lngDelta)]
+            [43.2212, -77.9785], // NW along Hwy 31, east of Campfire Creek
+            [43.2210, -77.9744], // NE along Hwy 31
+            [43.2148, -77.9744], // SE
+            [43.2148, -77.9812], // SW
+            [43.2195, -77.9812], // West edge, south of Campfire Creek notch
+            [43.2195, -77.9785], // NW notch inner corner
         ],
         updatedAt: new Date().toISOString()
     };

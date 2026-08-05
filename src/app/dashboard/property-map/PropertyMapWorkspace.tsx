@@ -885,6 +885,14 @@ export default function PropertyMapWorkspace() {
         setStatus('Loaded current boundary into draft. Use nudge/resize controls and save when aligned.');
     };
 
+    const resetToPropertyShape = () => {
+        const preset = buildDefaultBoundary();
+        setBoundaryDraft(preset.polygon);
+        setToolMode('boundary');
+        setStatus('ONX property shape loaded into draft. Drag corners to fine-tune, then Save Boundary Polygon.');
+        window.setTimeout(() => mapActionsRef.current?.fitBoundary(), 60);
+    };
+
     const toggleBoundaryEditMode = () => {
         setToolMode(previous => {
             if (previous === 'boundary') {
@@ -1214,6 +1222,9 @@ export default function PropertyMapWorkspace() {
                             </button>
                             <button type="button" className="soft-button" onClick={loadCurrentBoundaryIntoDraft}>
                                 Load Current Boundary
+                            </button>
+                            <button type="button" className="soft-button" onClick={resetToPropertyShape}>
+                                Reset to ONX Property Shape
                             </button>
                             <button type="button" className="soft-button" onClick={autoDraftBoundaryFromSavedData}>
                                 Auto-Draft From Map Data
