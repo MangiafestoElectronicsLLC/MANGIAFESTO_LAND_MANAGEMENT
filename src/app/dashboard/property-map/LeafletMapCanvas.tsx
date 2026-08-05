@@ -73,11 +73,18 @@ const boundaryMidpointIcon = L.divIcon({
     iconAnchor: [6, 6]
 });
 
+// Self-contained GPS pin: animation injected into <head> once, all visuals use inline styles.
+const GPS_ICON_HTML =
+    '<div style="position:relative;width:26px;height:26px;">' +
+    '<div class="gps-pulse-dot" style="position:absolute;inset:0;border-radius:50%;background:#2563eb;opacity:0.5;"></div>' +
+    '<div style="position:absolute;inset:5px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px rgba(37,99,235,0.35),0 2px 8px rgba(0,0,0,0.45);"></div>' +
+    '</div>';
+
 const gpsLocationIcon = L.divIcon({
-    className: 'gps-location-marker',
-    html: '<div class="gps-pin-wrap"><div class="gps-pulse-ring"></div><div class="gps-dot-outer"></div></div>',
-    iconSize: [28, 28],
-    iconAnchor: [14, 14]
+    className: '',
+    html: GPS_ICON_HTML,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
 });
 
 function BoundaryMidpointHandle({
@@ -319,10 +326,25 @@ function MapController({
         onMapReady(actions);
     }, [map, boundary, boundaryDraft, boundaryEditEnabled, liveGps, onMapReady]);
 
+    const firstGpsFixDoneRef = useRef(false);
+
     useEffect(() => {
-        if (!autoFollow || !liveGps) return;
+        if (!liveGps) {
+            firstGpsFixDoneRef.current = false;
+            return;
+        }
+
+        if (!firstGpsFixDoneRef.current) {
+            firstGpsFixDoneRef.current = true;
+            // Always pan to first GPS fix so the pin is immediately visible.
+            runProgrammaticMove(() => {
+                map.setView([liveGps.lat, liveGps.lng], Math.max(map.getZoom(), 17), { animate: true });
+            });
+            return;
+        }
+
+        if (!autoFollow) return;
         runProgrammaticMove(() => {
-            // Keep current zoom so users can choose close/far tracking while moving.
             map.setView([liveGps.lat, liveGps.lng], clampZoom(map.getZoom()), { animate: true });
         });
     }, [autoFollow, liveGps, map]);
@@ -349,6 +371,18 @@ export default function LeafletMapCanvas({
     onAutoFollowInterrupted,
     onDiagnosticsChange
 }: Props) {
+    // Inject GPS pulse animation once per page — avoids relying on global CSS applying to Leaflet DOM.
+    useEffect(() => {
+        const styleId = 'leaflet-gps-pulse-style';
+        if (document.getElementById(styleId)) return;
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent =
+            '@keyframes gps-pulse-kf{0%{transform:scale(1);opacity:.6}70%{transform:scale(3.2);opacity:0}100%{transform:scale(3.2);opacity:0}}' +
+            '.gps-pulse-dot{animation:gps-pulse-kf 2s ease-out infinite;}';
+        document.head.appendChild(style);
+    }, []);
+
     const initialCenter = boundary.polygon.length >= 3 ? boundaryCenter(boundary) : DEFAULT_CENTER;
     const boundaryDragInProgressRef = useRef(false);
     const [tileErrorCount, setTileErrorCount] = useState(0);

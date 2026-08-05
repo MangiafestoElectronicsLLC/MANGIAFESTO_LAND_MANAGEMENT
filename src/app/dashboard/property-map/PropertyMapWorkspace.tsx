@@ -62,7 +62,7 @@ const defaultSnapshot: PropertyMapSnapshot = {
 
 const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
 const OFFLINE_MAP_ID = 'offline-local-map';
-const PROPERTY_MAP_BUILD_STAMP = 'pm-gps-pin-2026-08-05-3';
+const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-40ac-2026-08-05-4';
 const PROPERTY_MAP_RUNTIME_HASH = (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'local-dev').slice(0, 12);
 const PROPERTY_MAP_DEPLOYED_AT = (() => {
     const raw = process.env.NEXT_PUBLIC_DEPLOYED_AT_UTC || '';
@@ -190,7 +190,6 @@ export default function PropertyMapWorkspace() {
     const mapActionsRef = useRef<MapActions | null>(null);
     const syncInFlightRef = useRef(false);
     const dirtyRef = useRef(false);
-    const gpsFirstFixRef = useRef(false);
 
     const router = useRouter();
     const supabase = supabaseClient();
@@ -380,19 +379,10 @@ export default function PropertyMapWorkspace() {
             return;
         }
 
-        gpsFirstFixRef.current = false;
-
         const handle = startGpsTracking({
             onFix: fix => {
                 setLiveGps(fix);
                 setError(null);
-
-                if (!gpsFirstFixRef.current) {
-                    gpsFirstFixRef.current = true;
-                    window.setTimeout(() => {
-                        mapActionsRef.current?.centerOnGps();
-                    }, 150);
-                }
 
                 if (!recordingTrail) return;
 
