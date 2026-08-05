@@ -1,7 +1,7 @@
 'use client';
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
-import { Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, MapContainer, Marker, Polygon, Polyline, CircleMarker, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { boundaryCenter } from './boundary-manager';
 import {
@@ -71,6 +71,13 @@ const boundaryMidpointIcon = L.divIcon({
     html: '<span style="display:block;width:12px;height:12px;border-radius:50%;background:#38bdf8;border:2px solid #0f172a;box-shadow:0 0 0 2px rgba(255,255,255,0.5);"></span>',
     iconSize: [12, 12],
     iconAnchor: [6, 6]
+});
+
+const gpsLocationIcon = L.divIcon({
+    className: 'gps-location-marker',
+    html: '<div class="gps-pin-wrap"><div class="gps-pulse-ring"></div><div class="gps-dot-outer"></div></div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
 });
 
 function BoundaryMidpointHandle({
@@ -531,15 +538,18 @@ export default function LeafletMapCanvas({
                     <Circle
                         center={[liveGps.lat, liveGps.lng]}
                         radius={Math.max(liveGps.accuracyMeters, 2)}
-                        pathOptions={{ color: '#60a5fa', fillColor: '#60a5fa', fillOpacity: 0.15, weight: 1.5 }}
+                        pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.1, weight: 1.5, dashArray: '4 4' }}
                     />
-                    <CircleMarker
-                        center={[liveGps.lat, liveGps.lng]}
-                        radius={7}
-                        pathOptions={{ color: '#f8fafc', fillColor: '#2563eb', fillOpacity: 1 }}
+                    <Marker
+                        position={[liveGps.lat, liveGps.lng]}
+                        icon={gpsLocationIcon}
+                        zIndexOffset={1000}
                     >
-                        <Tooltip direction="top">You are here</Tooltip>
-                    </CircleMarker>
+                        <Tooltip direction="top" permanent={false}>
+                            You are here
+                            {liveGps.accuracyMeters < 30 ? '' : ` (±${Math.round(liveGps.accuracyMeters)}m)`}
+                        </Tooltip>
+                    </Marker>
                 </>
             )}
         </MapContainer>
