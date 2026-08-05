@@ -6,6 +6,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
+import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
 import { boundaryCenter, buildBoundary } from './boundary-manager';
 import { startGpsTracking, type GpsTrackingHandle } from './gps-tracking';
 import {
@@ -14,6 +15,7 @@ import {
     buildElevationSeries,
     buildTrailSplits,
     createId,
+    distancePointToPolygonEdgeMeters,
     formatDistance,
     formatDuration,
     formatPace,
@@ -52,13 +54,14 @@ const PIN_TYPES: Array<{ value: 'note' | 'treestand' | 'range' | 'water' | 'gate
 ];
 
 const defaultSnapshot: PropertyMapSnapshot = {
-    mapId: '',
+    mapId: 'offline-local-map',
     boundary: buildDefaultBoundary(),
     trails: [],
     pinpoints: []
 };
 
 const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
+const OFFLINE_MAP_ID = 'offline-local-map';
 
 const updateTrail = (trails: Trail[], trailId: string, updater: (trail: Trail) => Trail) =>
     trails.map(trail => (trail.id === trailId ? updater(trail) : trail));
@@ -116,6 +119,28 @@ const metersToLng = (meters: number, atLatitude: number) => {
     return meters / denominator;
 };
 
+const buildRectangleBoundaryFromPoints = (points: LatLngTuple[], paddingMeters = 28): LatLngTuple[] | null => {
+    if (points.length === 0) return null;
+
+    const lats = points.map(point => point[0]);
+    const lngs = points.map(point => point[1]);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    const centerLat = (minLat + maxLat) / 2;
+    const latPad = metersToLat(paddingMeters);
+    const lngPad = metersToLng(paddingMeters, centerLat);
+
+    return [
+        [maxLat + latPad, minLng - lngPad],
+        [maxLat + latPad, maxLng + lngPad],
+        [minLat - latPad, maxLng + lngPad],
+        [minLat - latPad, minLng - lngPad]
+    ];
+};
+
 export default function PropertyMapWorkspace() {
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState('Loading property map...');
@@ -141,6 +166,7 @@ export default function PropertyMapWorkspace() {
 
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'queued' | 'offline'>('idle');
     const [profileId, setProfileId] = useState<string | null>(null);
+    const [mapReady, setMapReady] = useState(false);
 
     const gpsHandleRef = useRef<GpsTrackingHandle | null>(null);
     const mapActionsRef = useRef<MapActions | null>(null);
@@ -155,10 +181,10 @@ export default function PropertyMapWorkspace() {
     const trails = snapshot.trails;
 
     const runSync = useCallback(async () => {
-        if (syncInFlightRef.current || !dirtyRef.current || !profileId || !snapshot.mapId) return;
+        if (syncInFlightRef.current || !dirtyRef.current || !profileId) return;
 
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
-            enqueueSnapshotSync(snapshot.mapId, snapshot);
+            enqueueSnapshotSync(snapshot.mapId || OFFLINE_MAP_ID, snapshot);
             setSyncState('offline');
             return;
         }
@@ -167,14 +193,23 @@ export default function PropertyMapWorkspace() {
         setSyncState('syncing');
 
         try {
-            const synced = await syncSnapshotToSupabase(supabase, profileId, snapshot);
+            let activeMapId = snapshot.mapId;
+            if (!activeMapId || activeMapId === OFFLINE_MAP_ID) {
+                const sharedMap = await ensureSharedMap(supabase, profileId);
+                activeMapId = sharedMap.id;
+            }
+
+            const synced = await syncSnapshotToSupabase(supabase, profileId, {
+                ...snapshot,
+                mapId: activeMapId
+            });
             setSnapshot(synced);
             saveCachedSnapshot(synced);
             dirtyRef.current = false;
             setSyncState('idle');
             setStatus(`Synced to family shared map at ${new Date().toLocaleTimeString()}.`);
         } catch {
-            enqueueSnapshotSync(snapshot.mapId, snapshot);
+            enqueueSnapshotSync(snapshot.mapId || OFFLINE_MAP_ID, snapshot);
             setSyncState('queued');
         } finally {
             syncInFlightRef.current = false;
@@ -190,7 +225,16 @@ export default function PropertyMapWorkspace() {
 
         for (const item of queue) {
             try {
-                await syncSnapshotToSupabase(supabase, profileId, item.snapshot);
+                let nextMapId = item.snapshot.mapId;
+                if (!nextMapId || nextMapId === OFFLINE_MAP_ID) {
+                    const sharedMap = await ensureSharedMap(supabase, profileId);
+                    nextMapId = sharedMap.id;
+                }
+
+                await syncSnapshotToSupabase(supabase, profileId, {
+                    ...item.snapshot,
+                    mapId: nextMapId
+                });
                 removeQueueItem(item.id);
             } catch {
                 setSyncState('queued');
@@ -219,7 +263,10 @@ export default function PropertyMapWorkspace() {
         const hydrate = async () => {
             const cached = loadCachedSnapshot();
             if (cached) {
-                setSnapshot(cached);
+                setSnapshot({
+                    ...cached,
+                    mapId: cached.mapId || OFFLINE_MAP_ID
+                });
                 setStatus('Loaded cached map while reconnecting to shared data.');
             }
 
@@ -247,16 +294,19 @@ export default function PropertyMapWorkspace() {
 
                 await flushQueue();
             } catch (err: any) {
-                const rawMessage = err?.message || '';
+                const rawMessage = getSupabaseErrorMessage(err, '');
                 const isFetchError = /failed to fetch/i.test(rawMessage);
+                const missingMapTables = isMissingTableSetupError(err, ['property_maps', 'property_map_features']);
                 if (!cached) {
-                    setSnapshot(defaultSnapshot);
+                    setSnapshot({ ...defaultSnapshot, mapId: OFFLINE_MAP_ID });
                 }
                 setStatus('Using offline map cache. Changes will sync once connection is restored.');
                 setError(
-                    isFetchError
-                        ? 'Could not reach Supabase from this device. Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel and verify network access.'
-                        : (err?.message || null)
+                    missingMapTables
+                        ? 'Supabase property map tables are missing. Run supabase/property_maps.sql and supabase/storage_property_maps.sql, then retry connection.'
+                        : isFetchError
+                            ? 'Could not reach Supabase from this device. Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel and verify network access.'
+                            : (getSupabaseErrorMessage(err, 'Unable to load Supabase property map data.') || null)
                 );
                 setSyncState('offline');
             } finally {
@@ -401,8 +451,74 @@ export default function PropertyMapWorkspace() {
         return total;
     }, [walkedTrailDraft]);
 
+    const boundaryEdgeDistanceMeters = useMemo(() => {
+        if (!liveGps || boundary.polygon.length < 2) return null;
+        return distancePointToPolygonEdgeMeters([liveGps.lat, liveGps.lng], boundary.polygon);
+    }, [boundary.polygon, liveGps]);
+
+    const boundaryConfidenceText = useMemo(() => {
+        if (!liveGps || gpsInsideBoundary === null || boundaryEdgeDistanceMeters === null) return null;
+
+        const roundedDistance = Math.max(0, Math.round(boundaryEdgeDistanceMeters));
+        const roundedAccuracy = Math.max(1, Math.round(liveGps.accuracyMeters));
+        const uncertain = roundedAccuracy >= Math.max(roundedDistance, 10);
+
+        if (gpsInsideBoundary) {
+            if (roundedDistance >= 60) {
+                return `Boundary confidence: deep inside (~${roundedDistance}m from edge).`;
+            }
+
+            return uncertain
+                ? `Boundary confidence: likely inside (~${roundedDistance}m from edge, GPS +/-${roundedAccuracy}m).`
+                : `Boundary confidence: inside (~${roundedDistance}m from edge).`;
+        }
+
+        if (roundedDistance <= 25) {
+            return uncertain
+                ? `Boundary confidence: near boundary (~${roundedDistance}m outside, GPS +/-${roundedAccuracy}m).`
+                : `Boundary confidence: just outside (~${roundedDistance}m from edge).`;
+        }
+
+        if (roundedDistance <= 120) {
+            return `Boundary confidence: near property (~${roundedDistance}m outside boundary).`;
+        }
+
+        return `Boundary confidence: away from property (~${roundedDistance}m outside boundary).`;
+    }, [boundaryEdgeDistanceMeters, gpsInsideBoundary, liveGps]);
+
+    const boundaryConfidenceLevel = useMemo<'high' | 'medium' | 'low' | null>(() => {
+        if (!liveGps || gpsInsideBoundary === null || boundaryEdgeDistanceMeters === null) return null;
+
+        const roundedDistance = Math.max(0, Math.round(boundaryEdgeDistanceMeters));
+        const roundedAccuracy = Math.max(1, Math.round(liveGps.accuracyMeters));
+        const uncertain = roundedAccuracy >= Math.max(roundedDistance, 10);
+
+        if (gpsInsideBoundary) {
+            return uncertain ? 'medium' : 'high';
+        }
+
+        if (roundedDistance <= 25) {
+            return uncertain ? 'medium' : 'low';
+        }
+
+        return roundedDistance <= 120 ? 'medium' : 'low';
+    }, [boundaryEdgeDistanceMeters, gpsInsideBoundary, liveGps]);
+
+    const boundaryConfidenceBadgeLabel = useMemo(() => {
+        if (!boundaryConfidenceLevel) return null;
+        if (boundaryConfidenceLevel === 'high') return 'Confidence: High';
+        if (boundaryConfidenceLevel === 'medium') return 'Confidence: Medium';
+        return 'Confidence: Low';
+    }, [boundaryConfidenceLevel]);
+
     const onMapReady = useCallback((actions: MapActions) => {
         mapActionsRef.current = actions;
+        setMapReady(true);
+    }, []);
+
+    const onAutoFollowInterrupted = useCallback(() => {
+        setAutoFollow(previous => (previous ? false : previous));
+        setStatus('Auto-follow paused so you can pan/zoom manually. Turn it back on when ready.');
     }, []);
 
     const onBoundaryDraftPointDrag = useCallback((index: number, position: LatLngTuple) => {
@@ -765,6 +881,42 @@ export default function PropertyMapWorkspace() {
         setStatus(factor > 1 ? 'Boundary draft expanded.' : 'Boundary draft tightened.');
     };
 
+    const autoDraftBoundaryFromSavedData = () => {
+        const dataPoints: LatLngTuple[] = [
+            ...pinpoints.map(pin => pin.position),
+            ...trails.flatMap(trail => trail.points.map(point => [point.lat, point.lng] as LatLngTuple))
+        ];
+
+        if (dataPoints.length === 0 && liveGps) {
+            const gpsPoint: LatLngTuple = [liveGps.lat, liveGps.lng];
+            const fallback = buildRectangleBoundaryFromPoints([
+                [gpsPoint[0] + metersToLat(25), gpsPoint[1] - metersToLng(25, gpsPoint[0])],
+                [gpsPoint[0] + metersToLat(25), gpsPoint[1] + metersToLng(25, gpsPoint[0])],
+                [gpsPoint[0] - metersToLat(25), gpsPoint[1] + metersToLng(25, gpsPoint[0])],
+                [gpsPoint[0] - metersToLat(25), gpsPoint[1] - metersToLng(25, gpsPoint[0])]
+            ]);
+            if (fallback) {
+                setBoundaryDraft(fallback);
+                setToolMode('boundary');
+                setStatus('Created draft boundary around your live GPS. Drag corners and save when aligned to your land.');
+            }
+            return;
+        }
+
+        const derived = buildRectangleBoundaryFromPoints(dataPoints);
+        if (!derived) {
+            setError('Need at least one saved pinpoint/trail point or a live GPS fix to auto-draft a boundary.');
+            return;
+        }
+
+        setBoundaryDraft(derived);
+        setToolMode('boundary');
+        setStatus('Draft boundary auto-generated from saved map points. Fine-tune corners, then save boundary.');
+        window.setTimeout(() => {
+            mapActionsRef.current?.fitBoundary();
+        }, 30);
+    };
+
     const selectedTrail = useMemo(() => trails.find(trail => trail.id === selectedTrailId) || trails[0] || null, [selectedTrailId, trails]);
     const selectedTrailSplits = useMemo(() => (selectedTrail ? buildTrailSplits(selectedTrail.points) : []), [selectedTrail]);
     const selectedTrailElevation = useMemo(() => (selectedTrail ? buildElevationSeries(selectedTrail.points) : []), [selectedTrail]);
@@ -807,7 +959,7 @@ export default function PropertyMapWorkspace() {
                     <button type="button" className="soft-button" onClick={() => setGpsEnabled(prev => !prev)}>
                         {gpsEnabled ? 'Stop GPS' : 'GPS On/Off'}
                     </button>
-                    <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.centerOnGps()} disabled={!liveGps}>
+                    <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.centerOnGps()} disabled={!liveGps || !mapReady}>
                         Center Me
                     </button>
                     <button
@@ -844,6 +996,7 @@ export default function PropertyMapWorkspace() {
                             onBoundaryDraftInsertFromMidpoint={onBoundaryDraftInsertFromMidpoint}
                             onMapClick={onMapClick}
                             onMapReady={onMapReady}
+                            onAutoFollowInterrupted={onAutoFollowInterrupted}
                         />
                     </div>
 
@@ -874,7 +1027,7 @@ export default function PropertyMapWorkspace() {
                         >
                             {autoFollow ? 'Auto-follow On' : 'Auto-follow Off'}
                         </button>
-                        <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.fitBoundary()}>
+                        <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
                             Recenter Map
                         </button>
                         <button
@@ -884,9 +1037,18 @@ export default function PropertyMapWorkspace() {
                                 mapActionsRef.current?.refresh();
                                 setStatus('Map tiles refreshed.');
                             }}
+                            disabled={!mapReady}
                         >
                             Refresh Map Tiles
                         </button>
+                        <div className={styles.inlineActions}>
+                            <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.zoomIn()} disabled={!mapReady}>
+                                Zoom In
+                            </button>
+                            <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.zoomOut()} disabled={!mapReady}>
+                                Zoom Out
+                            </button>
+                        </div>
                         <button
                             type="button"
                             className={styles.toolBtn}
@@ -907,6 +1069,23 @@ export default function PropertyMapWorkspace() {
                     {gpsInsideBoundary !== null && (
                         <span className={gpsInsideBoundary ? styles.inside : styles.outside}>
                             {gpsInsideBoundary ? 'Inside property boundary' : 'Outside property boundary'}
+                        </span>
+                    )}
+                    {boundaryConfidenceText && (
+                        <span className={styles.confidenceRow}>
+                            {boundaryConfidenceBadgeLabel && (
+                                <span
+                                    className={`${styles.confidenceBadge} ${boundaryConfidenceLevel === 'high'
+                                            ? styles.confidenceHigh
+                                            : boundaryConfidenceLevel === 'medium'
+                                                ? styles.confidenceMedium
+                                                : styles.confidenceLow
+                                        }`}
+                                >
+                                    {boundaryConfidenceBadgeLabel}
+                                </span>
+                            )}
+                            <span>{boundaryConfidenceText}</span>
                         </span>
                     )}
                     {walkedTrailDraft.length >= 2 && (
@@ -959,11 +1138,14 @@ export default function PropertyMapWorkspace() {
                             <button type="button" className="soft-button" onClick={saveBoundaryDraft} disabled={boundaryDraft.length < 3}>
                                 Save Boundary Polygon
                             </button>
-                            <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()}>
+                            <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
                                 Fit Full Property
                             </button>
                             <button type="button" className="soft-button" onClick={loadCurrentBoundaryIntoDraft}>
                                 Load Current Boundary
+                            </button>
+                            <button type="button" className="soft-button" onClick={autoDraftBoundaryFromSavedData}>
+                                Auto-Draft From Map Data
                             </button>
                         </div>
                         <div className={styles.inlineActions}>
@@ -1139,6 +1321,7 @@ export default function PropertyMapWorkspace() {
                                     mapActionsRef.current?.recenter();
                                     setStatus(`Map recentered near ${center[0].toFixed(5)}, ${center[1].toFixed(5)}.`);
                                 }}
+                                disabled={!mapReady}
                             >
                                 Recenter to Boundary
                             </button>

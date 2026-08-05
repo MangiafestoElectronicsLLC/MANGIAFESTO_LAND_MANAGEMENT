@@ -210,6 +210,62 @@ export const isPointInsidePolygon = (point: LatLngTuple, polygon: LatLngTuple[])
     return inside;
 };
 
+const latLngToLocalMeters = (target: LatLngTuple, origin: LatLngTuple) => {
+    const earthRadius = 6371000;
+    const latRad = (origin[0] * Math.PI) / 180;
+    const metersPerDegLat = (Math.PI / 180) * earthRadius;
+    const metersPerDegLng = (Math.PI / 180) * earthRadius * Math.cos(latRad);
+
+    return {
+        x: (target[1] - origin[1]) * metersPerDegLng,
+        y: (target[0] - origin[0]) * metersPerDegLat
+    };
+};
+
+const pointToSegmentDistanceMeters = (
+    point: { x: number; y: number },
+    start: { x: number; y: number },
+    end: { x: number; y: number }
+) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+
+    if (lengthSquared <= Number.EPSILON) {
+        const offsetX = point.x - start.x;
+        const offsetY = point.y - start.y;
+        return Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+    }
+
+    const projection = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared;
+    const t = Math.max(0, Math.min(1, projection));
+    const nearestX = start.x + t * dx;
+    const nearestY = start.y + t * dy;
+    const offsetX = point.x - nearestX;
+    const offsetY = point.y - nearestY;
+    return Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+};
+
+export const distancePointToPolygonEdgeMeters = (point: LatLngTuple, polygon: LatLngTuple[]) => {
+    if (polygon.length < 2) return null;
+
+    const pointLocal = latLngToLocalMeters(point, point);
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index < polygon.length; index += 1) {
+        const start = polygon[index];
+        const end = polygon[(index + 1) % polygon.length];
+        const startLocal = latLngToLocalMeters(start, point);
+        const endLocal = latLngToLocalMeters(end, point);
+        const distance = pointToSegmentDistanceMeters(pointLocal, startLocal, endLocal);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+        }
+    }
+
+    return Number.isFinite(nearestDistance) ? nearestDistance : null;
+};
+
 export const trailToGpx = (trail: Trail) => {
     const name = escapeXml(trail.name);
     const now = new Date().toISOString();

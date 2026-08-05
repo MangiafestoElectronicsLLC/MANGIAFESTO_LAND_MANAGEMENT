@@ -25,6 +25,8 @@ export type MapActions = {
     centerOnGps: () => void;
     fitBoundary: () => void;
     refresh: () => void;
+    zoomIn: () => void;
+    zoomOut: () => void;
 };
 
 type Props = {
@@ -43,6 +45,7 @@ type Props = {
     onBoundaryDraftInsertFromMidpoint: (edgeIndex: number, position: LatLngTuple) => number;
     onMapClick: (position: LatLngTuple) => void;
     onMapReady: (actions: MapActions) => void;
+    onAutoFollowInterrupted: () => void;
 };
 
 const boundaryHandleIcon = L.divIcon({
@@ -119,19 +122,45 @@ function MapInteractions({
 
 function MapController({
     boundary,
+    boundaryDraft,
+    boundaryEditEnabled,
     liveGps,
     autoFollow,
-    onMapReady
+    onMapReady,
+    onAutoFollowInterrupted
 }: {
     boundary: PropertyBoundary;
+    boundaryDraft: LatLngTuple[];
+    boundaryEditEnabled: boolean;
     liveGps: GpsFix | null;
     autoFollow: boolean;
     onMapReady: (actions: MapActions) => void;
+    onAutoFollowInterrupted: () => void;
 }) {
     const map = useMap();
+    const isProgrammaticMoveRef = useRef(false);
+    const hasDoneInitialFitRef = useRef(false);
+
+    const runProgrammaticMove = (action: () => void) => {
+        isProgrammaticMoveRef.current = true;
+        action();
+        window.setTimeout(() => {
+            isProgrammaticMoveRef.current = false;
+        }, 260);
+    };
 
     useEffect(() => {
         const invalidate = () => map.invalidateSize({ animate: false });
+        const observer =
+            typeof ResizeObserver !== 'undefined'
+                ? new ResizeObserver(() => {
+                    map.invalidateSize({ animate: false });
+                })
+                : null;
+
+        if (observer) {
+            observer.observe(map.getContainer());
+        }
 
         // Leaflet can mis-measure width right after mount in complex grid layouts.
         const timerA = window.setTimeout(invalidate, 0);
@@ -146,19 +175,68 @@ function MapController({
             window.clearTimeout(timerC);
             window.removeEventListener('resize', invalidate);
             window.removeEventListener('visibilitychange', invalidate);
+            observer?.disconnect();
         };
     }, [map]);
 
     useEffect(() => {
+        const stopAutoFollowOnManualMove = () => {
+            if (!autoFollow || isProgrammaticMoveRef.current) return;
+            onAutoFollowInterrupted();
+        };
+
+        map.on('dragstart', stopAutoFollowOnManualMove);
+        map.on('zoomstart', stopAutoFollowOnManualMove);
+
+        return () => {
+            map.off('dragstart', stopAutoFollowOnManualMove);
+            map.off('zoomstart', stopAutoFollowOnManualMove);
+        };
+    }, [autoFollow, map, onAutoFollowInterrupted]);
+
+    useEffect(() => {
+        if (hasDoneInitialFitRef.current) {
+            return;
+        }
+
+        const polygon = boundary.polygon.length >= 3 ? boundary.polygon : boundaryDraft;
+        if (polygon.length < 3) {
+            return;
+        }
+
+        hasDoneInitialFitRef.current = true;
+        runProgrammaticMove(() => {
+            map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: 19, animate: false });
+        });
+    }, [boundary.polygon, boundaryDraft, map]);
+
+    useEffect(() => {
+        if (boundaryEditEnabled) return;
+        if (boundary.polygon.length < 3) return;
+
+        runProgrammaticMove(() => {
+            map.fitBounds(L.latLngBounds(boundary.polygon), { padding: [24, 24], maxZoom: 19, animate: true });
+        });
+    }, [boundary.updatedAt, boundaryEditEnabled, boundary.polygon, map]);
+
+    useEffect(() => {
         const actions: MapActions = {
-            recenter: () => map.setView(boundaryCenter(boundary), map.getZoom(), { animate: true }),
+            recenter: () =>
+                runProgrammaticMove(() => {
+                    map.setView(boundaryCenter(boundary), map.getZoom(), { animate: true });
+                }),
             centerOnGps: () => {
                 if (!liveGps) return;
-                map.setView([liveGps.lat, liveGps.lng], Math.max(map.getZoom(), 18), { animate: true });
+                runProgrammaticMove(() => {
+                    map.setView([liveGps.lat, liveGps.lng], Math.max(map.getZoom(), 17), { animate: true });
+                });
             },
             fitBoundary: () => {
-                if (boundary.polygon.length < 3) return;
-                map.fitBounds(L.latLngBounds(boundary.polygon), { padding: [26, 26], animate: true });
+                const polygon = boundaryEditEnabled && boundaryDraft.length >= 3 ? boundaryDraft : boundary.polygon;
+                if (polygon.length < 3) return;
+                runProgrammaticMove(() => {
+                    map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: 19, animate: true });
+                });
             },
             refresh: () => {
                 map.invalidateSize({ animate: false });
@@ -168,15 +246,28 @@ function MapController({
                         tileLayer.redraw();
                     }
                 });
+            },
+            zoomIn: () => {
+                runProgrammaticMove(() => {
+                    map.setZoom(clampZoom(map.getZoom() + 1));
+                });
+            },
+            zoomOut: () => {
+                runProgrammaticMove(() => {
+                    map.setZoom(clampZoom(map.getZoom() - 1));
+                });
             }
         };
 
         onMapReady(actions);
-    }, [map, boundary, liveGps, onMapReady]);
+    }, [map, boundary, boundaryDraft, boundaryEditEnabled, liveGps, onMapReady]);
 
     useEffect(() => {
         if (!autoFollow || !liveGps) return;
-        map.setView([liveGps.lat, liveGps.lng], clampZoom(Math.max(map.getZoom(), 18)), { animate: true });
+        runProgrammaticMove(() => {
+            // Keep current zoom so users can choose close/far tracking while moving.
+            map.setView([liveGps.lat, liveGps.lng], clampZoom(map.getZoom()), { animate: true });
+        });
     }, [autoFollow, liveGps, map]);
 
     return null;
@@ -197,7 +288,8 @@ export default function LeafletMapCanvas({
     onBoundaryDraftPointDrag,
     onBoundaryDraftInsertFromMidpoint,
     onMapClick,
-    onMapReady
+    onMapReady,
+    onAutoFollowInterrupted
 }: Props) {
     const initialCenter = boundary.polygon.length >= 3 ? boundaryCenter(boundary) : DEFAULT_CENTER;
     const boundaryDragInProgressRef = useRef(false);
@@ -224,7 +316,15 @@ export default function LeafletMapCanvas({
             )}
 
             <MapInteractions onMapClick={onMapClick} isBoundaryDragInProgressRef={boundaryDragInProgressRef} />
-            <MapController boundary={boundary} liveGps={liveGps} autoFollow={autoFollow} onMapReady={onMapReady} />
+            <MapController
+                boundary={boundary}
+                boundaryDraft={boundaryDraft}
+                boundaryEditEnabled={boundaryEditEnabled}
+                liveGps={liveGps}
+                autoFollow={autoFollow}
+                onMapReady={onMapReady}
+                onAutoFollowInterrupted={onAutoFollowInterrupted}
+            />
 
             {boundary.polygon.length >= 3 && (
                 <Polygon
