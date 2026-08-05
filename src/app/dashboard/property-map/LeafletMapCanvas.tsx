@@ -1,6 +1,6 @@
 'use client';
 
-import { type MutableRefObject, useEffect, useRef } from 'react';
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { boundaryCenter } from './boundary-manager';
@@ -29,6 +29,13 @@ export type MapActions = {
     zoomOut: () => void;
 };
 
+export type MapDiagnostics = {
+    center: LatLngTuple;
+    zoom: number;
+    boundaryPointCount: number;
+    tileErrorCount: number;
+};
+
 type Props = {
     boundary: PropertyBoundary;
     trails: Trail[];
@@ -46,6 +53,7 @@ type Props = {
     onMapClick: (position: LatLngTuple) => void;
     onMapReady: (actions: MapActions) => void;
     onAutoFollowInterrupted: () => void;
+    onDiagnosticsChange: (diagnostics: MapDiagnostics) => void;
 };
 
 const boundaryHandleIcon = L.divIcon({
@@ -126,16 +134,20 @@ function MapController({
     boundaryEditEnabled,
     liveGps,
     autoFollow,
+    tileErrorCount,
     onMapReady,
-    onAutoFollowInterrupted
+    onAutoFollowInterrupted,
+    onDiagnosticsChange
 }: {
     boundary: PropertyBoundary;
     boundaryDraft: LatLngTuple[];
     boundaryEditEnabled: boolean;
     liveGps: GpsFix | null;
     autoFollow: boolean;
+    tileErrorCount: number;
     onMapReady: (actions: MapActions) => void;
     onAutoFollowInterrupted: () => void;
+    onDiagnosticsChange: (diagnostics: MapDiagnostics) => void;
 }) {
     const map = useMap();
     const isProgrammaticMoveRef = useRef(false);
@@ -148,6 +160,17 @@ function MapController({
             isProgrammaticMoveRef.current = false;
         }, 260);
     };
+
+    const emitDiagnostics = useCallback(() => {
+        const center = map.getCenter();
+        const activePolygon = boundaryEditEnabled && boundaryDraft.length >= 3 ? boundaryDraft : boundary.polygon;
+        onDiagnosticsChange({
+            center: [center.lat, center.lng],
+            zoom: map.getZoom(),
+            boundaryPointCount: activePolygon.length,
+            tileErrorCount
+        });
+    }, [boundary.polygon, boundaryDraft, boundaryEditEnabled, map, onDiagnosticsChange, tileErrorCount]);
 
     useEffect(() => {
         const invalidate = () => map.invalidateSize({ animate: false });
@@ -193,6 +216,27 @@ function MapController({
             map.off('zoomstart', stopAutoFollowOnManualMove);
         };
     }, [autoFollow, map, onAutoFollowInterrupted]);
+
+    useEffect(() => {
+        const publish = () => {
+            emitDiagnostics();
+        };
+
+        map.on('load', publish);
+        map.on('moveend', publish);
+        map.on('zoomend', publish);
+        publish();
+
+        return () => {
+            map.off('load', publish);
+            map.off('moveend', publish);
+            map.off('zoomend', publish);
+        };
+    }, [emitDiagnostics, map]);
+
+    useEffect(() => {
+        emitDiagnostics();
+    }, [emitDiagnostics]);
 
     useEffect(() => {
         if (hasDoneInitialFitRef.current) {
@@ -289,10 +333,20 @@ export default function LeafletMapCanvas({
     onBoundaryDraftInsertFromMidpoint,
     onMapClick,
     onMapReady,
-    onAutoFollowInterrupted
+    onAutoFollowInterrupted,
+    onDiagnosticsChange
 }: Props) {
     const initialCenter = boundary.polygon.length >= 3 ? boundaryCenter(boundary) : DEFAULT_CENTER;
     const boundaryDragInProgressRef = useRef(false);
+    const [tileErrorCount, setTileErrorCount] = useState(0);
+
+    const onTileError = useCallback(() => {
+        setTileErrorCount(previous => previous + 1);
+    }, []);
+
+    useEffect(() => {
+        setTileErrorCount(0);
+    }, [basemapMode]);
 
     const onHandleDragStateChange = (isDragging: boolean) => {
         boundaryDragInProgressRef.current = isDragging;
@@ -307,12 +361,17 @@ export default function LeafletMapCanvas({
         >
             {basemapMode === 'satellite' ? (
                 <>
-                    <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} />
-                    <TileLayer attribution={SATELLITE_TILE_ATTRIBUTION} url={SATELLITE_TILE_URL} />
-                    <TileLayer attribution={SATELLITE_LABEL_TILE_ATTRIBUTION} url={SATELLITE_LABEL_TILE_URL} opacity={0.28} />
+                    <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
+                    <TileLayer attribution={SATELLITE_TILE_ATTRIBUTION} url={SATELLITE_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
+                    <TileLayer
+                        attribution={SATELLITE_LABEL_TILE_ATTRIBUTION}
+                        url={SATELLITE_LABEL_TILE_URL}
+                        opacity={0.28}
+                        eventHandlers={{ tileerror: onTileError }}
+                    />
                 </>
             ) : (
-                <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} />
+                <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
             )}
 
             <MapInteractions onMapClick={onMapClick} isBoundaryDragInProgressRef={boundaryDragInProgressRef} />
@@ -322,8 +381,10 @@ export default function LeafletMapCanvas({
                 boundaryEditEnabled={boundaryEditEnabled}
                 liveGps={liveGps}
                 autoFollow={autoFollow}
+                tileErrorCount={tileErrorCount}
                 onMapReady={onMapReady}
                 onAutoFollowInterrupted={onAutoFollowInterrupted}
+                onDiagnosticsChange={onDiagnosticsChange}
             />
 
             {boundary.polygon.length >= 3 && (

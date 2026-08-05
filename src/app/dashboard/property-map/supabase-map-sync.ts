@@ -1,4 +1,13 @@
-import { buildDefaultBoundary, createId, polygonCenter, trailDistanceMeters, trailDurationSeconds, trailElevationMetrics, trailPaceSecondsPerKm } from './map-engine';
+import {
+    buildBoundaryFromPoints,
+    buildDefaultBoundary,
+    createId,
+    polygonCenter,
+    trailDistanceMeters,
+    trailDurationSeconds,
+    trailElevationMetrics,
+    trailPaceSecondsPerKm
+} from './map-engine';
 import { PhotoAttachment, Pinpoint, PropertyMapSnapshot, Trail, TrailPoint } from './types';
 
 export const MAP_V2_META_PREFIX = '[map-v2]';
@@ -205,8 +214,10 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
     }
 
     let boundary = buildDefaultBoundary();
+    let boundaryLoadedFromMeta = false;
     const pinpoints: Pinpoint[] = [];
     const trails: Trail[] = [];
+    const boundaryFallbackPoints: Array<[number, number]> = [];
 
     for (const rawRow of (data || []) as DbFeatureRow[]) {
         const row = rawRow as DbFeatureRow;
@@ -220,6 +231,7 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
                 updatedAt: new Date().toISOString(),
                 sourceFeatureId: row.id
             };
+            boundaryLoadedFromMeta = true;
             continue;
         }
 
@@ -235,6 +247,7 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
                 updatedAt: meta.updatedAt,
                 sourceFeatureId: row.id
             });
+            boundaryFallbackPoints.push(meta.position);
             continue;
         }
 
@@ -256,6 +269,9 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
             });
             if (trail.points.length >= 2) {
                 trails.push(trail);
+                for (const point of trail.points) {
+                    boundaryFallbackPoints.push([point.lat, point.lng]);
+                }
             }
             continue;
         }
@@ -272,6 +288,20 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
                 updatedAt: new Date().toISOString(),
                 sourceFeatureId: row.id
             });
+            boundaryFallbackPoints.push([row.lat, row.lng]);
+        }
+    }
+
+    if (!boundaryLoadedFromMeta && boundaryFallbackPoints.length > 0) {
+        const inferredBoundary = buildBoundaryFromPoints(boundaryFallbackPoints, {
+            name: 'Family Land Boundary',
+            paddingMeters: 36
+        });
+        if (inferredBoundary) {
+            boundary = {
+                ...inferredBoundary,
+                id: 'boundary-main'
+            };
         }
     }
 

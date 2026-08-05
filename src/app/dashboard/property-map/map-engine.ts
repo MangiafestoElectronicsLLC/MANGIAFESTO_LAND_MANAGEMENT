@@ -45,6 +45,38 @@ export const buildDefaultBoundary = (): PropertyBoundary => {
     };
 };
 
+export const buildBoundaryFromPoints = (
+    points: LatLngTuple[],
+    options?: { name?: string; paddingMeters?: number }
+): PropertyBoundary | null => {
+    if (points.length === 0) return null;
+
+    const lats = points.map(point => point[0]);
+    const lngs = points.map(point => point[1]);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    const centerLat = (minLat + maxLat) / 2;
+    const paddingMeters = options?.paddingMeters ?? 28;
+    const latPad = paddingMeters / 111320;
+    const cosLat = Math.cos((centerLat * Math.PI) / 180);
+    const lngPad = paddingMeters / Math.max(0.0001, 111320 * Math.abs(cosLat));
+
+    return {
+        id: createId('boundary'),
+        name: options?.name?.trim() || 'Family Land Boundary',
+        polygon: [
+            [roundCoord(maxLat + latPad), roundCoord(minLng - lngPad)],
+            [roundCoord(maxLat + latPad), roundCoord(maxLng + lngPad)],
+            [roundCoord(minLat - latPad), roundCoord(maxLng + lngPad)],
+            [roundCoord(minLat - latPad), roundCoord(minLng - lngPad)]
+        ],
+        updatedAt: new Date().toISOString()
+    };
+};
+
 export const haversineMeters = (a: LatLngTuple, b: LatLngTuple) => {
     const earthRadius = 6371000;
     const dLat = ((b[0] - a[0]) * Math.PI) / 180;

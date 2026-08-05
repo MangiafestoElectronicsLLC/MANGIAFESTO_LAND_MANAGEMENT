@@ -33,7 +33,7 @@ import { filesToAttachments, removeAttachmentById } from './photo-attachments';
 import { createPinpoint, createTrail, exportTrailGpx, importTrailFromGpx } from './trail-manager';
 import { ensureSharedMap, loadSnapshotFromSupabase, syncSnapshotToSupabase } from './supabase-map-sync';
 import { BOTTOM_DRAWER_TABS, type BottomDrawerTab } from './ui-controls';
-import type { MapActions } from './LeafletMapCanvas';
+import type { MapActions, MapDiagnostics } from './LeafletMapCanvas';
 import type { GpsFix, LatLngTuple, MapEntityRef, PropertyMapSnapshot, Trail, TrailPoint } from './types';
 import styles from './PropertyMapWorkspace.module.css';
 
@@ -167,6 +167,13 @@ export default function PropertyMapWorkspace() {
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'queued' | 'offline'>('idle');
     const [profileId, setProfileId] = useState<string | null>(null);
     const [mapReady, setMapReady] = useState(false);
+    const [networkOnline, setNetworkOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+    const [mapDiagnostics, setMapDiagnostics] = useState<MapDiagnostics>({
+        center: defaultSnapshot.boundary.polygon[0],
+        zoom: 0,
+        boundaryPointCount: defaultSnapshot.boundary.polygon.length,
+        tileErrorCount: 0
+    });
 
     const gpsHandleRef = useRef<GpsTrackingHandle | null>(null);
     const mapActionsRef = useRef<MapActions | null>(null);
@@ -317,12 +324,14 @@ export default function PropertyMapWorkspace() {
         hydrate();
 
         const onOnline = () => {
+            setNetworkOnline(true);
             setSyncState('idle');
             void flushQueue();
             void runSync();
         };
 
         const onOffline = () => {
+            setNetworkOnline(false);
             setSyncState('offline');
             setStatus('You are offline. Updates are queued for sync.');
         };
@@ -514,6 +523,26 @@ export default function PropertyMapWorkspace() {
     const onMapReady = useCallback((actions: MapActions) => {
         mapActionsRef.current = actions;
         setMapReady(true);
+    }, []);
+
+    const onMapDiagnosticsChange = useCallback((nextDiagnostics: MapDiagnostics) => {
+        setMapDiagnostics(previous => {
+            const sameCenter =
+                Math.abs(previous.center[0] - nextDiagnostics.center[0]) < 0.0000005 &&
+                Math.abs(previous.center[1] - nextDiagnostics.center[1]) < 0.0000005;
+            const sameZoom = Math.abs(previous.zoom - nextDiagnostics.zoom) < 0.0001;
+
+            if (
+                sameCenter &&
+                sameZoom &&
+                previous.boundaryPointCount === nextDiagnostics.boundaryPointCount &&
+                previous.tileErrorCount === nextDiagnostics.tileErrorCount
+            ) {
+                return previous;
+            }
+
+            return nextDiagnostics;
+        });
     }, []);
 
     const onAutoFollowInterrupted = useCallback(() => {
@@ -997,6 +1026,7 @@ export default function PropertyMapWorkspace() {
                             onMapClick={onMapClick}
                             onMapReady={onMapReady}
                             onAutoFollowInterrupted={onAutoFollowInterrupted}
+                            onDiagnosticsChange={onMapDiagnosticsChange}
                         />
                     </div>
 
@@ -1059,6 +1089,18 @@ export default function PropertyMapWorkspace() {
                     </aside>
                 </div>
 
+                <div className={styles.diagnosticsRow}>
+                    <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
+                    <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
+                    <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>
+                    <span className={`${styles.diagnosticsChip} ${mapDiagnostics.tileErrorCount > 0 ? styles.diagnosticsChipWarn : styles.diagnosticsChipOk}`}>
+                        Tile errors: {mapDiagnostics.tileErrorCount}
+                    </span>
+                    <span className={`${styles.diagnosticsChip} ${networkOnline ? styles.diagnosticsChipOk : styles.diagnosticsChipWarn}`}>
+                        Network: {networkOnline ? 'Online' : 'Offline'}
+                    </span>
+                </div>
+
                 <div className={styles.statusRow}>
                     <span>{status}</span>
                     {liveGps && (
@@ -1076,10 +1118,10 @@ export default function PropertyMapWorkspace() {
                             {boundaryConfidenceBadgeLabel && (
                                 <span
                                     className={`${styles.confidenceBadge} ${boundaryConfidenceLevel === 'high'
-                                            ? styles.confidenceHigh
-                                            : boundaryConfidenceLevel === 'medium'
-                                                ? styles.confidenceMedium
-                                                : styles.confidenceLow
+                                        ? styles.confidenceHigh
+                                        : boundaryConfidenceLevel === 'medium'
+                                            ? styles.confidenceMedium
+                                            : styles.confidenceLow
                                         }`}
                                 >
                                     {boundaryConfidenceBadgeLabel}
