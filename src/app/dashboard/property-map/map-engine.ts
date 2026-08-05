@@ -30,18 +30,19 @@ export const createId = (_prefix?: string) => {
 export const roundCoord = (value: number, digits = 7) => Number(value.toFixed(digits));
 
 export const buildDefaultBoundary = (): PropertyBoundary => {
-    // 825 West Ave, Brockport NY — BARLOW DUANE F, ~40 acres (verified via 6-pt L-shape math)
-    // Envelope 445 m N-S × 396 m E-W minus Campfire Creek LLC notch (134 m × 132 m NW) ≈ 40.0 ac
+    // 825 West Ave, Brockport NY — BARLOW DUANE F, L-shaped ~40-acre parcel
+    // Outer bounds identical to the original correctly-sized default rectangle;
+    // NW notch (Campfire Creek LLC) is ~91 m wide × 122 m tall in the upper-left corner.
     return {
         id: createId('boundary'),
         name: 'Family Land Boundary',
         polygon: [
-            [43.2201, -77.9787], // NW inner — Hwy 31, east side of Campfire Creek LLC
-            [43.2201, -77.9754], // NE — Hwy 31 east end
-            [43.2161, -77.9754], // SE
-            [43.2161, -77.9803], // SW
-            [43.2189, -77.9803], // West edge, below Campfire Creek notch
-            [43.2189, -77.9787], // Notch inner corner
+            [43.2199, -77.9792], // NW inner — Hwy 31, east edge of Campfire Creek notch
+            [43.2199, -77.9754], // NE — Hwy 31 east end
+            [43.2163, -77.9754], // SE
+            [43.2163, -77.9803], // SW
+            [43.2188, -77.9803], // West edge, south end of Campfire Creek notch
+            [43.2188, -77.9792], // Notch inner corner
         ],
         updatedAt: new Date().toISOString()
     };

@@ -62,7 +62,7 @@ const defaultSnapshot: PropertyMapSnapshot = {
 
 const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
 const OFFLINE_MAP_ID = 'offline-local-map';
-const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-40ac-2026-08-05-4';
+const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-fix-2026-08-05-5';
 const PROPERTY_MAP_RUNTIME_HASH = (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'local-dev').slice(0, 12);
 const PROPERTY_MAP_DEPLOYED_AT = (() => {
     const raw = process.env.NEXT_PUBLIC_DEPLOYED_AT_UTC || '';
@@ -149,6 +149,23 @@ const buildRectangleBoundaryFromPoints = (points: LatLngTuple[], paddingMeters =
         [minLat - latPad, maxLng + lngPad],
         [minLat - latPad, minLng - lngPad]
     ];
+};
+
+// Upgrade any cached default boundary (4-pt rectangle or any previous 6-pt default) to current shape.
+// Leaves user-customised polygons (7+ points, or already matching current default) untouched.
+const CORRECT_DEFAULT_NW: LatLngTuple = [43.2199, -77.9792];
+const migrateBoundary = (snap: PropertyMapSnapshot): PropertyMapSnapshot => {
+    const poly = snap.boundary.polygon;
+    const alreadyCorrect =
+        poly.length === 6 &&
+        Math.abs(poly[0][0] - CORRECT_DEFAULT_NW[0]) < 0.00005 &&
+        Math.abs(poly[0][1] - CORRECT_DEFAULT_NW[1]) < 0.00005;
+    if (alreadyCorrect || poly.length > 6) return snap;
+    const correct = buildDefaultBoundary();
+    return {
+        ...snap,
+        boundary: { ...correct, sourceFeatureId: snap.boundary.sourceFeatureId }
+    };
 };
 
 export default function PropertyMapWorkspace() {
@@ -282,7 +299,7 @@ export default function PropertyMapWorkspace() {
             const cached = loadCachedSnapshot();
             if (cached) {
                 setSnapshot({
-                    ...cached,
+                    ...migrateBoundary(cached),
                     mapId: cached.mapId || OFFLINE_MAP_ID
                 });
                 setStatus('Loaded cached map while reconnecting to shared data.');
@@ -301,10 +318,10 @@ export default function PropertyMapWorkspace() {
                 setProfileId(user.id);
                 const map = await ensureSharedMap(supabase, user.id);
                 const remoteSnapshot = await loadSnapshotFromSupabase(supabase, map.id);
-                const effectiveSnapshot = {
+                const effectiveSnapshot = migrateBoundary({
                     ...remoteSnapshot,
                     mapId: map.id
-                };
+                });
 
                 setSnapshot(effectiveSnapshot);
                 saveCachedSnapshot(effectiveSnapshot);
