@@ -62,7 +62,7 @@ const defaultSnapshot: PropertyMapSnapshot = {
 
 const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
 const OFFLINE_MAP_ID = 'offline-local-map';
-const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-fix-2026-08-05-5';
+const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-south-2026-08-05-6';
 const PROPERTY_MAP_RUNTIME_HASH = (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'local-dev').slice(0, 12);
 const PROPERTY_MAP_DEPLOYED_AT = (() => {
     const raw = process.env.NEXT_PUBLIC_DEPLOYED_AT_UTC || '';
@@ -153,7 +153,7 @@ const buildRectangleBoundaryFromPoints = (points: LatLngTuple[], paddingMeters =
 
 // Upgrade any cached default boundary (4-pt rectangle or any previous 6-pt default) to current shape.
 // Leaves user-customised polygons (7+ points, or already matching current default) untouched.
-const CORRECT_DEFAULT_NW: LatLngTuple = [43.2199, -77.9792];
+const CORRECT_DEFAULT_NW: LatLngTuple = [43.2199, -77.9793];
 const migrateBoundary = (snap: PropertyMapSnapshot): PropertyMapSnapshot => {
     const poly = snap.boundary.polygon;
     const alreadyCorrect =
