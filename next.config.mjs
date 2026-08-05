@@ -1,5 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    env: {
+        NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA || '',
+        NEXT_PUBLIC_DEPLOYED_AT_UTC:
+            process.env.VERCEL_GIT_COMMIT_TIMESTAMP ||
+            process.env.VERCEL_DEPLOYMENT_CREATED_AT ||
+            new Date().toISOString()
+    },
     images: {
         remotePatterns: [
             {
@@ -37,7 +44,7 @@ const nextConfig = {
                     {
                         key: 'Content-Security-Policy',
                         value:
-                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src 'self' https://me-cam.replit.app; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
+                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net wss://*.supabase.co wss://*.supabase.in wss://*.supabase.com wss://*.supabase.net; frame-src 'self' https://me-cam.replit.app; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
                     }
                 ]
             }

@@ -13,6 +13,8 @@ import {
     SATELLITE_LABEL_TILE_URL,
     SATELLITE_TILE_ATTRIBUTION,
     SATELLITE_TILE_URL,
+    STREET_FALLBACK_TILE_ATTRIBUTION,
+    STREET_FALLBACK_TILE_URL,
     STREET_TILE_ATTRIBUTION,
     STREET_TILE_URL,
     clampZoom,
@@ -34,6 +36,7 @@ export type MapDiagnostics = {
     zoom: number;
     boundaryPointCount: number;
     tileErrorCount: number;
+    activeBasemapMode: BasemapMode | 'forced-street-fallback';
 };
 
 type Props = {
@@ -134,6 +137,7 @@ function MapController({
     boundaryEditEnabled,
     liveGps,
     autoFollow,
+    activeBasemapMode,
     tileErrorCount,
     onMapReady,
     onAutoFollowInterrupted,
@@ -144,6 +148,7 @@ function MapController({
     boundaryEditEnabled: boolean;
     liveGps: GpsFix | null;
     autoFollow: boolean;
+    activeBasemapMode: BasemapMode | 'forced-street-fallback';
     tileErrorCount: number;
     onMapReady: (actions: MapActions) => void;
     onAutoFollowInterrupted: () => void;
@@ -168,9 +173,10 @@ function MapController({
             center: [center.lat, center.lng],
             zoom: map.getZoom(),
             boundaryPointCount: activePolygon.length,
-            tileErrorCount
+            tileErrorCount,
+            activeBasemapMode
         });
-    }, [boundary.polygon, boundaryDraft, boundaryEditEnabled, map, onDiagnosticsChange, tileErrorCount]);
+    }, [activeBasemapMode, boundary.polygon, boundaryDraft, boundaryEditEnabled, map, onDiagnosticsChange, tileErrorCount]);
 
     useEffect(() => {
         const invalidate = () => map.invalidateSize({ animate: false });
@@ -339,14 +345,32 @@ export default function LeafletMapCanvas({
     const initialCenter = boundary.polygon.length >= 3 ? boundaryCenter(boundary) : DEFAULT_CENTER;
     const boundaryDragInProgressRef = useRef(false);
     const [tileErrorCount, setTileErrorCount] = useState(0);
+    const [useStreetFallback, setUseStreetFallback] = useState(false);
+    const [forceStreetOnly, setForceStreetOnly] = useState(false);
 
     const onTileError = useCallback(() => {
-        setTileErrorCount(previous => previous + 1);
+        setTileErrorCount(previous => {
+            const nextCount = previous + 1;
+            if (nextCount >= 14) {
+                setUseStreetFallback(true);
+            }
+            if (nextCount >= 32) {
+                setForceStreetOnly(true);
+            }
+            return nextCount;
+        });
     }, []);
 
     useEffect(() => {
         setTileErrorCount(0);
+        setUseStreetFallback(false);
+        setForceStreetOnly(false);
     }, [basemapMode]);
+
+    const activeStreetTileUrl = useStreetFallback ? STREET_FALLBACK_TILE_URL : STREET_TILE_URL;
+    const activeStreetAttribution = useStreetFallback ? STREET_FALLBACK_TILE_ATTRIBUTION : STREET_TILE_ATTRIBUTION;
+    const activeBasemapMode: BasemapMode = forceStreetOnly ? 'street' : basemapMode;
+    const activeBoundaryPolygon = boundaryEditEnabled && boundaryDraft.length >= 3 ? boundaryDraft : boundary.polygon;
 
     const onHandleDragStateChange = (isDragging: boolean) => {
         boundaryDragInProgressRef.current = isDragging;
@@ -359,9 +383,9 @@ export default function LeafletMapCanvas({
             scrollWheelZoom
             style={{ height: '100%', width: '100%', background: '#0b1220' }}
         >
-            {basemapMode === 'satellite' ? (
+            {activeBasemapMode === 'satellite' ? (
                 <>
-                    <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
+                    <TileLayer attribution={activeStreetAttribution} url={activeStreetTileUrl} eventHandlers={{ tileerror: onTileError }} />
                     <TileLayer attribution={SATELLITE_TILE_ATTRIBUTION} url={SATELLITE_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
                     <TileLayer
                         attribution={SATELLITE_LABEL_TILE_ATTRIBUTION}
@@ -371,7 +395,7 @@ export default function LeafletMapCanvas({
                     />
                 </>
             ) : (
-                <TileLayer attribution={STREET_TILE_ATTRIBUTION} url={STREET_TILE_URL} eventHandlers={{ tileerror: onTileError }} />
+                <TileLayer attribution={activeStreetAttribution} url={activeStreetTileUrl} eventHandlers={{ tileerror: onTileError }} />
             )}
 
             <MapInteractions onMapClick={onMapClick} isBoundaryDragInProgressRef={boundaryDragInProgressRef} />
@@ -381,15 +405,16 @@ export default function LeafletMapCanvas({
                 boundaryEditEnabled={boundaryEditEnabled}
                 liveGps={liveGps}
                 autoFollow={autoFollow}
+                activeBasemapMode={activeBasemapMode}
                 tileErrorCount={tileErrorCount}
                 onMapReady={onMapReady}
                 onAutoFollowInterrupted={onAutoFollowInterrupted}
                 onDiagnosticsChange={onDiagnosticsChange}
             />
 
-            {boundary.polygon.length >= 3 && (
+            {activeBoundaryPolygon.length >= 3 && (
                 <Polygon
-                    positions={boundary.polygon}
+                    positions={activeBoundaryPolygon}
                     pathOptions={{ color: '#22c55e', weight: 3, opacity: 0.95, fillOpacity: 0.08 }}
                 />
             )}

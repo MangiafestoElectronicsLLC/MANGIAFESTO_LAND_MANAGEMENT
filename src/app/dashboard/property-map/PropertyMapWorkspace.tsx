@@ -62,6 +62,16 @@ const defaultSnapshot: PropertyMapSnapshot = {
 
 const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
 const OFFLINE_MAP_ID = 'offline-local-map';
+const PROPERTY_MAP_BUILD_STAMP = 'pm-hotfix-2026-08-05-2';
+const PROPERTY_MAP_RUNTIME_HASH = (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'local-dev').slice(0, 12);
+const PROPERTY_MAP_DEPLOYED_AT = (() => {
+    const raw = process.env.NEXT_PUBLIC_DEPLOYED_AT_UTC || '';
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) {
+        return new Date(parsed).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    }
+    return 'unknown';
+})();
 
 const updateTrail = (trails: Trail[], trailId: string, updater: (trail: Trail) => Trail) =>
     trails.map(trail => (trail.id === trailId ? updater(trail) : trail));
@@ -172,7 +182,8 @@ export default function PropertyMapWorkspace() {
         center: defaultSnapshot.boundary.polygon[0],
         zoom: 0,
         boundaryPointCount: defaultSnapshot.boundary.polygon.length,
-        tileErrorCount: 0
+        tileErrorCount: 0,
+        activeBasemapMode: 'street'
     });
 
     const gpsHandleRef = useRef<GpsTrackingHandle | null>(null);
@@ -662,7 +673,7 @@ export default function PropertyMapWorkspace() {
         }
 
         const nextBoundary = buildBoundary(boundaryDraft, boundary.name);
-        nextBoundary.sourceFeatureId = boundary.sourceFeatureId;
+        nextBoundary.sourceFeatureId = boundary.sourceFeatureId || createId('boundary');
 
         setSnapshot(previous => ({
             ...previous,
@@ -671,7 +682,10 @@ export default function PropertyMapWorkspace() {
         setBoundaryDraft([]);
         setToolMode('idle');
         setStatus('Boundary polygon saved. GPS containment checks now use this shape.');
-        mapActionsRef.current?.fitBoundary();
+        window.setTimeout(() => {
+            mapActionsRef.current?.fitBoundary();
+            void runSync();
+        }, 40);
     };
 
     const importGpxFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1071,14 +1085,6 @@ export default function PropertyMapWorkspace() {
                         >
                             Refresh Map Tiles
                         </button>
-                        <div className={styles.inlineActions}>
-                            <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.zoomIn()} disabled={!mapReady}>
-                                Zoom In
-                            </button>
-                            <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.zoomOut()} disabled={!mapReady}>
-                                Zoom Out
-                            </button>
-                        </div>
                         <button
                             type="button"
                             className={styles.toolBtn}
@@ -1090,6 +1096,19 @@ export default function PropertyMapWorkspace() {
                 </div>
 
                 <div className={styles.diagnosticsRow}>
+                    <span className={styles.diagnosticsChip}>Build: {PROPERTY_MAP_BUILD_STAMP}</span>
+                    <span className={styles.diagnosticsChip}>Runtime SHA: {PROPERTY_MAP_RUNTIME_HASH}</span>
+                    <span className={styles.diagnosticsChip}>Deployed At: {PROPERTY_MAP_DEPLOYED_AT}</span>
+                    <span
+                        className={`${styles.diagnosticsChip} ${mapDiagnostics.activeBasemapMode === 'forced-street-fallback'
+                                ? styles.basemapChipForcedFallback
+                                : mapDiagnostics.activeBasemapMode === 'satellite'
+                                    ? styles.basemapChipSatellite
+                                    : styles.basemapChipStreet
+                            }`}
+                    >
+                        Basemap: {mapDiagnostics.activeBasemapMode === 'forced-street-fallback' ? 'forced-street-fallback' : mapDiagnostics.activeBasemapMode}
+                    </span>
                     <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
                     <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
                     <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>

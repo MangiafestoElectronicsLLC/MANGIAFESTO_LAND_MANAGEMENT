@@ -137,6 +137,24 @@
     color: #fecaca;
 }
 
+.basemapChipStreet {
+    border-color: rgba(34, 197, 94, 0.7);
+    background: rgba(6, 78, 59, 0.26);
+    color: #bbf7d0;
+}
+
+.basemapChipSatellite {
+    border-color: rgba(234, 179, 8, 0.72);
+    background: rgba(113, 63, 18, 0.28);
+    color: #fde68a;
+}
+
+.basemapChipForcedFallback {
+    border-color: rgba(239, 68, 68, 0.78);
+    background: rgba(127, 29, 29, 0.32);
+    color: #fecaca;
+}
+
 .confidenceRow {
     display: inline-flex;
     align-items: center;
