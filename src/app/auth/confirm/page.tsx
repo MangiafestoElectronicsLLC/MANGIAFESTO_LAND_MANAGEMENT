@@ -29,12 +29,25 @@ function AuthConfirmPageContent() {
     const [password, setPassword] = useState('');
     const [saving, setSaving] = useState(false);
 
-    const isRecovery = searchParams.get('type') === 'recovery' || searchParams.get('mode') === 'recovery';
+    const code = searchParams.get('code');
+    const tokenHash = searchParams.get('token_hash');
+    const type = searchParams.get('type');
+    const isRecovery = type === 'recovery' || searchParams.get('mode') === 'recovery';
 
     useEffect(() => {
         const load = async () => {
             try {
                 const supabase = supabaseClient();
+
+                if (code) {
+                    await supabase.auth.exchangeCodeForSession(code);
+                } else if (tokenHash && type) {
+                    await supabase.auth.verifyOtp({
+                        type: type as 'signup' | 'recovery' | 'email' | 'magiclink' | 'invite',
+                        token_hash: tokenHash
+                    });
+                }
+
                 const {
                     data: { user }
                 } = await supabase.auth.getUser();
@@ -57,7 +70,7 @@ function AuthConfirmPageContent() {
         };
 
         load();
-    }, [isRecovery, router]);
+    }, [code, isRecovery, router, tokenHash, type]);
 
     const handlePasswordUpdate = async () => {
         if (password.length < 6) {

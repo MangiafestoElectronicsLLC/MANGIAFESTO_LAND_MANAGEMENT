@@ -15,12 +15,18 @@ export const startGpsTracking = ({ onFix, onError }: GpsTrackingCallbacks): GpsT
         return null;
     }
 
+    const geolocationOptions: PositionOptions = {
+        enableHighAccuracy: true,
+        maximumAge: 3000,
+        timeout: 20000
+    };
+
     const watchId = navigator.geolocation.watchPosition(
         position => {
-            onFix({
+            const nextFix: GpsFix = {
                 lat: position.coords.latitude,
                 lng: position.coords.longitude,
-                accuracyMeters: position.coords.accuracy,
+                accuracyMeters: position.coords.accuracy || 30,
                 altitudeMeters:
                     typeof position.coords.altitude === 'number' && Number.isFinite(position.coords.altitude)
                         ? position.coords.altitude
@@ -34,11 +40,13 @@ export const startGpsTracking = ({ onFix, onError }: GpsTrackingCallbacks): GpsT
                         ? position.coords.speed
                         : null,
                 timestamp: position.timestamp
-            });
+            };
+
+            onFix(nextFix);
         },
         error => {
             if (error.code === error.PERMISSION_DENIED) {
-                onError('Location permission denied. Enable GPS permission in your browser settings.');
+                onError('Location permission denied. Enable GPS permission in your browser settings and tap GPS again.');
                 return;
             }
             if (error.code === error.POSITION_UNAVAILABLE) {
@@ -46,16 +54,12 @@ export const startGpsTracking = ({ onFix, onError }: GpsTrackingCallbacks): GpsT
                 return;
             }
             if (error.code === error.TIMEOUT) {
-                onError('GPS timed out while waiting for a fix.');
+                onError('GPS timed out while waiting for a fix. Try again with better sky visibility.');
                 return;
             }
             onError(error.message || 'GPS tracking failed.');
         },
-        {
-            enableHighAccuracy: true,
-            maximumAge: 2000,
-            timeout: 15000
-        }
+        geolocationOptions
     );
 
     return {

@@ -177,7 +177,7 @@ export default function PropertyMapWorkspace() {
     const [pinDraftType, setPinDraftType] = useState<'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera'>('note');
 
     const [snapshot, setSnapshot] = useState<PropertyMapSnapshot>(defaultSnapshot);
-    const [gpsEnabled, setGpsEnabled] = useState(false);
+    const [gpsEnabled, setGpsEnabled] = useState(() => typeof navigator !== 'undefined' && 'geolocation' in navigator);
     const [autoFollow, setAutoFollow] = useState(true);
     const [recordingTrail, setRecordingTrail] = useState(false);
     const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite');
@@ -393,6 +393,7 @@ export default function PropertyMapWorkspace() {
         if (!gpsEnabled) {
             gpsHandleRef.current?.stop();
             gpsHandleRef.current = null;
+            setLiveGps(null);
             return;
         }
 
@@ -400,6 +401,8 @@ export default function PropertyMapWorkspace() {
             onFix: fix => {
                 setLiveGps(fix);
                 setError(null);
+                setStatus('Live GPS lock acquired. Your location is now visible on the property map.');
+                setAutoFollow(true);
 
                 if (!recordingTrail) return;
 
@@ -1122,24 +1125,10 @@ export default function PropertyMapWorkspace() {
 
                 <div className={styles.diagnosticsRow}>
                     <span className={styles.diagnosticsChip}>Build: {PROPERTY_MAP_BUILD_STAMP}</span>
-                    <span className={styles.diagnosticsChip}>Runtime SHA: {PROPERTY_MAP_RUNTIME_HASH}</span>
-                    <span className={styles.diagnosticsChip}>Deployed At: {PROPERTY_MAP_DEPLOYED_AT}</span>
-                    <span
-                        className={`${styles.diagnosticsChip} ${mapDiagnostics.activeBasemapMode === 'forced-street-fallback'
-                            ? styles.basemapChipForcedFallback
-                            : mapDiagnostics.activeBasemapMode === 'satellite'
-                                ? styles.basemapChipSatellite
-                                : styles.basemapChipStreet
-                            }`}
-                    >
-                        Basemap: {mapDiagnostics.activeBasemapMode === 'forced-street-fallback' ? 'forced-street-fallback' : mapDiagnostics.activeBasemapMode}
-                    </span>
+                    <span className={styles.diagnosticsChip}>Runtime: {PROPERTY_MAP_RUNTIME_HASH}</span>
                     <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
                     <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
                     <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>
-                    <span className={`${styles.diagnosticsChip} ${mapDiagnostics.tileErrorCount > 0 ? styles.diagnosticsChipWarn : styles.diagnosticsChipOk}`}>
-                        Tile errors: {mapDiagnostics.tileErrorCount}
-                    </span>
                     <span className={`${styles.diagnosticsChip} ${networkOnline ? styles.diagnosticsChipOk : styles.diagnosticsChipWarn}`}>
                         Network: {networkOnline ? 'Online' : 'Offline'}
                     </span>

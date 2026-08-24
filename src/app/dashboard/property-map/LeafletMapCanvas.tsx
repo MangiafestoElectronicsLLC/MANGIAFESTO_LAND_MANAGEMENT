@@ -73,20 +73,6 @@ const boundaryMidpointIcon = L.divIcon({
     iconAnchor: [6, 6]
 });
 
-// Self-contained GPS pin: animation injected into <head> once, all visuals use inline styles.
-const GPS_ICON_HTML =
-    '<div style="position:relative;width:26px;height:26px;">' +
-    '<div class="gps-pulse-dot" style="position:absolute;inset:0;border-radius:50%;background:#2563eb;opacity:0.5;"></div>' +
-    '<div style="position:absolute;inset:5px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px rgba(37,99,235,0.35),0 2px 8px rgba(0,0,0,0.45);"></div>' +
-    '</div>';
-
-const gpsLocationIcon = L.divIcon({
-    className: '',
-    html: GPS_ICON_HTML,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13]
-});
-
 function BoundaryMidpointHandle({
     edgeIndex,
     position,
@@ -569,21 +555,28 @@ export default function LeafletMapCanvas({
 
             {liveGps && (
                 <>
+                    {/* Accuracy radius ring */}
                     <Circle
                         center={[liveGps.lat, liveGps.lng]}
                         radius={Math.max(liveGps.accuracyMeters, 2)}
-                        pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.1, weight: 1.5, dashArray: '4 4' }}
+                        pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.08, weight: 1.5, dashArray: '5 5' }}
                     />
-                    <Marker
-                        position={[liveGps.lat, liveGps.lng]}
-                        icon={gpsLocationIcon}
-                        zIndexOffset={1000}
+                    {/* Outer pulsing ring */}
+                    <CircleMarker
+                        center={[liveGps.lat, liveGps.lng]}
+                        radius={18}
+                        pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.18, weight: 0 }}
+                    />
+                    {/* Inner solid location dot */}
+                    <CircleMarker
+                        center={[liveGps.lat, liveGps.lng]}
+                        radius={9}
+                        pathOptions={{ color: '#ffffff', fillColor: '#2563eb', fillOpacity: 1, weight: 3 }}
                     >
-                        <Tooltip direction="top" permanent={false}>
-                            You are here
-                            {liveGps.accuracyMeters < 30 ? '' : ` (±${Math.round(liveGps.accuracyMeters)}m)`}
+                        <Tooltip direction="top" offset={[0, -12]}>
+                            You are here{liveGps.accuracyMeters >= 30 ? ` (±${Math.round(liveGps.accuracyMeters)}m)` : ''}
                         </Tooltip>
-                    </Marker>
+                    </CircleMarker>
                 </>
             )}
         </MapContainer>

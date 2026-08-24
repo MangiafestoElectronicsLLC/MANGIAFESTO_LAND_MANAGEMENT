@@ -46,6 +46,67 @@ function AuthPageContent() {
         return `${window.location.origin}/auth/confirm`;
     }, []);
 
+    const humanizeAuthError = (message: string) => {
+        const lower = message.toLowerCase();
+        if (lower.includes('email not confirmed')) {
+            return 'Your email is not confirmed yet. Check your inbox, then try again.';
+        }
+        if (lower.includes('invalid login credentials')) {
+            return 'That email or password did not match. Check for spelling, caps lock, and extra spaces.';
+        }
+        if (lower.includes('missing supabase config')) {
+            return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
+        }
+        if (lower.includes('invalid supabase')) {
+            return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
+        }
+        if (lower.includes('email rate limit exceeded')) {
+            return 'Too many emails were sent recently. Wait a few minutes, then try again.';
+        }
+        if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('fetch')) {
+            return 'Could not reach the Supabase service. Check the project URL, anon key, and network connection.';
+        }
+        return message;
+    };
+
+    useEffect(() => {
+        const handleAuthCallback = async () => {
+            const code = searchParams.get('code');
+            const tokenHash = searchParams.get('token_hash');
+            const type = searchParams.get('type');
+
+            if (!code && !tokenHash) {
+                return;
+            }
+
+            try {
+                const supabase = supabaseClient();
+
+                if (code) {
+                    await supabase.auth.exchangeCodeForSession(code);
+                } else if (tokenHash && type) {
+                    await supabase.auth.verifyOtp({
+                        type: type as 'signup' | 'recovery' | 'email' | 'magiclink' | 'invite',
+                        token_hash: tokenHash
+                    });
+                }
+
+                const {
+                    data: { user }
+                } = await supabase.auth.getUser();
+
+                if (user) {
+                    router.replace('/dashboard');
+                    return;
+                }
+            } catch (err: any) {
+                setError(humanizeAuthError(err?.message ?? 'The sign-in link could not be completed.'));
+            }
+        };
+
+        handleAuthCallback();
+    }, [router, searchParams]);
+
     useEffect(() => {
         const restoreSession = async () => {
             try {
@@ -74,29 +135,6 @@ function AuthPageContent() {
         }
     }, [searchParams]);
 
-    const humanizeAuthError = (message: string) => {
-        const lower = message.toLowerCase();
-        if (lower.includes('email not confirmed')) {
-            return 'Your email is not confirmed yet. Check your inbox, then try again.';
-        }
-        if (lower.includes('invalid login credentials')) {
-            return 'That email or password did not match. Check for spelling, caps lock, and extra spaces.';
-        }
-        if (lower.includes('missing supabase config')) {
-            return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
-        }
-        if (lower.includes('invalid supabase')) {
-            return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
-        }
-        if (lower.includes('email rate limit exceeded')) {
-            return 'Too many emails were sent recently. Wait a few minutes, then try again.';
-        }
-        if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('fetch')) {
-            return 'Could not reach the Supabase service. Check the project URL, anon key, and network connection.';
-        }
-        return message;
-    };
-
     const sendFallbackEmail = async (kind: 'magic' | 'reset') => {
         const nextEmail = email.trim().toLowerCase();
         if (!nextEmail) {
@@ -115,7 +153,7 @@ function AuthPageContent() {
                 const { error: magicError } = await supabase.auth.signInWithOtp({
                     email: nextEmail,
                     options: {
-                        emailRedirectTo: redirectTo
+                        emailRedirectTo: `${redirectTo}?type=magic`
                     }
                 });
 
@@ -129,7 +167,7 @@ function AuthPageContent() {
             }
 
             const { error: resetError } = await supabase.auth.resetPasswordForEmail(nextEmail, {
-                redirectTo
+                redirectTo: `${redirectTo}?type=recovery`
             });
 
             if (resetError) {
