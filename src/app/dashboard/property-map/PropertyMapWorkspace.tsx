@@ -8,7 +8,12 @@ import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
 import { boundaryCenter, buildBoundary } from './boundary-manager';
-import { startGpsTracking, type GpsTrackingHandle } from './gps-tracking';
+import {
+    getGeolocationPermissionState,
+    startGpsTracking,
+    type GeolocationPermissionState,
+    type GpsTrackingHandle
+} from './gps-tracking';
 import {
     type BasemapMode,
     buildDefaultBoundary,
@@ -186,6 +191,7 @@ export default function PropertyMapWorkspace() {
     const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite');
 
     const [liveGps, setLiveGps] = useState<GpsFix | null>(null);
+    const [locationPermission, setLocationPermission] = useState<GeolocationPermissionState | null>(null);
     const [walkedTrailDraft, setWalkedTrailDraft] = useState<TrailPoint[]>([]);
     const [plannedTrailDraft, setPlannedTrailDraft] = useState<LatLngTuple[]>([]);
     const [boundaryDraft, setBoundaryDraft] = useState<LatLngTuple[]>([]);
@@ -296,6 +302,22 @@ export default function PropertyMapWorkspace() {
         if (typeof window === 'undefined') return;
         window.localStorage.setItem(BASEMAP_MODE_STORAGE_KEY, basemapMode);
     }, [basemapMode]);
+
+    const refreshLocationPermission = useCallback(() => {
+        void getGeolocationPermissionState().then(setLocationPermission);
+    }, []);
+
+    useEffect(() => {
+        refreshLocationPermission();
+        if (typeof document === 'undefined') return;
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                refreshLocationPermission();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [refreshLocationPermission]);
 
     useEffect(() => {
         const hydrate = async () => {
@@ -430,6 +452,7 @@ export default function PropertyMapWorkspace() {
             onError: message => {
                 setError(message);
                 setGpsEnabled(false);
+                refreshLocationPermission();
             }
         });
 
@@ -443,7 +466,7 @@ export default function PropertyMapWorkspace() {
         return () => {
             handle.stop();
         };
-    }, [gpsEnabled, recordingTrail]);
+    }, [gpsEnabled, recordingTrail, refreshLocationPermission]);
 
     useEffect(() => {
         if (toolMode !== 'boundary') return;
@@ -1025,6 +1048,18 @@ export default function PropertyMapWorkspace() {
                     <span className={styles.badge}>{pinpoints.length} pinpoints</span>
                     <span className={styles.badge}>Map: {basemapMode === 'satellite' ? 'Satellite' : 'Street'}</span>
                     <span className={styles.badge}>Sync: {syncState}</span>
+                    {locationPermission === 'denied' && (
+                        <span className={`${styles.badge} ${styles.outside}`}>Location: Blocked</span>
+                    )}
+                    {locationPermission === 'granted' && (
+                        <span className={`${styles.badge} ${styles.inside}`}>Location: Allowed</span>
+                    )}
+                    {locationPermission === 'prompt' && (
+                        <span className={styles.badge}>Location: Ask on Use</span>
+                    )}
+                    {locationPermission === 'unsupported' && (
+                        <span className={`${styles.badge} ${styles.outside}`}>Location: Unsupported</span>
+                    )}
                 </div>
             </section>
 
@@ -1175,6 +1210,13 @@ export default function PropertyMapWorkspace() {
                 {error && (
                     <div className={styles.errorBox}>
                         <div>{error}</div>
+                        {locationPermission === 'denied' && (
+                            <div style={{ marginTop: '0.4rem', opacity: 0.9 }}>
+                                Tip: if you use a VPN, it will not cause a &quot;blocked&quot; permission, but it can make GPS
+                                fixes slower or less accurate once location is allowed &mdash; try disabling it if fixes
+                                still fail after allowing location.
+                            </div>
+                        )}
                         <div className={styles.inlineActions} style={{ marginTop: '0.55rem' }}>
                             <button type="button" className="soft-button" onClick={retrySupabaseConnection}>
                                 Retry Connection
@@ -1182,6 +1224,18 @@ export default function PropertyMapWorkspace() {
                             <button type="button" className="soft-button" onClick={resetOfflineCache}>
                                 Reset Offline Cache
                             </button>
+                            {locationPermission === 'denied' && (
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    onClick={() => {
+                                        refreshLocationPermission();
+                                        setGpsEnabled(true);
+                                    }}
+                                >
+                                    I Fixed It, Retry GPS
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
