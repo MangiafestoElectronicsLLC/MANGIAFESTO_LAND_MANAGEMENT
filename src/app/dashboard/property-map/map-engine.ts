@@ -41,33 +41,13 @@ export const roundCoord = (value: number, digits = 7) => Number(value.toFixed(di
 export const canonicalPropertyBoundary = (): LatLngTuple[] =>
     CANONICAL_BOUNDARY_POLYGON.map(([lat, lng]) => [roundCoord(lat, 7), roundCoord(lng, 7)] as LatLngTuple);
 
-export const isNearCanonicalPropertyBoundary = (polygon: LatLngTuple[]) => {
-    if (!Array.isArray(polygon) || polygon.length < 3) return false;
-
-    const validPoints = polygon.filter(point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]));
-    if (validPoints.length < 3) return false;
-
-    const center = polygonCenter(validPoints);
-    const canonicalCenter = polygonCenter(canonicalPropertyBoundary());
-    const latDifference = Math.abs(center[0] - canonicalCenter[0]);
-    const lngDifference = Math.abs(center[1] - canonicalCenter[1]);
-
-    if (latDifference > 0.12 || lngDifference > 0.12) {
-        return false;
-    }
-
-    const lats = validPoints.map(point => point[0]);
-    const lngs = validPoints.map(point => point[1]);
-    const width = Math.max(...lats) - Math.min(...lats);
-    const height = Math.max(...lngs) - Math.min(...lngs);
-
-    return width > 0.001 && width < 0.02 && height > 0.001 && height < 0.02;
-};
-
+// Only sanity-checks the polygon shape (finite numbers, at least 3 points).
+// Does NOT compare against the guessed default shape — a saved/edited boundary
+// is the source of truth and must never be silently reverted.
 export const normalizeBoundary = (boundary?: Partial<PropertyBoundary> | null): PropertyBoundary => {
     const fallback = buildDefaultBoundary();
 
-    if (!boundary || !Array.isArray(boundary.polygon) || boundary.polygon.length < 3) {
+    if (!boundary || !Array.isArray(boundary.polygon)) {
         return fallback;
     }
 
@@ -75,7 +55,7 @@ export const normalizeBoundary = (boundary?: Partial<PropertyBoundary> | null): 
         point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
     ) as LatLngTuple[];
 
-    if (validPoints.length < 3 || !isNearCanonicalPropertyBoundary(validPoints)) {
+    if (validPoints.length < 3) {
         return fallback;
     }
 
@@ -91,7 +71,7 @@ export const normalizeBoundary = (boundary?: Partial<PropertyBoundary> | null): 
 export const buildDefaultBoundary = (): PropertyBoundary => {
     return {
         id: createId('boundary'),
-        name: '825 West Ave Property Boundary',
+        name: '825 West Ave Property Boundary (unsurveyed estimate)',
         polygon: canonicalPropertyBoundary(),
         updatedAt: new Date().toISOString()
     };

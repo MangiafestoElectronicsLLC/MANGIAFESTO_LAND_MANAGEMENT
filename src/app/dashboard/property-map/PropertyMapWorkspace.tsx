@@ -1203,6 +1203,12 @@ export default function PropertyMapWorkspace() {
 
                 {drawerTab === 'boundary' && (
                     <div className={styles.drawerContent}>
+                        <div className={styles.helpText}>
+                            The starting shape is an unsurveyed estimate. Tap Edit Boundary, then drag the orange
+                            corner dots and blue midpoint dots on the satellite view to trace your real tree lines
+                            and field edges. Your saved shape is now kept exactly as you draw it and will not be
+                            reset on reload.
+                        </div>
                         <div className={styles.inlineActions}>
                             <button type="button" className="soft-button" onClick={toggleBoundaryEditMode}>
                                 {toolMode === 'boundary' ? 'Stop Editing Boundary' : 'Edit Boundary'}

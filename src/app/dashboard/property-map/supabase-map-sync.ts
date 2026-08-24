@@ -2,7 +2,6 @@ import {
     buildBoundaryFromPoints,
     buildDefaultBoundary,
     createId,
-    isNearCanonicalPropertyBoundary,
     normalizeBoundary,
     polygonCenter,
     trailDistanceMeters,
@@ -300,7 +299,7 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
             paddingMeters: 36
         });
 
-        if (inferredBoundary && isNearCanonicalPropertyBoundary(inferredBoundary.polygon)) {
+        if (inferredBoundary) {
             boundary = {
                 ...inferredBoundary,
                 id: 'boundary-main'
