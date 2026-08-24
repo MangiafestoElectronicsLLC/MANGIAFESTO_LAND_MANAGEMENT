@@ -442,14 +442,14 @@ export default function LeafletMapCanvas({
             {activeBoundaryPolygon.length >= 3 && (
                 <Polygon
                     positions={activeBoundaryPolygon}
-                    pathOptions={{ color: '#22c55e', weight: 3, opacity: 0.95, fillOpacity: 0.08 }}
+                    pathOptions={{ color: '#2dd4bf', weight: 2.5, opacity: 0.95, fillOpacity: 0.05 }}
                 />
             )}
 
             {boundaryDraft.length >= 2 && (
                 <Polyline
                     positions={boundaryDraft}
-                    pathOptions={{ color: '#f59e0b', weight: 3, dashArray: '6 10' }}
+                    pathOptions={{ color: '#f59e0b', weight: 2.5, dashArray: '6 10' }}
                 />
             )}
 

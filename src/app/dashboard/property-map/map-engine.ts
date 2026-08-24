@@ -3,6 +3,15 @@ import { LatLngTuple, PropertyBoundary, Trail, TrailPoint } from './types';
 export const DEFAULT_CENTER: LatLngTuple = [43.2180558, -77.9778462];
 export const DEFAULT_ZOOM = 17;
 
+const CANONICAL_BOUNDARY_POLYGON: LatLngTuple[] = [
+    [43.2199, -77.9793],
+    [43.2199, -77.9757],
+    [43.2155, -77.9757],
+    [43.2155, -77.9801],
+    [43.2190, -77.9801],
+    [43.2190, -77.9793]
+];
+
 export type BasemapMode = 'satellite' | 'street';
 
 export const SATELLITE_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
@@ -29,21 +38,61 @@ export const createId = (_prefix?: string) => {
 
 export const roundCoord = (value: number, digits = 7) => Number(value.toFixed(digits));
 
+export const canonicalPropertyBoundary = (): LatLngTuple[] =>
+    CANONICAL_BOUNDARY_POLYGON.map(([lat, lng]) => [roundCoord(lat, 7), roundCoord(lng, 7)] as LatLngTuple);
+
+export const isNearCanonicalPropertyBoundary = (polygon: LatLngTuple[]) => {
+    if (!Array.isArray(polygon) || polygon.length < 3) return false;
+
+    const validPoints = polygon.filter(point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]));
+    if (validPoints.length < 3) return false;
+
+    const center = polygonCenter(validPoints);
+    const canonicalCenter = polygonCenter(canonicalPropertyBoundary());
+    const latDifference = Math.abs(center[0] - canonicalCenter[0]);
+    const lngDifference = Math.abs(center[1] - canonicalCenter[1]);
+
+    if (latDifference > 0.12 || lngDifference > 0.12) {
+        return false;
+    }
+
+    const lats = validPoints.map(point => point[0]);
+    const lngs = validPoints.map(point => point[1]);
+    const width = Math.max(...lats) - Math.min(...lats);
+    const height = Math.max(...lngs) - Math.min(...lngs);
+
+    return width > 0.001 && width < 0.02 && height > 0.001 && height < 0.02;
+};
+
+export const normalizeBoundary = (boundary?: Partial<PropertyBoundary> | null): PropertyBoundary => {
+    const fallback = buildDefaultBoundary();
+
+    if (!boundary || !Array.isArray(boundary.polygon) || boundary.polygon.length < 3) {
+        return fallback;
+    }
+
+    const validPoints = boundary.polygon.filter(
+        point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
+    ) as LatLngTuple[];
+
+    if (validPoints.length < 3 || !isNearCanonicalPropertyBoundary(validPoints)) {
+        return fallback;
+    }
+
+    return {
+        id: boundary.id || fallback.id,
+        name: typeof boundary.name === 'string' && boundary.name.trim() ? boundary.name : fallback.name,
+        polygon: validPoints.map(([lat, lng]) => [roundCoord(lat, 7), roundCoord(lng, 7)] as LatLngTuple),
+        updatedAt: boundary.updatedAt || fallback.updatedAt,
+        sourceFeatureId: boundary.sourceFeatureId || fallback.sourceFeatureId
+    };
+};
+
 export const buildDefaultBoundary = (): PropertyBoundary => {
-    // 825 West Ave, Brockport NY — BARLOW DUANE F, ~40 acres
-    // North: Hwy 31 (~43.2199) | South: ~43.2155 | E-W: ~324 m
-    // Campfire Creek LLC notch cut from upper-left corner
     return {
         id: createId('boundary'),
-        name: 'Family Land Boundary',
-        polygon: [
-            [43.2199, -77.9793], // NW inner — Hwy 31, east edge of Campfire Creek notch
-            [43.2199, -77.9757], // NE — Hwy 31 east end
-            [43.2155, -77.9757], // SE
-            [43.2155, -77.9801], // SW
-            [43.2190, -77.9801], // West edge, south end of Campfire Creek notch
-            [43.2190, -77.9793], // Notch inner corner
-        ],
+        name: '825 West Ave Property Boundary',
+        polygon: canonicalPropertyBoundary(),
         updatedAt: new Date().toISOString()
     };
 };

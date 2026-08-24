@@ -19,7 +19,8 @@ import {
     formatDistance,
     formatDuration,
     formatPace,
-    haversineMeters
+    haversineMeters,
+    normalizeBoundary
 } from './map-engine';
 import {
     clearOfflineSnapshotCache,
@@ -155,16 +156,18 @@ const buildRectangleBoundaryFromPoints = (points: LatLngTuple[], paddingMeters =
 // Leaves user-customised polygons (7+ points, or already matching current default) untouched.
 const CORRECT_DEFAULT_NW: LatLngTuple = [43.2199, -77.9793];
 const migrateBoundary = (snap: PropertyMapSnapshot): PropertyMapSnapshot => {
-    const poly = snap.boundary.polygon;
-    const alreadyCorrect =
-        poly.length === 6 &&
-        Math.abs(poly[0][0] - CORRECT_DEFAULT_NW[0]) < 0.00005 &&
-        Math.abs(poly[0][1] - CORRECT_DEFAULT_NW[1]) < 0.00005;
-    if (alreadyCorrect || poly.length > 6) return snap;
-    const correct = buildDefaultBoundary();
+    const normalized = normalizeBoundary(snap.boundary);
+    if (normalized.polygon.length === snap.boundary.polygon.length &&
+        normalized.polygon.every((point, index) => {
+            const existing = snap.boundary.polygon[index];
+            return existing && Math.abs(point[0] - existing[0]) < 0.000001 && Math.abs(point[1] - existing[1]) < 0.000001;
+        })) {
+        return snap;
+    }
+
     return {
         ...snap,
-        boundary: { ...correct, sourceFeatureId: snap.boundary.sourceFeatureId }
+        boundary: { ...normalized, sourceFeatureId: snap.boundary.sourceFeatureId }
     };
 };
 

@@ -2,6 +2,8 @@ import {
     buildBoundaryFromPoints,
     buildDefaultBoundary,
     createId,
+    isNearCanonicalPropertyBoundary,
+    normalizeBoundary,
     polygonCenter,
     trailDistanceMeters,
     trailDurationSeconds,
@@ -294,14 +296,21 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
 
     if (!boundaryLoadedFromMeta && boundaryFallbackPoints.length > 0) {
         const inferredBoundary = buildBoundaryFromPoints(boundaryFallbackPoints, {
-            name: 'Family Land Boundary',
+            name: '825 West Ave Property Boundary',
             paddingMeters: 36
         });
-        if (inferredBoundary) {
+
+        if (inferredBoundary && isNearCanonicalPropertyBoundary(inferredBoundary.polygon)) {
             boundary = {
                 ...inferredBoundary,
                 id: 'boundary-main'
             };
+        } else {
+            boundary = normalizeBoundary({
+                ...boundary,
+                id: 'boundary-main',
+                name: '825 West Ave Property Boundary'
+            });
         }
     }
 

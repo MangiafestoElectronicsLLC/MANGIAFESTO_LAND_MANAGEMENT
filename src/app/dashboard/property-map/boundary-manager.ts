@@ -1,4 +1,4 @@
-import { buildDefaultBoundary, isPointInsidePolygon, polygonCenter } from './map-engine';
+import { buildDefaultBoundary, isPointInsidePolygon, normalizeBoundary, polygonCenter } from './map-engine';
 import { LatLngTuple, PropertyBoundary } from './types';
 
 const BOUNDARY_STORAGE_KEY = 'family-land-boundary-v2';
@@ -13,18 +13,7 @@ export const loadBoundary = (): PropertyBoundary => {
 
     try {
         const parsed = JSON.parse(raw) as PropertyBoundary;
-        if (!Array.isArray(parsed?.polygon) || parsed.polygon.length < 3) {
-            return buildDefaultBoundary();
-        }
-
-        return {
-            id: parsed.id || buildDefaultBoundary().id,
-            name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Family Land Boundary',
-            polygon: parsed.polygon.filter(
-                point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
-            ) as LatLngTuple[],
-            updatedAt: parsed.updatedAt || new Date().toISOString()
-        };
+        return normalizeBoundary(parsed);
     } catch {
         return buildDefaultBoundary();
     }
