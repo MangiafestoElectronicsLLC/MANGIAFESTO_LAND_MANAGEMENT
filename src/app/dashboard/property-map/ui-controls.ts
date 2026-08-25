@@ -19,6 +19,7 @@ export const FLOATING_CONTROLS: ToolbarControl[] = [
 
 export const BOTTOM_DRAWER_TABS = [
     { id: 'boundary', label: 'Boundary Editor' },
+    { id: 'pins', label: 'Pinpoints' },
     { id: 'trails', label: 'Trail Manager' },
     { id: 'photos', label: 'Photo Attachments' },
     { id: 'io', label: 'Import / Export' }

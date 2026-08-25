@@ -450,7 +450,7 @@ export default function LeafletMapCanvas({
                 />
             )}
 
-            {boundaryDraft.length >= 2 && (
+            {boundaryEditEnabled && boundaryDraft.length >= 2 && (
                 <Polyline
                     positions={boundaryDraft}
                     pathOptions={{ color: '#f59e0b', weight: 2.5, dashArray: '6 10' }}
@@ -548,7 +548,7 @@ export default function LeafletMapCanvas({
                     pathOptions={{
                         color: pin.id === selectedPinId ? '#facc15' : '#f8fafc',
                         weight: pin.id === selectedPinId ? 3 : 2,
-                        fillColor: pin.pinType === 'treestand' ? '#16a34a' : pin.pinType === 'range' ? '#ea580c' : '#ef4444',
+                        fillColor: pin.pinType === 'treestand' ? '#16a34a' : pin.pinType === 'range' ? '#ea580c' : pin.pinType === 'sign' ? '#dc2626' : '#ef4444',
                         fillOpacity: 0.95
                     }}
                     eventHandlers={onPinSelect ? { click: () => onPinSelect(pin.id) } : undefined}

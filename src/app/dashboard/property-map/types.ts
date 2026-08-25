@@ -20,7 +20,7 @@ export type Pinpoint = {
     id: string;
     title: string;
     description: string;
-    pinType: 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera';
+    pinType: 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera' | 'sign';
     position: LatLngTuple;
     photos: PhotoAttachment[];
     createdAt: string;

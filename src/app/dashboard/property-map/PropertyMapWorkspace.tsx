@@ -41,7 +41,7 @@ import { createPinpoint, createTrail, exportTrailGpx, importTrailFromGpx } from 
 import { ensureSharedMap, loadSnapshotFromSupabase, syncSnapshotToSupabase } from './supabase-map-sync';
 import { BOTTOM_DRAWER_TABS, type BottomDrawerTab } from './ui-controls';
 import type { MapActions, MapDiagnostics } from './LeafletMapCanvas';
-import type { GpsFix, LatLngTuple, MapEntityRef, PropertyMapSnapshot, Trail, TrailPoint } from './types';
+import type { GpsFix, LatLngTuple, MapEntityRef, Pinpoint, PropertyMapSnapshot, Trail, TrailPoint } from './types';
 import styles from './PropertyMapWorkspace.module.css';
 
 const LeafletMapCanvas = dynamic(() => import('./LeafletMapCanvas'), {
@@ -51,13 +51,14 @@ const LeafletMapCanvas = dynamic(() => import('./LeafletMapCanvas'), {
 
 type ToolMode = 'idle' | 'pin' | 'trail' | 'boundary';
 
-const PIN_TYPES: Array<{ value: 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera'; label: string }> = [
+const PIN_TYPES: Array<{ value: 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera' | 'sign'; label: string }> = [
     { value: 'note', label: 'Note' },
     { value: 'treestand', label: 'Treestand' },
     { value: 'range', label: 'Range' },
     { value: 'water', label: 'Water' },
     { value: 'gate', label: 'Gate' },
-    { value: 'camera', label: 'Camera' }
+    { value: 'camera', label: 'Camera' },
+    { value: 'sign', label: 'Posted Sign' }
 ];
 
 const defaultSnapshot: PropertyMapSnapshot = {
@@ -893,6 +894,26 @@ export default function PropertyMapWorkspace() {
         [pinpoints, trails]
     );
 
+    const updatePinpointField = (pinId: string, updates: Partial<Pick<Pinpoint, 'title' | 'description' | 'pinType'>>) => {
+        setSnapshot(previous => ({
+            ...previous,
+            pinpoints: previous.pinpoints.map(pin =>
+                pin.id === pinId ? { ...pin, ...updates, updatedAt: new Date().toISOString() } : pin
+            )
+        }));
+    };
+
+    const deletePinpoint = (pinId: string) => {
+        setSnapshot(previous => ({
+            ...previous,
+            pinpoints: previous.pinpoints.filter(pin => pin.id !== pinId)
+        }));
+        if (selectedEntity?.type === 'pinpoint' && selectedEntity.id === pinId) {
+            setSelectedEntity(null);
+        }
+        setStatus('Pinpoint deleted.');
+    };
+
     const onSelectEntity = (value: string) => {
         if (!value) {
             setSelectedEntity(null);
@@ -1336,6 +1357,58 @@ export default function PropertyMapWorkspace() {
                         </div>
                         <div className={styles.helpText}>
                             Boundary polygon is synced to Supabase and shared with all family devices. Drag orange corners to move points, or drag blue midpoint handles to add new corners.
+                        </div>
+                    </div>
+                )}
+
+                {drawerTab === 'pins' && (
+                    <div className={styles.drawerContent}>
+                        <div className={styles.groupCard}>
+                            <h4>Pinpoints ({pinpoints.length})</h4>
+                            <div className={styles.helpText}>
+                                Rename, retype (e.g. Posted Sign, Treestand, Gate), edit notes, or delete any marker placed with Add Pinpoint.
+                            </div>
+                            <div className={styles.itemList}>
+                                {pinpoints.length === 0 && <div className={styles.helpText}>No pinpoints yet. Use Add Pinpoint on the map to place one.</div>}
+                                {pinpoints.map(pin => (
+                                    <div key={pin.id} className={styles.itemRow}>
+                                        <div style={{ display: 'grid', gap: '0.4rem', flex: 1 }}>
+                                            <input
+                                                value={pin.title}
+                                                onChange={event => updatePinpointField(pin.id, { title: event.target.value })}
+                                                placeholder="Pinpoint label"
+                                            />
+                                            <div className={styles.inlineActions}>
+                                                <select
+                                                    value={pin.pinType}
+                                                    onChange={event => updatePinpointField(pin.id, { pinType: event.target.value as Pinpoint['pinType'] })}
+                                                >
+                                                    {PIN_TYPES.map(option => (
+                                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                                    ))}
+                                                </select>
+                                                <span className={styles.helpText}>
+                                                    {pin.position[0].toFixed(6)}, {pin.position[1].toFixed(6)} | {pin.photos.length} photo(s)
+                                                </span>
+                                            </div>
+                                            <textarea
+                                                value={pin.description}
+                                                onChange={event => updatePinpointField(pin.id, { description: event.target.value })}
+                                                placeholder="Notes (e.g. posted sign wording, gate combo, etc.)"
+                                                rows={2}
+                                            />
+                                        </div>
+                                        <div className={styles.inlineActions}>
+                                            <button type="button" className="soft-button" onClick={() => setSelectedEntity({ type: 'pinpoint', id: pin.id })}>
+                                                Photos
+                                            </button>
+                                            <button type="button" className="soft-button" onClick={() => deletePinpoint(pin.id)}>
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
                 )}
