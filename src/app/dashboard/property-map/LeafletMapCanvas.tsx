@@ -18,7 +18,8 @@ import {
     STREET_TILE_ATTRIBUTION,
     STREET_TILE_URL,
     clampZoom,
-    formatDistance
+    formatDistance,
+    isPointInsidePolygon
 } from './map-engine';
 import { GpsFix, LatLngTuple, Pinpoint, PropertyBoundary, Trail } from './types';
 
@@ -324,18 +325,14 @@ function MapController({
 
         if (!firstGpsFixDoneRef.current) {
             firstGpsFixDoneRef.current = true;
-            // Always pan to first GPS fix so the pin is immediately visible.
-            runProgrammaticMove(() => {
-                map.setView([liveGps.lat, liveGps.lng], Math.max(map.getZoom(), 17), { animate: true });
-            });
             return;
         }
 
-        if (!autoFollow) return;
+        if (!autoFollow || !isPointInsidePolygon([liveGps.lat, liveGps.lng], boundary.polygon)) return;
         runProgrammaticMove(() => {
             map.setView([liveGps.lat, liveGps.lng], clampZoom(map.getZoom()), { animate: true });
         });
-    }, [autoFollow, liveGps, map]);
+    }, [autoFollow, boundary.polygon, liveGps, map]);
 
     return null;
 }

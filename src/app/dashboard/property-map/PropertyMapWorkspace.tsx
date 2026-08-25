@@ -918,21 +918,18 @@ export default function PropertyMapWorkspace() {
         window.setTimeout(() => mapActionsRef.current?.fitBoundary(), 60);
     };
 
-    const toggleBoundaryEditMode = () => {
-        setToolMode(previous => {
-            if (previous === 'boundary') {
-                setStatus('Boundary edit mode off.');
-                return 'idle';
-            }
-
+    // Entering Edit Boundary mode must auto-load the saved polygon into the draft, otherwise no
+    // draggable corner/midpoint handles render and taps on the map just append stray new points.
+    const selectToolMode = (mode: ToolMode) => {
+        if (mode === 'boundary' && toolMode !== 'boundary') {
             if (boundaryDraft.length < 3 && boundary.polygon.length >= 3) {
                 setBoundaryDraft(boundary.polygon.map(point => [point[0], point[1]]));
-                setStatus('Boundary edit mode on. Drag corner handles directly on map and save when ready.');
-            } else {
-                setStatus('Boundary edit mode on. Drag corner handles directly on map and save when ready.');
             }
-            return 'boundary';
-        });
+            setStatus('Boundary edit mode on. Drag the orange corner dots / blue midpoints, then Save Boundary.');
+        } else if (toolMode === 'boundary' && mode !== 'boundary') {
+            setBoundaryDraft([]);
+        }
+        setToolMode(mode);
     };
 
     const nudgeBoundaryDraft = (northMeters: number, eastMeters: number) => {
@@ -1084,7 +1081,7 @@ export default function PropertyMapWorkspace() {
                             key={option.mode}
                             type="button"
                             className={toolMode === option.mode ? styles.modeButtonActive : styles.modeButton}
-                            onClick={() => setToolMode(option.mode)}
+                            onClick={() => selectToolMode(option.mode)}
                         >
                             {option.label}
                         </button>
