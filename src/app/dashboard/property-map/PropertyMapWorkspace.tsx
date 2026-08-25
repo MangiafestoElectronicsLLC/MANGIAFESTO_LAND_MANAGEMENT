@@ -25,7 +25,8 @@ import {
     formatDuration,
     formatPace,
     haversineMeters,
-    normalizeBoundary
+    normalizeBoundary,
+    polygonAreaAcres
 } from './map-engine';
 import {
     clearOfflineSnapshotCache,
@@ -485,6 +486,12 @@ export default function PropertyMapWorkspace() {
         };
     }, [toolMode]);
 
+    const boundaryAreaAcres = useMemo(() => polygonAreaAcres(boundary.polygon), [boundary.polygon]);
+    const boundaryDraftAreaAcres = useMemo(
+        () => (boundaryDraft.length >= 3 ? polygonAreaAcres(boundaryDraft) : null),
+        [boundaryDraft]
+    );
+
     const gpsInsideBoundary = useMemo(() => {
         if (!liveGps || boundary.polygon.length < 3) return null;
 
@@ -686,6 +693,15 @@ export default function PropertyMapWorkspace() {
         setNewTrailName('');
         setStatus(`Saved ${nextTrail.name}.`);
         setToolMode('idle');
+    };
+
+    // Top toolbar's Save Trail button covers both manual (tap-to-add) and GPS-recorded trails.
+    const saveActiveTrail = () => {
+        if (plannedTrailDraft.length >= 2) {
+            savePlannedTrail();
+            return;
+        }
+        saveWalkedTrail();
     };
 
     const saveWalkedTrail = () => {
@@ -1082,8 +1098,8 @@ export default function PropertyMapWorkspace() {
                     >
                         {recordingTrail ? 'Stop Recording' : 'Record Trail'}
                     </button>
-                    <button type="button" className="soft-button" onClick={saveWalkedTrail} disabled={walkedTrailDraft.length < 2}>
-                        Save Trail
+                    <button type="button" className="soft-button" onClick={saveActiveTrail} disabled={plannedTrailDraft.length < 2 && walkedTrailDraft.length < 2}>
+                        {plannedTrailDraft.length >= 2 ? `Save Manual Trail (${plannedTrailDraft.length} pts)` : 'Save Trail'}
                     </button>
                 </div>
 
@@ -1128,7 +1144,9 @@ export default function PropertyMapWorkspace() {
                             className={toolMode === 'trail' ? styles.toolActive : styles.toolBtn}
                             onClick={() => setToolMode(prev => (prev === 'trail' ? 'idle' : 'trail'))}
                         >
-                            {toolMode === 'trail' ? 'Trail Point Mode On' : 'Add Trail Point'}
+                            {toolMode === 'trail'
+                                ? `Tap map to draw trail (${plannedTrailDraft.length} pts) - Save Trail above when done`
+                                : 'Draw Manual Trail'}
                         </button>
                         <button
                             type="button"
@@ -1167,6 +1185,7 @@ export default function PropertyMapWorkspace() {
                     <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
                     <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
                     <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>
+                    <span className={styles.diagnosticsChip}>Acreage: {boundaryAreaAcres.toFixed(2)} ac</span>
                     <span className={`${styles.diagnosticsChip} ${networkOnline ? styles.diagnosticsChipOk : styles.diagnosticsChipWarn}`}>
                         Network: {networkOnline ? 'Online' : 'Offline'}
                     </span>
@@ -1262,6 +1281,12 @@ export default function PropertyMapWorkspace() {
                             corner dots and blue midpoint dots on the satellite view to trace your real tree lines
                             and field edges. Your saved shape is now kept exactly as you draw it and will not be
                             reset on reload.
+                        </div>
+                        <div className={styles.helpText}>
+                            Saved boundary is currently <strong>{boundaryAreaAcres.toFixed(2)} acres</strong> (target ~40 acres for 825 West Ave).
+                            {boundaryDraftAreaAcres !== null && (
+                                <> Draft in progress: <strong>{boundaryDraftAreaAcres.toFixed(2)} acres</strong> - keep dragging corners/midpoints until this is close to 40 before saving.</>
+                            )}
                         </div>
                         <div className={styles.inlineActions}>
                             <button type="button" className="soft-button" onClick={toggleBoundaryEditMode}>

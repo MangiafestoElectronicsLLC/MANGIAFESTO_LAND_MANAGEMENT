@@ -51,6 +51,8 @@ type Props = {
     autoFollow: boolean;
     basemapMode: BasemapMode;
     boundaryEditEnabled: boolean;
+    selectedPinId?: string | null;
+    onPinSelect?: (pinId: string) => void;
     onBoundaryDraftPointDrag: (index: number, position: LatLngTuple) => void;
     onBoundaryDraftInsertFromMidpoint: (edgeIndex: number, position: LatLngTuple) => number;
     onMapClick: (position: LatLngTuple) => void;
@@ -350,6 +352,8 @@ export default function LeafletMapCanvas({
     autoFollow,
     basemapMode,
     boundaryEditEnabled,
+    selectedPinId,
+    onPinSelect,
     onBoundaryDraftPointDrag,
     onBoundaryDraftInsertFromMidpoint,
     onMapClick,
@@ -540,12 +544,14 @@ export default function LeafletMapCanvas({
                 <CircleMarker
                     key={pin.id}
                     center={pin.position}
-                    radius={8}
+                    radius={pin.id === selectedPinId ? 11 : 8}
                     pathOptions={{
-                        color: '#f8fafc',
+                        color: pin.id === selectedPinId ? '#facc15' : '#f8fafc',
+                        weight: pin.id === selectedPinId ? 3 : 2,
                         fillColor: pin.pinType === 'treestand' ? '#16a34a' : pin.pinType === 'range' ? '#ea580c' : '#ef4444',
                         fillOpacity: 0.95
                     }}
+                    eventHandlers={onPinSelect ? { click: () => onPinSelect(pin.id) } : undefined}
                 >
                     <Tooltip direction="top" offset={[0, -8]}>
                         {pin.title} ({pin.pinType})

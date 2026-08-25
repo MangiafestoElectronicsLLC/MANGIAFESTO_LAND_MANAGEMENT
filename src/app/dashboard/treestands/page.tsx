@@ -1,55 +1,37 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
+import {
+    buildDefaultBoundary,
+    distancePointToPolygonEdgeMeters,
+    isPointInsidePolygon,
+    polygonAreaAcres
+} from '../property-map/map-engine';
+import {
+    enqueueSnapshotSync,
+    loadCachedSnapshot,
+    saveCachedSnapshot
+} from '../property-map/offline-sync';
+import { filesToAttachments, removeAttachmentById } from '../property-map/photo-attachments';
+import { getGeolocationPermissionState, startGpsTracking, type GpsTrackingHandle } from '../property-map/gps-tracking';
+import { ensureSharedMap, loadSnapshotFromSupabase, syncSnapshotToSupabase } from '../property-map/supabase-map-sync';
+import type { GpsFix, Pinpoint, PropertyMapSnapshot } from '../property-map/types';
+import type { MapActions } from '../property-map/LeafletMapCanvas';
+import styles from '../property-map/PropertyMapWorkspace.module.css';
 
-type StorageMode = 'supabase' | 'local';
-
-type PropertyMap = {
-    id: string;
-    name: string;
-    address: string;
-    center_lat: number;
-    center_lng: number;
-    base_image_url: string | null;
-    base_image_path: string | null;
-    created_by: string | null;
-    created_at: string;
-    updated_at: string;
-};
-
-type MapImageFraming = {
-    fitMode: 'contain' | 'cover';
-    scalePercent: number;
-    offsetXPercent: number;
-    offsetYPercent: number;
-    rotationDeg: number;
-    flipX: boolean;
-    flipY: boolean;
-};
-
-type PropertyMapFeature = {
-    id: string;
-    map_id: string;
-    label: string;
-    feature_type: string;
-    status: string;
-    description: string | null;
-    x_percent: number;
-    y_percent: number;
-    lat: number | null;
-    lng: number | null;
-    created_by: string | null;
-    updated_by: string | null;
-    created_at: string;
-    updated_at: string;
-};
+const LeafletMapCanvas = dynamic(() => import('../property-map/LeafletMapCanvas'), {
+    ssr: false,
+    loading: () => <div className={styles.mapLoading}>Loading map...</div>
+});
 
 type AccessWindow = 'day' | 'weekend' | 'custom';
 type AccessStatus = 'pending' | 'approved' | 'declined' | 'cancelled';
+type RequestMode = 'supabase' | 'local';
 
 type PropertyAccessRequest = {
     id: string;
@@ -67,16 +49,13 @@ type PropertyAccessRequest = {
     updated_at: string;
 };
 
-const LOCAL_PROPERTY_MAPS_KEY = 'family-land-local-property-maps';
-const LOCAL_PROPERTY_MAP_FEATURES_KEY = 'family-land-local-property-map-features';
 const LOCAL_PROPERTY_ACCESS_REQUESTS_KEY = 'family-land-local-property-access-requests';
-const LOCAL_MAP_IMAGE_FRAMING_KEY = 'family-land-map-image-framing';
-const PROPERTY_MAP_TABLES = ['property_maps', 'property_map_features'];
 const ACCESS_REQUEST_TABLES = ['property_map_access_requests'];
-const FEATURE_TYPES = ['treestand', 'range'];
+const MAP_TABLES = ['property_maps', 'property_map_features'];
+const OFFLINE_MAP_ID = 'offline-local-map';
+const STAND_PIN_TYPES: Pinpoint['pinType'][] = ['treestand', 'range'];
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const parseJson = <T,>(raw: string | null, fallback: T) => {
     if (!raw) return fallback;
@@ -100,92 +79,56 @@ const requestStatusLabel = (value: AccessStatus) => {
     return 'Pending';
 };
 
-const featureStatusColor = (status: string) => {
-    if (status === 'active') return '#22c55e';
-    if (status === 'inactive') return '#64748b';
-    if (status === 'requested') return '#f59e0b';
-    if (status === 'blocked') return '#ef4444';
-    if (status === 'completed') return '#10b981';
-    return '#1d4ed8';
+const defaultSnapshot: PropertyMapSnapshot = {
+    mapId: OFFLINE_MAP_ID,
+    boundary: buildDefaultBoundary(),
+    trails: [],
+    pinpoints: []
 };
 
-const defaultMapImageFraming: MapImageFraming = {
-    fitMode: 'contain',
-    scalePercent: 100,
-    offsetXPercent: 0,
-    offsetYPercent: 0,
-    rotationDeg: 0,
-    flipX: false,
-    flipY: false
-};
+const photoSrc = (photo: { url?: string; dataUrl?: string }) => photo.url || photo.dataUrl || '';
 
 export default function TreestandsPage() {
     const router = useRouter();
     const supabase = supabaseClient();
 
     const [profileId, setProfileId] = useState<string | null>(null);
-    const [storageMode, setStorageMode] = useState<StorageMode>('supabase');
-    const [requestMode, setRequestMode] = useState<StorageMode>('supabase');
+    const [snapshot, setSnapshot] = useState<PropertyMapSnapshot>(defaultSnapshot);
+    const [requestMode, setRequestMode] = useState<RequestMode>('supabase');
     const [setupNotice, setSetupNotice] = useState<string | null>(null);
-    const [maps, setMaps] = useState<PropertyMap[]>([]);
-    const [selectedMapId, setSelectedMapId] = useState('');
-    const [features, setFeatures] = useState<PropertyMapFeature[]>([]);
     const [requests, setRequests] = useState<PropertyAccessRequest[]>([]);
-    const [selectedFeatureId, setSelectedFeatureId] = useState('');
+    const [selectedPinId, setSelectedPinId] = useState('');
     const [requesterName, setRequesterName] = useState('');
     const [requestWindow, setRequestWindow] = useState<AccessWindow>('day');
     const [requestedDate, setRequestedDate] = useState(new Date().toISOString().slice(0, 10));
     const [returnDate, setReturnDate] = useState('');
     const [requestNotes, setRequestNotes] = useState('');
-    const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [savingRequest, setSavingRequest] = useState(false);
-    const [savingFeature, setSavingFeature] = useState<string | null>(null);
+    const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-    const selectedMap = useMemo(
-        () => maps.find(map => map.id === selectedMapId) || null,
-        [maps, selectedMapId]
+    const [gpsOn, setGpsOn] = useState(false);
+    const [liveGps, setLiveGps] = useState<GpsFix | null>(null);
+    const gpsHandleRef = useRef<GpsTrackingHandle | null>(null);
+    const mapActionsRef = useRef<MapActions | null>(null);
+
+    const boundary = snapshot.boundary;
+
+    const standPins = useMemo(
+        () => snapshot.pinpoints.filter(pin => STAND_PIN_TYPES.includes(pin.pinType)),
+        [snapshot.pinpoints]
     );
 
-    const treestandFeatures = useMemo(
-        () => features.filter(feature => FEATURE_TYPES.includes(feature.feature_type)),
-        [features]
+    const selectedPin = useMemo(
+        () => standPins.find(pin => pin.id === selectedPinId) || standPins[0] || null,
+        [standPins, selectedPinId]
     );
 
-    const selectedFeature = useMemo(
-        () => treestandFeatures.find(feature => feature.id === selectedFeatureId) || treestandFeatures[0] || null,
-        [treestandFeatures, selectedFeatureId]
-    );
+    const boundaryAreaAcres = useMemo(() => polygonAreaAcres(boundary.polygon), [boundary.polygon]);
 
-    const selectedMapImageFraming = useMemo(() => {
-        if (typeof window === 'undefined' || !selectedMapId) {
-            return defaultMapImageFraming;
-        }
-
-        const framingByMapId = parseJson<Record<string, MapImageFraming>>(
-            window.localStorage.getItem(LOCAL_MAP_IMAGE_FRAMING_KEY),
-            {}
-        );
-        const stored = framingByMapId[selectedMapId];
-
-        if (!stored) {
-            return defaultMapImageFraming;
-        }
-
-        return {
-            fitMode: stored.fitMode === 'cover' ? 'cover' : 'contain',
-            scalePercent: clamp(Number(stored.scalePercent), 70, 220),
-            offsetXPercent: clamp(Number(stored.offsetXPercent), -40, 40),
-            offsetYPercent: clamp(Number(stored.offsetYPercent), -40, 40),
-            rotationDeg: clamp(Number(stored.rotationDeg), -180, 180),
-            flipX: Boolean(stored.flipX),
-            flipY: Boolean(stored.flipY)
-        };
-    }, [selectedMapId]);
-
-    const requestsByFeatureId = useMemo(() => {
+    const requestsByPinId = useMemo(() => {
         const lookup = new Map<string, PropertyAccessRequest[]>();
         for (const request of requests) {
             if (!request.feature_id) continue;
@@ -197,60 +140,20 @@ export default function TreestandsPage() {
     }, [requests]);
 
     const activeRequests = useMemo(() => requests.filter(request => request.status === 'approved'), [requests]);
-    const activeFeatureCount = useMemo(() => treestandFeatures.filter(feature => feature.status === 'active').length, [treestandFeatures]);
-    const inactiveFeatureCount = useMemo(() => treestandFeatures.filter(feature => feature.status === 'inactive').length, [treestandFeatures]);
 
-    const readLocalMaps = () => parseJson<PropertyMap[]>(window.localStorage.getItem(LOCAL_PROPERTY_MAPS_KEY), []);
-    const readLocalFeatures = () => parseJson<PropertyMapFeature[]>(window.localStorage.getItem(LOCAL_PROPERTY_MAP_FEATURES_KEY), []);
+    const gpsStatusText = useMemo(() => {
+        if (!liveGps) return null;
+        if (boundary.polygon.length < 3) return 'GPS live, but no property boundary is saved yet.';
+
+        const inside = isPointInsidePolygon([liveGps.lat, liveGps.lng], boundary.polygon);
+        const edgeDistance = Math.max(0, Math.round(distancePointToPolygonEdgeMeters([liveGps.lat, liveGps.lng], boundary.polygon) ?? 0));
+
+        return inside
+            ? `You are inside the property boundary (~${edgeDistance}m from the nearest edge).`
+            : `You are outside the property boundary (~${edgeDistance}m from the nearest edge).`;
+    }, [liveGps, boundary.polygon]);
+
     const readLocalRequests = () => parseJson<PropertyAccessRequest[]>(window.localStorage.getItem(LOCAL_PROPERTY_ACCESS_REQUESTS_KEY), []);
-
-    const loadMaps = async () => {
-        if (storageMode === 'local') {
-            const localMaps = readLocalMaps();
-            setMaps(localMaps);
-            return localMaps[0]?.id || '';
-        }
-
-        const { data, error: fetchError } = await supabase
-            .from('property_maps')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (fetchError) {
-            throw fetchError;
-        }
-
-        const nextMaps = (data || []) as PropertyMap[];
-        setMaps(nextMaps);
-        return nextMaps[0]?.id || '';
-    };
-
-    const loadFeatures = async (mapId: string) => {
-        if (!mapId) {
-            setFeatures([]);
-            return [] as PropertyMapFeature[];
-        }
-
-        if (storageMode === 'local') {
-            const localFeatures = readLocalFeatures().filter(feature => feature.map_id === mapId && FEATURE_TYPES.includes(feature.feature_type));
-            setFeatures(localFeatures);
-            return localFeatures;
-        }
-
-        const { data, error: fetchError } = await supabase
-            .from('property_map_features')
-            .select('*')
-            .eq('map_id', mapId)
-            .order('created_at', { ascending: true });
-
-        if (fetchError) {
-            throw fetchError;
-        }
-
-        const nextFeatures = ((data || []) as PropertyMapFeature[]).filter(feature => FEATURE_TYPES.includes(feature.feature_type));
-        setFeatures(nextFeatures);
-        return nextFeatures;
-    };
 
     const loadRequests = async (mapId: string) => {
         if (!mapId) {
@@ -259,8 +162,7 @@ export default function TreestandsPage() {
         }
 
         if (requestMode === 'local') {
-            const localRequests = readLocalRequests().filter(request => request.map_id === mapId);
-            setRequests(localRequests);
+            setRequests(readLocalRequests().filter(request => request.map_id === mapId));
             return;
         }
 
@@ -277,31 +179,14 @@ export default function TreestandsPage() {
         setRequests((data || []) as PropertyAccessRequest[]);
     };
 
-    const resolveMapImageUrl = async (map: PropertyMap | null) => {
-        if (!map) {
-            setDisplayImageUrl(null);
-            return;
-        }
-
-        if (storageMode === 'local') {
-            setDisplayImageUrl(map.base_image_url);
-            return;
-        }
-
-        if (!map.base_image_path) {
-            setDisplayImageUrl(map.base_image_url);
-            return;
-        }
-
-        const { data } = await supabase.storage
-            .from('property-maps')
-            .createSignedUrl(map.base_image_path, 60 * 60 * 24 * 14);
-
-        setDisplayImageUrl(data?.signedUrl || map.base_image_url);
-    };
-
     useEffect(() => {
         const bootstrap = async () => {
+            const cached = loadCachedSnapshot();
+            if (cached) {
+                setSnapshot(cached);
+                setStatusMessage('Showing cached property map while connecting to shared data.');
+            }
+
             try {
                 const {
                     data: { user }
@@ -315,121 +200,152 @@ export default function TreestandsPage() {
                 setProfileId(user.id);
                 setRequesterName(user.email || 'Family Member');
 
-                let nextSelectedMapId = '';
-                let useLocalMapData = false;
+                const map = await ensureSharedMap(supabase, user.id);
+                const remoteSnapshot = await loadSnapshotFromSupabase(supabase, map.id);
+                setSnapshot(remoteSnapshot);
+                saveCachedSnapshot(remoteSnapshot);
+                setStatusMessage('Live property map markers and photos loaded.');
 
                 try {
-                    nextSelectedMapId = await loadMaps();
+                    await loadRequests(remoteSnapshot.mapId);
                 } catch (err: any) {
-                    if (isMissingTableSetupError(err, PROPERTY_MAP_TABLES)) {
-                        useLocalMapData = true;
-                        setStorageMode('local');
-                        setSetupNotice('Supabase property map tables are missing. Treestands page is using local map data in this browser. Run supabase/property_maps.sql and supabase/storage_property_maps.sql to share data across devices.');
-                        const localMaps = readLocalMaps();
-                        setMaps(localMaps);
-                        nextSelectedMapId = localMaps[0]?.id || '';
+                    if (isMissingTableSetupError(err, ACCESS_REQUEST_TABLES)) {
+                        setRequestMode('local');
+                        setSetupNotice('Property access requests table is missing. Requests are stored locally in this browser until you run supabase/property_map_access_requests.sql.');
+                        setRequests(readLocalRequests().filter(request => request.map_id === remoteSnapshot.mapId));
                     } else {
-                        setError(getSupabaseErrorMessage(err, 'Could not load property maps.'));
-                    }
-                }
-
-                setSelectedMapId(nextSelectedMapId);
-
-                if (nextSelectedMapId) {
-                    if (useLocalMapData) {
-                        setFeatures(readLocalFeatures().filter(feature => feature.map_id === nextSelectedMapId && FEATURE_TYPES.includes(feature.feature_type)));
-                        setRequests(readLocalRequests().filter(request => request.map_id === nextSelectedMapId));
-                    } else {
-                        try {
-                            await loadFeatures(nextSelectedMapId);
-                        } catch (err: any) {
-                            setError(getSupabaseErrorMessage(err, 'Could not load treestand markers.'));
-                        }
-
-                        try {
-                            await loadRequests(nextSelectedMapId);
-                        } catch (err: any) {
-                            if (isMissingTableSetupError(err, ACCESS_REQUEST_TABLES)) {
-                                setRequestMode('local');
-                                setSetupNotice(prev => prev
-                                    ? `${prev} Requests are stored locally until you run supabase/property_map_access_requests.sql.`
-                                    : 'Property access requests table is missing. Requests are stored locally in this browser until you run supabase/property_map_access_requests.sql.');
-                                setRequests(readLocalRequests().filter(request => request.map_id === nextSelectedMapId));
-                            } else {
-                                setError(getSupabaseErrorMessage(err, 'Could not load access requests.'));
-                            }
-                        }
+                        setError(getSupabaseErrorMessage(err, 'Could not load access requests.'));
                     }
                 }
             } catch (err: any) {
-                setError(getSupabaseErrorMessage(err, 'Treestands page failed to load.'));
+                const rawMessage = getSupabaseErrorMessage(err, '');
+                const isFetchError = /failed to fetch/i.test(rawMessage);
+                const missingMapTables = isMissingTableSetupError(err, MAP_TABLES);
+
+                if (missingMapTables) {
+                    setSetupNotice('Supabase property map tables are missing. Run supabase/property_maps.sql and supabase/storage_property_maps.sql, then add treestand/range markers on the Property Map page.');
+                } else if (isFetchError) {
+                    setError('Could not reach Supabase from this device. Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel and verify network access.');
+                } else {
+                    setError(getSupabaseErrorMessage(err, 'Could not load the property map.'));
+                }
             } finally {
                 setLoading(false);
             }
         };
 
         void bootstrap();
+
+        return () => {
+            gpsHandleRef.current?.stop();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
-        void resolveMapImageUrl(selectedMap);
-    }, [selectedMap?.id, selectedMap?.base_image_path, selectedMap?.base_image_url, storageMode]);
-
-    useEffect(() => {
-        if (!selectedFeatureId && treestandFeatures[0]) {
-            setSelectedFeatureId(treestandFeatures[0].id);
+        if (!selectedPinId && standPins[0]) {
+            setSelectedPinId(standPins[0].id);
         }
-    }, [selectedFeatureId, treestandFeatures]);
+    }, [selectedPinId, standPins]);
 
-    const featureRequestSummary = (featureId: string) => {
-        const featureRequests = requestsByFeatureId.get(featureId) || [];
-        const approved = featureRequests.find(request => request.status === 'approved') || null;
-        const pending = featureRequests.filter(request => request.status === 'pending');
-        return { approved, pending };
+    const toggleGps = () => {
+        if (gpsOn) {
+            gpsHandleRef.current?.stop();
+            gpsHandleRef.current = null;
+            setGpsOn(false);
+            return;
+        }
+
+        void getGeolocationPermissionState();
+        const handle = startGpsTracking({
+            onFix: fix => {
+                setLiveGps(fix);
+                setError(null);
+            },
+            onError: message => {
+                setError(message);
+                setGpsOn(false);
+                gpsHandleRef.current = null;
+            }
+        });
+
+        if (handle) {
+            gpsHandleRef.current = handle;
+            setGpsOn(true);
+        }
     };
 
-    const saveFeatureStatus = async (featureId: string, nextStatus: string) => {
-        setSavingFeature(featureId);
+    const persistSnapshot = async (nextSnapshot: PropertyMapSnapshot, successMessage: string) => {
+        setSnapshot(nextSnapshot);
+        saveCachedSnapshot(nextSnapshot);
+
+        if (!profileId) return;
+
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+            setStatusMessage('Offline - saved on this device and will sync to the shared property map when back online.');
+            return;
+        }
+
+        try {
+            const synced = await syncSnapshotToSupabase(supabase, profileId, nextSnapshot);
+            setSnapshot(synced);
+            saveCachedSnapshot(synced);
+            setStatusMessage(successMessage);
+        } catch (err: any) {
+            enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+            setError(getSupabaseErrorMessage(err, 'Could not sync to the shared property map. Saved on this device for now.'));
+        }
+    };
+
+    const handleAddPhotos = async (event: ChangeEvent<HTMLInputElement>) => {
+        if (!selectedPin) return;
+        const files = event.target.files;
+        event.target.value = '';
+        if (!files || files.length === 0) return;
+
+        setUploadingPhoto(true);
         setError(null);
         setStatusMessage(null);
 
         try {
-            if (storageMode === 'local') {
-                const nowIso = new Date().toISOString();
-                const nextFeatures = readLocalFeatures().map(feature => (
-                    feature.id === featureId
-                        ? { ...feature, status: nextStatus, updated_at: nowIso }
-                        : feature
-                ));
+            const newPhotos = await filesToAttachments(files);
+            const nextSnapshot: PropertyMapSnapshot = {
+                ...snapshot,
+                pinpoints: snapshot.pinpoints.map(pin =>
+                    pin.id === selectedPin.id
+                        ? { ...pin, photos: [...pin.photos, ...newPhotos], updatedAt: new Date().toISOString() }
+                        : pin
+                )
+            };
 
-                window.localStorage.setItem(LOCAL_PROPERTY_MAP_FEATURES_KEY, JSON.stringify(nextFeatures));
-                setFeatures(nextFeatures.filter(feature => feature.map_id === selectedMapId && FEATURE_TYPES.includes(feature.feature_type)));
-                setStatusMessage(`Updated ${selectedFeature?.label || 'feature'} to ${nextStatus}.`);
-                return;
-            }
-
-            const { error: updateError } = await supabase
-                .from('property_map_features')
-                .update({ status: nextStatus, updated_at: new Date().toISOString(), updated_by: profileId })
-                .eq('id', featureId);
-
-            if (updateError) {
-                throw updateError;
-            }
-
-            await loadFeatures(selectedMapId);
-            setStatusMessage(`Updated ${selectedFeature?.label || 'feature'} to ${nextStatus}.`);
+            await persistSnapshot(nextSnapshot, `Added ${newPhotos.length} photo(s) to ${selectedPin.title}. Visible on the Property Map page too.`);
         } catch (err: any) {
-            setError(getSupabaseErrorMessage(err, 'Could not update treestand status.'));
+            setError(err?.message || 'Could not add photo.');
         } finally {
-            setSavingFeature(null);
+            setUploadingPhoto(false);
         }
+    };
+
+    const handleRemovePhoto = async (photoId: string) => {
+        if (!selectedPin) return;
+
+        const nextSnapshot: PropertyMapSnapshot = {
+            ...snapshot,
+            pinpoints: snapshot.pinpoints.map(pin =>
+                pin.id === selectedPin.id
+                    ? { ...pin, photos: removeAttachmentById(pin.photos, photoId), updatedAt: new Date().toISOString() }
+                    : pin
+            )
+        };
+
+        await persistSnapshot(nextSnapshot, 'Photo removed and synced to the Property Map page.');
     };
 
     const saveRequest = async (event: FormEvent) => {
         event.preventDefault();
 
-        if (!selectedMapId || !selectedFeature) {
+        if (!snapshot.mapId || !selectedPin) {
             setError('Choose a treestand or range first.');
             return;
         }
@@ -446,8 +362,8 @@ export default function TreestandsPage() {
 
         const payload: PropertyAccessRequest = {
             id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            map_id: selectedMapId,
-            feature_id: selectedFeature.id,
+            map_id: snapshot.mapId,
+            feature_id: selectedPin.id,
             requester_name: name,
             request_window: requestWindow,
             requested_date: requestedDate,
@@ -464,8 +380,8 @@ export default function TreestandsPage() {
             if (requestMode === 'local') {
                 const nextRequests = [payload, ...readLocalRequests()];
                 window.localStorage.setItem(LOCAL_PROPERTY_ACCESS_REQUESTS_KEY, JSON.stringify(nextRequests));
-                setRequests(nextRequests.filter(request => request.map_id === selectedMapId));
-                setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedFeature.label}.`);
+                setRequests(nextRequests.filter(request => request.map_id === snapshot.mapId));
+                setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedPin.title}.`);
                 return;
             }
 
@@ -477,18 +393,18 @@ export default function TreestandsPage() {
                 throw insertError;
             }
 
-            await loadRequests(selectedMapId);
-            setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedFeature.label}.`);
+            await loadRequests(snapshot.mapId);
+            setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedPin.title}.`);
         } catch (err: any) {
             if (isMissingTableSetupError(err, ACCESS_REQUEST_TABLES)) {
                 setRequestMode('local');
                 const nextRequests = [payload, ...readLocalRequests()];
                 window.localStorage.setItem(LOCAL_PROPERTY_ACCESS_REQUESTS_KEY, JSON.stringify(nextRequests));
-                setRequests(nextRequests.filter(request => request.map_id === selectedMapId));
+                setRequests(nextRequests.filter(request => request.map_id === snapshot.mapId));
                 setSetupNotice(prev => prev
                     ? `${prev} Requests are stored locally until you run supabase/property_map_access_requests.sql.`
                     : 'Property access requests table is missing. Requests are stored locally in this browser until you run supabase/property_map_access_requests.sql.');
-                setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedFeature.label}.`);
+                setStatusMessage(`Saved a ${requestWindowLabel(requestWindow).toLowerCase()} request for ${selectedPin.title}.`);
             } else {
                 setError(getSupabaseErrorMessage(err, 'Could not save access request.'));
             }
@@ -511,7 +427,7 @@ export default function TreestandsPage() {
                 ));
 
                 window.localStorage.setItem(LOCAL_PROPERTY_ACCESS_REQUESTS_KEY, JSON.stringify(nextRequests));
-                setRequests(nextRequests.filter(request => request.map_id === selectedMapId));
+                setRequests(nextRequests.filter(request => request.map_id === snapshot.mapId));
                 return;
             }
 
@@ -524,7 +440,7 @@ export default function TreestandsPage() {
                 throw updateError;
             }
 
-            await loadRequests(selectedMapId);
+            await loadRequests(snapshot.mapId);
         } catch (err: any) {
             if (isMissingTableSetupError(err, ACCESS_REQUEST_TABLES)) {
                 setRequestMode('local');
@@ -559,15 +475,14 @@ export default function TreestandsPage() {
                     <div style={{ fontSize: '0.84rem', opacity: 0.82 }}>Family Access Board</div>
                     <h2 style={{ margin: 0 }}>Treestands / Range</h2>
                     <div style={{ opacity: 0.8 }}>
-                        Keep the family aware of which stand or range is active, who requested it, and what needs to stay off-limits.
+                        Same boundary, markers, and photos as the Property Map page - keep the family aware of which stand or range is active and what needs to stay off-limits.
                     </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Markers: {treestandFeatures.length}</span>
-                    <span style={{ border: '1px solid #166534', borderRadius: 999, padding: '0.22rem 0.6rem', color: '#bbf7d0' }}>Active: {activeFeatureCount}</span>
-                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Inactive: {inactiveFeatureCount}</span>
+                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Markers: {standPins.length}</span>
                     <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Approved requests: {activeRequests.length}</span>
+                    <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Property size: {boundaryAreaAcres.toFixed(2)} ac</span>
                 </div>
 
                 {setupNotice && (
@@ -579,115 +494,107 @@ export default function TreestandsPage() {
                 {statusMessage && <div style={{ color: '#86efac' }}>{statusMessage}</div>}
                 {error && <div style={{ color: '#fca5a5' }}>{error}</div>}
 
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    {maps.map(map => (
-                        <button
-                            key={map.id}
-                            onClick={async () => {
-                                setSelectedMapId(map.id);
-                                const nextFeatures = await loadFeatures(map.id);
-                                setSelectedFeatureId(nextFeatures[0]?.id || '');
-                                await loadRequests(map.id);
-                            }}
-                            className="soft-button"
-                            style={{
-                                borderColor: map.id === selectedMapId ? '#38bdf8' : '#475569',
-                                background: map.id === selectedMapId ? 'rgba(30, 64, 175, 0.35)' : 'rgba(15, 23, 42, 0.8)'
-                            }}
-                        >
-                            {map.name}
-                        </button>
-                    ))}
-                </div>
-
                 <div style={{ display: 'grid', gap: '0.55rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                     <div style={{ border: '1px solid #334155', borderRadius: 12, padding: '0.7rem', display: 'grid', gap: '0.5rem' }}>
                         <div style={{ fontWeight: 700 }}>Live Map View</div>
                         <div style={{ fontSize: '0.86rem', opacity: 0.78 }}>
-                            The same markers saved on the property map page appear here automatically.
-                        </div>
-                        <div style={{ position: 'relative', width: '100%', minHeight: 320, borderRadius: 12, border: '1px solid #334155', overflow: 'hidden', background: 'linear-gradient(145deg, #0b1220, #13213e)' }}>
-                            {displayImageUrl ? (
-                                <img
-                                    src={displayImageUrl}
-                                    alt="Property map base"
-                                    style={{
-                                        width: '100%',
-                                        height: '100%',
-                                        objectFit: selectedMapImageFraming.fitMode === 'cover' ? 'cover' : 'contain',
-                                        transform: `translate(${selectedMapImageFraming.offsetXPercent}%, ${selectedMapImageFraming.offsetYPercent}%) rotate(${selectedMapImageFraming.rotationDeg}deg) scale(${selectedMapImageFraming.scalePercent / 100}) scaleX(${selectedMapImageFraming.flipX ? -1 : 1}) scaleY(${selectedMapImageFraming.flipY ? -1 : 1})`,
-                                        transformOrigin: 'center',
-                                        display: 'block'
-                                    }}
-                                />
-                            ) : (
-                                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', opacity: 0.8, padding: '1rem', textAlign: 'center' }}>
-                                    Add or select a property map to see treestand and range markers here.
-                                </div>
-                            )}
-
-                            {treestandFeatures.map(feature => {
-                                const selected = feature.id === selectedFeature?.id;
-                                const featureRequests = featureRequestSummary(feature.id);
-                                return (
-                                    <button
-                                        key={feature.id}
-                                        type="button"
-                                        onClick={() => setSelectedFeatureId(feature.id)}
-                                        style={{
-                                            position: 'absolute',
-                                            left: `${feature.x_percent}%`,
-                                            top: `${feature.y_percent}%`,
-                                            transform: 'translate(-50%, -50%)',
-                                            width: selected ? 30 : 26,
-                                            height: selected ? 30 : 26,
-                                            borderRadius: 999,
-                                            border: selected ? '2px solid #f8fafc' : '1px solid #93c5fd',
-                                            background: featureStatusColor(feature.status),
-                                            color: '#f8fafc',
-                                            fontWeight: 700,
-                                            display: 'grid',
-                                            placeItems: 'center',
-                                            cursor: 'pointer',
-                                            boxShadow: selected ? '0 0 0 2px rgba(125, 211, 252, 0.35)' : 'none'
-                                        }}
-                                        title={`${feature.label} (${feature.feature_type})`}
-                                    >
-                                        {feature.feature_type === 'treestand' ? 'S' : 'R'}
-                                        {featureRequests.approved && (
-                                            <span style={{ position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)', fontSize: '0.62rem', color: '#bbf7d0', whiteSpace: 'nowrap' }}>
-                                                {featureRequests.approved.requester_name}
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
+                            The same boundary and markers saved on the property map page appear here automatically, including any photos attached to a treestand or range.
                         </div>
 
-                        {selectedFeature && (
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <button type="button" className="soft-button" onClick={toggleGps}>
+                                {gpsOn ? 'Stop GPS' : 'Start GPS (where am I)'}
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.centerOnGps()} disabled={!liveGps}>
+                                Center on Me
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()}>
+                                Fit Full Property
+                            </button>
+                        </div>
+
+                        {gpsStatusText && <div style={{ fontSize: '0.86rem', opacity: 0.85 }}>{gpsStatusText}</div>}
+
+                        <div className={styles.mapCanvasWrap} style={{ height: 360 }}>
+                            <LeafletMapCanvas
+                                boundary={boundary}
+                                trails={[]}
+                                selectedTrailId={null}
+                                pinpoints={standPins}
+                                walkedTrailDraft={[]}
+                                plannedTrailDraft={[]}
+                                boundaryDraft={[]}
+                                liveGps={liveGps}
+                                autoFollow={false}
+                                basemapMode="satellite"
+                                boundaryEditEnabled={false}
+                                selectedPinId={selectedPin?.id || null}
+                                onPinSelect={pinId => setSelectedPinId(pinId)}
+                                onBoundaryDraftPointDrag={() => { }}
+                                onBoundaryDraftInsertFromMidpoint={() => 0}
+                                onMapClick={() => { }}
+                                onMapReady={actions => {
+                                    mapActionsRef.current = actions;
+                                }}
+                                onAutoFollowInterrupted={() => { }}
+                                onDiagnosticsChange={() => { }}
+                            />
+                        </div>
+
+                        {selectedPin && (
                             <div style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.6rem', display: 'grid', gap: '0.45rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    <div style={{ fontWeight: 700 }}>{selectedFeature.label}</div>
-                                    <div style={{ opacity: 0.8, textTransform: 'capitalize' }}>{selectedFeature.feature_type} • {selectedFeature.status}</div>
+                                    <div style={{ fontWeight: 700 }}>{selectedPin.title}</div>
+                                    <div style={{ opacity: 0.8, textTransform: 'capitalize' }}>{selectedPin.pinType}</div>
                                 </div>
                                 <div style={{ fontSize: '0.88rem', opacity: 0.78 }}>
-                                    X {selectedFeature.x_percent.toFixed(2)}% / Y {selectedFeature.y_percent.toFixed(2)}%
-                                    {selectedFeature.lat !== null && selectedFeature.lng !== null ? ` • ${selectedFeature.lat}, ${selectedFeature.lng}` : ''}
+                                    {selectedPin.position[0].toFixed(6)}, {selectedPin.position[1].toFixed(6)}
                                 </div>
+                                {selectedPin.description && (
+                                    <div style={{ fontSize: '0.86rem', opacity: 0.78 }}>{selectedPin.description}</div>
+                                )}
                                 <div style={{ fontSize: '0.86rem', opacity: 0.78 }}>
-                                    Approved use: {featureRequestSummary(selectedFeature.id).approved?.requester_name || 'None yet'}
+                                    Approved use: {requestsByPinId.get(selectedPin.id)?.find(request => request.status === 'approved')?.requester_name || 'None yet'}
                                 </div>
+
                                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                                    <button type="button" className="soft-button" onClick={() => void saveFeatureStatus(selectedFeature.id, 'active')} disabled={savingFeature === selectedFeature.id}>
-                                        Mark active
-                                    </button>
-                                    <button type="button" className="soft-button" onClick={() => void saveFeatureStatus(selectedFeature.id, 'inactive')} disabled={savingFeature === selectedFeature.id}>
-                                        Mark inactive
-                                    </button>
-                                    <Link href="/dashboard/property-map" className="soft-button" style={{ textDecoration: 'none' }}>
-                                        Edit on property map
-                                    </Link>
+                                    {selectedPin.photos.map(photo => (
+                                        <div key={photo.id} style={{ position: 'relative' }}>
+                                            <a href={photoSrc(photo)} target="_blank" rel="noreferrer">
+                                                <img
+                                                    src={photoSrc(photo)}
+                                                    alt={photo.name}
+                                                    style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: 8, border: '1px solid #334155' }}
+                                                />
+                                            </a>
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleRemovePhoto(photo.id)}
+                                                title="Remove photo"
+                                                style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 999, border: '1px solid #334155', background: '#0f172a', color: '#fca5a5', cursor: 'pointer' }}
+                                            >
+                                                x
+                                            </button>
+                                        </div>
+                                    ))}
                                 </div>
+
+                                <label className="soft-button" style={{ textAlign: 'center', cursor: 'pointer' }}>
+                                    {uploadingPhoto ? 'Adding photo...' : 'Add Photo From Here'}
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        capture="environment"
+                                        multiple
+                                        onChange={event => void handleAddPhotos(event)}
+                                        disabled={uploadingPhoto}
+                                        style={{ display: 'none' }}
+                                    />
+                                </label>
+
+                                <Link href="/dashboard/property-map" className="soft-button" style={{ textDecoration: 'none', textAlign: 'center' }}>
+                                    Edit on property map
+                                </Link>
                             </div>
                         )}
                     </div>
@@ -697,11 +604,11 @@ export default function TreestandsPage() {
                         <form onSubmit={saveRequest} style={{ display: 'grid', gap: '0.55rem' }}>
                             <label style={{ display: 'grid', gap: '0.25rem' }}>
                                 <span>Choose marker</span>
-                                <select value={selectedFeature?.id || ''} onChange={e => setSelectedFeatureId(e.target.value)}>
+                                <select value={selectedPin?.id || ''} onChange={e => setSelectedPinId(e.target.value)}>
                                     <option value="">Select a treestand or range</option>
-                                    {treestandFeatures.map(feature => (
-                                        <option key={feature.id} value={feature.id}>
-                                            {feature.label} ({feature.feature_type})
+                                    {standPins.map(pin => (
+                                        <option key={pin.id} value={pin.id}>
+                                            {pin.title} ({pin.pinType})
                                         </option>
                                     ))}
                                 </select>
@@ -741,7 +648,7 @@ export default function TreestandsPage() {
                             <div style={{ fontWeight: 700 }}>Current Requests</div>
                             {requests.length === 0 && <div style={{ opacity: 0.75 }}>No requests yet.</div>}
                             {requests.map(request => {
-                                const feature = treestandFeatures.find(item => item.id === request.feature_id) || null;
+                                const pin = standPins.find(item => item.id === request.feature_id) || null;
                                 return (
                                     <div key={request.id} style={{ border: '1px solid #334155', borderRadius: 10, padding: '0.55rem', display: 'grid', gap: '0.35rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -749,7 +656,7 @@ export default function TreestandsPage() {
                                             <span>{requestStatusLabel(request.status)} • {requestWindowLabel(request.request_window)}</span>
                                         </div>
                                         <div style={{ fontSize: '0.86rem', opacity: 0.8 }}>
-                                            {feature?.label || 'Unknown marker'} • {request.requested_date}
+                                            {pin?.title || 'Unknown marker'} • {request.requested_date}
                                             {request.return_date ? ` to ${request.return_date}` : ''}
                                         </div>
                                         {request.notes && <div style={{ fontSize: '0.84rem', opacity: 0.76 }}>{request.notes}</div>}
@@ -773,16 +680,18 @@ export default function TreestandsPage() {
 
                 <div style={{ display: 'grid', gap: '0.45rem' }}>
                     <div style={{ fontWeight: 700 }}>Treestand / Range Database</div>
-                    {treestandFeatures.length === 0 && <div style={{ opacity: 0.75 }}>No treestands or ranges have been mapped yet.</div>}
-                    {treestandFeatures.map(feature => {
-                        const summary = featureRequestSummary(feature.id);
+                    {standPins.length === 0 && <div style={{ opacity: 0.75 }}>No treestands or ranges have been mapped yet. Add one on the Property Map page.</div>}
+                    {standPins.map(pin => {
+                        const pinRequests = requestsByPinId.get(pin.id) || [];
+                        const approved = pinRequests.find(request => request.status === 'approved');
+                        const pending = pinRequests.filter(request => request.status === 'pending');
                         return (
                             <button
-                                key={feature.id}
-                                onClick={() => setSelectedFeatureId(feature.id)}
+                                key={pin.id}
+                                onClick={() => setSelectedPinId(pin.id)}
                                 style={{
                                     textAlign: 'left',
-                                    border: feature.id === selectedFeature?.id ? '1px solid #60a5fa' : '1px solid #334155',
+                                    border: pin.id === selectedPin?.id ? '1px solid #60a5fa' : '1px solid #334155',
                                     borderRadius: 10,
                                     background: 'rgba(15, 23, 42, 0.78)',
                                     color: '#e2e8f0',
@@ -791,17 +700,16 @@ export default function TreestandsPage() {
                                 }}
                             >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                    <div style={{ fontWeight: 600 }}>{feature.label}</div>
-                                    <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>{feature.feature_type} • {feature.status}</div>
+                                    <div style={{ fontWeight: 600 }}>{pin.title}</div>
+                                    <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>{pin.pinType} • {pin.photos.length} photo(s)</div>
                                 </div>
                                 <div style={{ opacity: 0.8, fontSize: '0.9rem', marginTop: '0.2rem' }}>
-                                    X:{' '}{feature.x_percent.toFixed(2)}% Y:{' '}{feature.y_percent.toFixed(2)}%
-                                    {feature.lat !== null && feature.lng !== null ? ` • Lat/Lng: ${feature.lat}, ${feature.lng}` : ''}
-                                    {summary.approved ? ` • In use by ${summary.approved.requester_name}` : ''}
-                                    {summary.pending.length > 0 ? ` • Pending requests: ${summary.pending.length}` : ''}
+                                    Lat/Lng: {pin.position[0].toFixed(6)}, {pin.position[1].toFixed(6)}
+                                    {approved ? ` • In use by ${approved.requester_name}` : ''}
+                                    {pending.length > 0 ? ` • Pending requests: ${pending.length}` : ''}
                                 </div>
                                 <div style={{ opacity: 0.68, fontSize: '0.82rem', marginTop: '0.15rem' }}>
-                                    Updated: {formatDate(feature.updated_at)}
+                                    Updated: {formatDate(pin.updatedAt)}
                                 </div>
                             </button>
                         );

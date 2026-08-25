@@ -1,15 +1,18 @@
 import { LatLngTuple, PropertyBoundary, Trail, TrailPoint } from './types';
 
-export const DEFAULT_CENTER: LatLngTuple = [43.2180558, -77.9778462];
+// Verified via geocoding "825 West Ave, Brockport, NY 14420" (OpenStreetMap/Nominatim), 2026-08-25.
+// The previous default center/polygon below was an unverified guess roughly 300m away from the
+// real address, which made the starting boundary (and therefore GPS inside/outside status) wrong.
+export const DEFAULT_CENTER: LatLngTuple = [43.2195770, -77.9754249];
 export const DEFAULT_ZOOM = 17;
 
+// Unsurveyed ~40 acre square centered on the verified address point above. This is still only a
+// starting shape for the user to drag/trace onto the real tree lines - not a surveyed parcel.
 const CANONICAL_BOUNDARY_POLYGON: LatLngTuple[] = [
-    [43.2199, -77.9793],
-    [43.2199, -77.9757],
-    [43.2155, -77.9757],
-    [43.2155, -77.9801],
-    [43.2190, -77.9801],
-    [43.2190, -77.9793]
+    [43.221396, -77.977906],
+    [43.221396, -77.972944],
+    [43.217758, -77.972944],
+    [43.217758, -77.977906]
 ];
 
 export type BasemapMode = 'satellite' | 'street';
@@ -249,6 +252,28 @@ export const polygonCenter = (polygon: LatLngTuple[]): LatLngTuple => {
     );
 
     return [sums.lat / polygon.length, sums.lng / polygon.length];
+};
+
+const METERS_PER_ACRE = 4046.8564224;
+
+// Planar (equirectangular) area estimate - accurate enough for parcel-scale polygons like a 40 acre lot.
+export const polygonAreaAcres = (polygon: LatLngTuple[]): number => {
+    if (polygon.length < 3) return 0;
+
+    const originLat = polygon[0][0];
+    const cosLat = Math.cos((originLat * Math.PI) / 180);
+    const toMeters = ([lat, lng]: LatLngTuple): [number, number] => [lng * 111320 * cosLat, lat * 110540];
+    const points = polygon.map(toMeters);
+
+    let sum = 0;
+    for (let index = 0; index < points.length; index += 1) {
+        const [x1, y1] = points[index];
+        const [x2, y2] = points[(index + 1) % points.length];
+        sum += x1 * y2 - x2 * y1;
+    }
+
+    const areaSquareMeters = Math.abs(sum) / 2;
+    return areaSquareMeters / METERS_PER_ACRE;
 };
 
 export const isPointInsidePolygon = (point: LatLngTuple, polygon: LatLngTuple[]) => {
