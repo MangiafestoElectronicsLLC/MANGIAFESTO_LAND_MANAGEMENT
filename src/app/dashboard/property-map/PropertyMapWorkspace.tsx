@@ -39,9 +39,8 @@ import {
 import { filesToAttachments, removeAttachmentById } from './photo-attachments';
 import { createPinpoint, createTrail, exportTrailGpx, importTrailFromGpx } from './trail-manager';
 import { ensureSharedMap, loadSnapshotFromSupabase, syncSnapshotToSupabase } from './supabase-map-sync';
-import { BOTTOM_DRAWER_TABS, type BottomDrawerTab } from './ui-controls';
 import type { MapActions, MapDiagnostics } from './LeafletMapCanvas';
-import type { GpsFix, LatLngTuple, MapEntityRef, Pinpoint, PropertyMapSnapshot, Trail, TrailPoint } from './types';
+import type { GpsFix, LatLngTuple, Pinpoint, PropertyMapSnapshot, Trail, TrailPoint } from './types';
 import styles from './PropertyMapWorkspace.module.css';
 
 const LeafletMapCanvas = dynamic(() => import('./LeafletMapCanvas'), {
@@ -50,8 +49,9 @@ const LeafletMapCanvas = dynamic(() => import('./LeafletMapCanvas'), {
 });
 
 type ToolMode = 'idle' | 'pin' | 'trail' | 'boundary';
+type PinType = 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera' | 'sign';
 
-const PIN_TYPES: Array<{ value: 'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera' | 'sign'; label: string }> = [
+const PIN_TYPES: Array<{ value: PinType; label: string }> = [
     { value: 'note', label: 'Note' },
     { value: 'treestand', label: 'Treestand' },
     { value: 'range', label: 'Range' },
@@ -183,8 +183,7 @@ export default function PropertyMapWorkspace() {
     const [status, setStatus] = useState('Loading property map...');
     const [error, setError] = useState<string | null>(null);
     const [toolMode, setToolMode] = useState<ToolMode>('idle');
-    const [drawerTab, setDrawerTab] = useState<BottomDrawerTab>('boundary');
-    const [pinDraftType, setPinDraftType] = useState<'note' | 'treestand' | 'range' | 'water' | 'gate' | 'camera'>('note');
+    const [pinDraftType, setPinDraftType] = useState<PinType>('note');
 
     const [snapshot, setSnapshot] = useState<PropertyMapSnapshot>(defaultSnapshot);
     const [gpsEnabled, setGpsEnabled] = useState(() => typeof navigator !== 'undefined' && 'geolocation' in navigator);
@@ -198,7 +197,6 @@ export default function PropertyMapWorkspace() {
     const [plannedTrailDraft, setPlannedTrailDraft] = useState<LatLngTuple[]>([]);
     const [boundaryDraft, setBoundaryDraft] = useState<LatLngTuple[]>([]);
 
-    const [selectedEntity, setSelectedEntity] = useState<MapEntityRef | null>(null);
     const [selectedTrailId, setSelectedTrailId] = useState<string>('');
     const [newTrailName, setNewTrailName] = useState('');
 
@@ -803,96 +801,65 @@ export default function PropertyMapWorkspace() {
         }
     };
 
-    const uploadPhotosToSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-        if (!selectedEntity) {
-            setError('Select a trail or pinpoint before uploading photos.');
-            event.target.value = '';
-            return;
-        }
-
+    const uploadPhotosForPin = async (pinId: string, files: FileList | null) => {
         try {
-            const photos = await filesToAttachments(event.target.files);
+            const photos = await filesToAttachments(files);
             if (photos.length === 0) return;
 
-            setSnapshot(previous => {
-                if (selectedEntity.type === 'pinpoint') {
-                    return {
-                        ...previous,
-                        pinpoints: previous.pinpoints.map(pin =>
-                            pin.id === selectedEntity.id
-                                ? {
-                                    ...pin,
-                                    photos: [...pin.photos, ...photos],
-                                    updatedAt: new Date().toISOString()
-                                }
-                                : pin
-                        )
-                    };
-                }
-
-                return {
-                    ...previous,
-                    trails: updateTrail(previous.trails, selectedEntity.id, trail => ({
-                        ...trail,
-                        photos: [...trail.photos, ...photos],
-                        updatedAt: new Date().toISOString()
-                    }))
-                };
-            });
-
+            setSnapshot(previous => ({
+                ...previous,
+                pinpoints: previous.pinpoints.map(pin =>
+                    pin.id === pinId
+                        ? { ...pin, photos: [...pin.photos, ...photos], updatedAt: new Date().toISOString() }
+                        : pin
+                )
+            }));
             setStatus(`${photos.length} photo(s) attached. They will upload to Supabase on sync.`);
         } catch (err: any) {
             setError(err?.message || 'Photo upload failed.');
-        } finally {
-            event.target.value = '';
         }
     };
 
-    const selectedEntityPhotos = useMemo(() => {
-        if (!selectedEntity) return [];
-        if (selectedEntity.type === 'pinpoint') {
-            return pinpoints.find(pin => pin.id === selectedEntity.id)?.photos || [];
-        }
-        return trails.find(trail => trail.id === selectedEntity.id)?.photos || [];
-    }, [pinpoints, selectedEntity, trails]);
+    const removePinPhoto = (pinId: string, photoId: string) => {
+        setSnapshot(previous => ({
+            ...previous,
+            pinpoints: previous.pinpoints.map(pin =>
+                pin.id === pinId
+                    ? { ...pin, photos: removeAttachmentById(pin.photos, photoId), updatedAt: new Date().toISOString() }
+                    : pin
+            )
+        }));
+    };
 
-    const removePhoto = (photoId: string) => {
-        if (!selectedEntity) return;
+    const uploadPhotosForTrail = async (trailId: string, files: FileList | null) => {
+        try {
+            const photos = await filesToAttachments(files);
+            if (photos.length === 0) return;
 
-        setSnapshot(previous => {
-            if (selectedEntity.type === 'pinpoint') {
-                return {
-                    ...previous,
-                    pinpoints: previous.pinpoints.map(pin =>
-                        pin.id === selectedEntity.id
-                            ? {
-                                ...pin,
-                                photos: removeAttachmentById(pin.photos, photoId),
-                                updatedAt: new Date().toISOString()
-                            }
-                            : pin
-                    )
-                };
-            }
-
-            return {
+            setSnapshot(previous => ({
                 ...previous,
-                trails: updateTrail(previous.trails, selectedEntity.id, trail => ({
+                trails: updateTrail(previous.trails, trailId, trail => ({
                     ...trail,
-                    photos: removeAttachmentById(trail.photos, photoId),
+                    photos: [...trail.photos, ...photos],
                     updatedAt: new Date().toISOString()
                 }))
-            };
-        });
+            }));
+            setStatus(`${photos.length} photo(s) attached. They will upload to Supabase on sync.`);
+        } catch (err: any) {
+            setError(err?.message || 'Photo upload failed.');
+        }
     };
 
-    const selectedEntityOptions = useMemo(
-        () => [
-            ...pinpoints.map(pin => ({ value: `pinpoint:${pin.id}`, label: `Pinpoint: ${pin.title}` })),
-            ...trails.map(trail => ({ value: `trail:${trail.id}`, label: `Trail: ${trail.name}` }))
-        ],
-        [pinpoints, trails]
-    );
+    const removeTrailPhoto = (trailId: string, photoId: string) => {
+        setSnapshot(previous => ({
+            ...previous,
+            trails: updateTrail(previous.trails, trailId, trail => ({
+                ...trail,
+                photos: removeAttachmentById(trail.photos, photoId),
+                updatedAt: new Date().toISOString()
+            }))
+        }));
+    };
 
     const updatePinpointField = (pinId: string, updates: Partial<Pick<Pinpoint, 'title' | 'description' | 'pinType'>>) => {
         setSnapshot(previous => ({
@@ -908,22 +875,7 @@ export default function PropertyMapWorkspace() {
             ...previous,
             pinpoints: previous.pinpoints.filter(pin => pin.id !== pinId)
         }));
-        if (selectedEntity?.type === 'pinpoint' && selectedEntity.id === pinId) {
-            setSelectedEntity(null);
-        }
         setStatus('Pinpoint deleted.');
-    };
-
-    const onSelectEntity = (value: string) => {
-        if (!value) {
-            setSelectedEntity(null);
-            return;
-        }
-
-        const [type, id] = value.split(':');
-        if ((type === 'pinpoint' || type === 'trail') && id) {
-            setSelectedEntity({ type, id } as MapEntityRef);
-        }
     };
 
     const exportTrail = (trail: Trail) => {
@@ -1060,6 +1012,13 @@ export default function PropertyMapWorkspace() {
         return <div className="panel-soft">Loading property map...</div>;
     }
 
+    const modeOptions: Array<{ mode: ToolMode; label: string }> = [
+        { mode: 'idle', label: 'View' },
+        { mode: 'pin', label: 'Add Pinpoint' },
+        { mode: 'trail', label: 'Draw Trail' },
+        { mode: 'boundary', label: 'Edit Boundary' }
+    ];
+
     return (
         <div className={styles.pageStack}>
             <div className={styles.breadcrumbRow}>
@@ -1073,37 +1032,113 @@ export default function PropertyMapWorkspace() {
                 <div className={styles.heroText}>
                     <div className="section-eyebrow">Property Planner</div>
                     <h2>Property Map: Shared Family GPS Workspace</h2>
-                    <p>
-                        Real map tiles, family-shared Supabase sync, offline queue, and richer trail analytics with split markers and elevation profile.
-                    </p>
+                    <p>825 West Ave, Brockport NY - {boundaryAreaAcres.toFixed(2)} acres mapped. Everything below is always visible - no hidden tabs.</p>
                 </div>
                 <div className={styles.heroBadges}>
-                    <span className={styles.badge}>{gpsEnabled ? 'GPS Live' : 'GPS Off'}</span>
-                    <span className={styles.badge}>{recordingTrail ? 'Recording Trail' : 'Not Recording'}</span>
-                    <span className={styles.badge}>{autoFollow ? 'Auto-follow On' : 'Auto-follow Off'}</span>
                     <span className={styles.badge}>{trails.length} trails</span>
                     <span className={styles.badge}>{pinpoints.length} pinpoints</span>
-                    <span className={styles.badge}>Map: {basemapMode === 'satellite' ? 'Satellite' : 'Street'}</span>
                     <span className={styles.badge}>Sync: {syncState}</span>
-                    {locationPermission === 'denied' && (
-                        <span className={`${styles.badge} ${styles.outside}`}>Location: Blocked</span>
-                    )}
-                    {locationPermission === 'granted' && (
-                        <span className={`${styles.badge} ${styles.inside}`}>Location: Allowed</span>
-                    )}
-                    {locationPermission === 'prompt' && (
-                        <span className={styles.badge}>Location: Ask on Use</span>
-                    )}
-                    {locationPermission === 'unsupported' && (
-                        <span className={`${styles.badge} ${styles.outside}`}>Location: Unsupported</span>
-                    )}
+                    <span className={`${styles.badge} ${networkOnline ? styles.diagnosticsChipOk : styles.diagnosticsChipWarn}`}>
+                        {networkOnline ? 'Online' : 'Offline'}
+                    </span>
                 </div>
             </section>
 
+            {error && (
+                <div className={styles.errorBox}>
+                    <div>{error}</div>
+                    {locationPermission === 'denied' && (
+                        <div style={{ marginTop: '0.4rem', opacity: 0.9 }}>
+                            Tip: if you use a VPN, it will not cause a &quot;blocked&quot; permission, but it can make GPS
+                            fixes slower or less accurate once location is allowed &mdash; try disabling it if fixes
+                            still fail after allowing location.
+                        </div>
+                    )}
+                    <div className={styles.inlineActions} style={{ marginTop: '0.55rem' }}>
+                        <button type="button" className="soft-button" onClick={retrySupabaseConnection}>
+                            Retry Connection
+                        </button>
+                        <button type="button" className="soft-button" onClick={resetOfflineCache}>
+                            Reset Offline Cache
+                        </button>
+                        {locationPermission === 'denied' && (
+                            <button
+                                type="button"
+                                className="soft-button"
+                                onClick={() => {
+                                    refreshLocationPermission();
+                                    setGpsEnabled(true);
+                                }}
+                            >
+                                I Fixed It, Retry GPS
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
             <section className={`panel ${styles.workspacePanel}`}>
-                <div className={styles.topBar}>
+                <div className={styles.modeRow}>
+                    {modeOptions.map(option => (
+                        <button
+                            key={option.mode}
+                            type="button"
+                            className={toolMode === option.mode ? styles.modeButtonActive : styles.modeButton}
+                            onClick={() => setToolMode(option.mode)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                    {toolMode === 'pin' && (
+                        <select value={pinDraftType} onChange={event => setPinDraftType(event.target.value as PinType)}>
+                            {PIN_TYPES.map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    )}
+                </div>
+
+                {toolMode === 'trail' && (
+                    <div className={styles.contextBar}>
+                        <span>Tap the map to add trail points ({plannedTrailDraft.length} placed).</span>
+                        <div className={styles.inlineActions}>
+                            <input value={newTrailName} onChange={event => setNewTrailName(event.target.value)} placeholder="Trail name (optional)" />
+                            <button type="button" className="soft-button" onClick={() => setPlannedTrailDraft(prev => prev.slice(0, -1))} disabled={plannedTrailDraft.length === 0}>
+                                Undo Point
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => setPlannedTrailDraft([])} disabled={plannedTrailDraft.length === 0}>
+                                Clear
+                            </button>
+                            <button type="button" className="soft-button" onClick={savePlannedTrail} disabled={plannedTrailDraft.length < 2}>
+                                Save Trail
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {toolMode === 'boundary' && (
+                    <div className={styles.contextBar}>
+                        <span>
+                            Drag orange corner dots / blue midpoints on the map. Draft: <strong>{boundaryDraft.length}</strong> pts
+                            {boundaryDraftAreaAcres !== null && <> - <strong>{boundaryDraftAreaAcres.toFixed(2)} ac</strong> (target ~40 ac)</>}
+                        </span>
+                        <div className={styles.inlineActions}>
+                            <button type="button" className="soft-button" onClick={() => setBoundaryDraft(prev => prev.slice(0, -1))} disabled={boundaryDraft.length === 0}>
+                                Undo Point
+                            </button>
+                            <button type="button" className="soft-button" onClick={() => setBoundaryDraft([])} disabled={boundaryDraft.length === 0}>
+                                Clear
+                            </button>
+                            <button type="button" className="soft-button" onClick={saveBoundaryDraft} disabled={boundaryDraft.length < 3}>
+                                Save Boundary
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                <div className={styles.mapToolsRow}>
                     <button type="button" className="soft-button" onClick={() => setGpsEnabled(prev => !prev)}>
-                        {gpsEnabled ? 'Stop GPS' : 'GPS On/Off'}
+                        {gpsEnabled ? 'Stop GPS' : 'Start GPS'}
                     </button>
                     <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.centerOnGps()} disabled={!liveGps || !mapReady}>
                         Center Me
@@ -1117,10 +1152,38 @@ export default function PropertyMapWorkspace() {
                         }}
                         disabled={!gpsEnabled}
                     >
-                        {recordingTrail ? 'Stop Recording' : 'Record Trail'}
+                        {recordingTrail ? 'Stop Recording' : 'Record Walked Trail'}
                     </button>
                     <button type="button" className="soft-button" onClick={saveActiveTrail} disabled={plannedTrailDraft.length < 2 && walkedTrailDraft.length < 2}>
-                        {plannedTrailDraft.length >= 2 ? `Save Manual Trail (${plannedTrailDraft.length} pts)` : 'Save Trail'}
+                        {plannedTrailDraft.length >= 2 ? `Save Manual Trail (${plannedTrailDraft.length})` : 'Save Walked Trail'}
+                    </button>
+                    <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
+                        Fit Full Property
+                    </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => {
+                            mapActionsRef.current?.refresh();
+                            setStatus('Map tiles refreshed.');
+                        }}
+                        disabled={!mapReady}
+                    >
+                        Refresh Tiles
+                    </button>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => setBasemapMode(previous => (previous === 'satellite' ? 'street' : 'satellite'))}
+                    >
+                        {basemapMode === 'satellite' ? 'Street View' : 'Satellite View'}
+                    </button>
+                    <button
+                        type="button"
+                        className={autoFollow ? styles.modeButtonActive : styles.modeButton}
+                        onClick={() => setAutoFollow(prev => !prev)}
+                    >
+                        {autoFollow ? 'Auto-follow On' : 'Auto-follow Off'}
                     </button>
                 </div>
 
@@ -1146,79 +1209,13 @@ export default function PropertyMapWorkspace() {
                             onDiagnosticsChange={onMapDiagnosticsChange}
                         />
                     </div>
-
-                    <aside className={styles.rightTools}>
-                        <button
-                            type="button"
-                            className={toolMode === 'pin' ? styles.toolActive : styles.toolBtn}
-                            onClick={() => setToolMode(prev => (prev === 'pin' ? 'idle' : 'pin'))}
-                        >
-                            {toolMode === 'pin' ? 'Pinpoint Mode On' : 'Add Pinpoint'}
-                        </button>
-                        <select value={pinDraftType} onChange={event => setPinDraftType(event.target.value as typeof pinDraftType)}>
-                            {PIN_TYPES.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                        </select>
-                        <button
-                            type="button"
-                            className={toolMode === 'trail' ? styles.toolActive : styles.toolBtn}
-                            onClick={() => setToolMode(prev => (prev === 'trail' ? 'idle' : 'trail'))}
-                        >
-                            {toolMode === 'trail'
-                                ? `Tap map to draw trail (${plannedTrailDraft.length} pts) - Save Trail above when done`
-                                : 'Draw Manual Trail'}
-                        </button>
-                        <button
-                            type="button"
-                            className={autoFollow ? styles.toolActive : styles.toolBtn}
-                            onClick={() => setAutoFollow(prev => !prev)}
-                        >
-                            {autoFollow ? 'Auto-follow On' : 'Auto-follow Off'}
-                        </button>
-                        <button type="button" className={styles.toolBtn} onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
-                            Recenter Map
-                        </button>
-                        <button
-                            type="button"
-                            className={styles.toolBtn}
-                            onClick={() => {
-                                mapActionsRef.current?.refresh();
-                                setStatus('Map tiles refreshed.');
-                            }}
-                            disabled={!mapReady}
-                        >
-                            Refresh Map Tiles
-                        </button>
-                        <button
-                            type="button"
-                            className={styles.toolBtn}
-                            onClick={() => setBasemapMode(previous => (previous === 'satellite' ? 'street' : 'satellite'))}
-                        >
-                            {basemapMode === 'satellite' ? 'Switch to Street' : 'Switch to Satellite'}
-                        </button>
-                    </aside>
-                </div>
-
-                <div className={styles.diagnosticsRow}>
-                    <span className={styles.diagnosticsChip}>Build: {PROPERTY_MAP_BUILD_STAMP}</span>
-                    <span className={styles.diagnosticsChip}>Runtime: {PROPERTY_MAP_RUNTIME_HASH}</span>
-                    <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
-                    <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
-                    <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>
-                    <span className={styles.diagnosticsChip}>Acreage: {boundaryAreaAcres.toFixed(2)} ac</span>
-                    <span className={`${styles.diagnosticsChip} ${networkOnline ? styles.diagnosticsChipOk : styles.diagnosticsChipWarn}`}>
-                        Network: {networkOnline ? 'Online' : 'Offline'}
-                    </span>
                 </div>
 
                 <div className={styles.statusRow}>
-                    <span>{status}</span>
-                    {liveGps && (
-                        <span>
-                            GPS {liveGps.lat.toFixed(6)}, {liveGps.lng.toFixed(6)} | Accuracy +/-{Math.round(liveGps.accuracyMeters)}m
-                        </span>
-                    )}
+                    <span>
+                        GPS: {!gpsEnabled ? 'Off' : liveGps ? `Locked (+/-${Math.round(liveGps.accuracyMeters)}m)` : 'Searching...'}
+                    </span>
+                    {locationPermission === 'denied' && <span className={styles.outside}>Location blocked in browser settings</span>}
                     {gpsInsideBoundary !== null && (
                         <span className={gpsInsideBoundary ? styles.inside : styles.outside}>
                             {gpsInsideBoundary ? 'Inside property boundary' : 'Outside property boundary'}
@@ -1247,330 +1244,226 @@ export default function PropertyMapWorkspace() {
                         </span>
                     )}
                 </div>
-                {error && (
-                    <div className={styles.errorBox}>
-                        <div>{error}</div>
-                        {locationPermission === 'denied' && (
-                            <div style={{ marginTop: '0.4rem', opacity: 0.9 }}>
-                                Tip: if you use a VPN, it will not cause a &quot;blocked&quot; permission, but it can make GPS
-                                fixes slower or less accurate once location is allowed &mdash; try disabling it if fixes
-                                still fail after allowing location.
+                <div className={styles.helpText}>{status}</div>
+            </section>
+
+            <section className={`panel ${styles.groupCard}`}>
+                <h4>Property Boundary</h4>
+                <div className={styles.helpText}>
+                    The starting shape is an unsurveyed estimate. Choose <strong>Edit Boundary</strong> above, then drag the orange
+                    corner dots and blue midpoint dots on the satellite view to trace your real tree lines and field edges.
+                    Your saved shape is kept exactly as you draw it.
+                </div>
+                <div className={styles.helpText}>
+                    Saved boundary is currently <strong>{boundaryAreaAcres.toFixed(2)} acres</strong> (target ~40 acres for 825 West Ave).
+                </div>
+                <div className={styles.inlineActions}>
+                    <button type="button" className="soft-button" onClick={loadCurrentBoundaryIntoDraft}>
+                        Load Current Boundary Into Editor
+                    </button>
+                    <button type="button" className="soft-button" onClick={resetToPropertyShape}>
+                        Reset to Verified Address Shape
+                    </button>
+                    <button type="button" className="soft-button" onClick={autoDraftBoundaryFromSavedData}>
+                        Auto-Draft From Map Data
+                    </button>
+                </div>
+                <div className={styles.inlineActions}>
+                    <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(8, 0)}>Nudge North</button>
+                    <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(-8, 0)}>Nudge South</button>
+                    <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, -8)}>Nudge West</button>
+                    <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, 8)}>Nudge East</button>
+                    <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(1.01)}>Expand 1%</button>
+                    <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(0.99)}>Tighten 1%</button>
+                </div>
+            </section>
+
+            <section className={`panel ${styles.groupCard}`}>
+                <h4>Pinpoints ({pinpoints.length})</h4>
+                <div className={styles.helpText}>
+                    Rename, retype (Treestand, Range, Posted Sign, Gate, Water, Camera, Note), add notes, attach photos, or delete any marker.
+                </div>
+                <div className={styles.itemList}>
+                    {pinpoints.length === 0 && <div className={styles.helpText}>No pinpoints yet. Choose Add Pinpoint above, then tap the map.</div>}
+                    {pinpoints.map(pin => (
+                        <div key={pin.id} className={styles.itemRow}>
+                            <div style={{ display: 'grid', gap: '0.4rem', flex: 1 }}>
+                                <input
+                                    value={pin.title}
+                                    onChange={event => updatePinpointField(pin.id, { title: event.target.value })}
+                                    placeholder="Pinpoint label"
+                                />
+                                <div className={styles.inlineActions}>
+                                    <select
+                                        value={pin.pinType}
+                                        onChange={event => updatePinpointField(pin.id, { pinType: event.target.value as Pinpoint['pinType'] })}
+                                    >
+                                        {PIN_TYPES.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                    </select>
+                                    <span className={styles.helpText}>
+                                        {pin.position[0].toFixed(6)}, {pin.position[1].toFixed(6)}
+                                    </span>
+                                </div>
+                                <textarea
+                                    value={pin.description}
+                                    onChange={event => updatePinpointField(pin.id, { description: event.target.value })}
+                                    placeholder="Notes (e.g. posted sign wording, gate combo, etc.)"
+                                    rows={2}
+                                />
+                                <div className={styles.inlineActions}>
+                                    {pin.photos.map(photo => (
+                                        <div key={photo.id} style={{ position: 'relative' }}>
+                                            {photo.url || photo.dataUrl ? (
+                                                <Image src={photo.url || (photo.dataUrl as string)} alt={photo.name} width={64} height={64} unoptimized style={{ borderRadius: 8, objectFit: 'cover' }} />
+                                            ) : null}
+                                            <button
+                                                type="button"
+                                                onClick={() => removePinPhoto(pin.id, photo.id)}
+                                                title="Remove photo"
+                                                style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 999, border: '1px solid #334155', background: '#0f172a', color: '#fca5a5', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }}
+                                            >
+                                                x
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <label className={styles.fileButton}>
+                                        Add Photo
+                                        <input type="file" accept="image/*" multiple onChange={event => { void uploadPhotosForPin(pin.id, event.target.files); event.target.value = ''; }} />
+                                    </label>
+                                </div>
                             </div>
-                        )}
-                        <div className={styles.inlineActions} style={{ marginTop: '0.55rem' }}>
-                            <button type="button" className="soft-button" onClick={retrySupabaseConnection}>
-                                Retry Connection
-                            </button>
-                            <button type="button" className="soft-button" onClick={resetOfflineCache}>
-                                Reset Offline Cache
-                            </button>
-                            {locationPermission === 'denied' && (
+                            <div className={styles.inlineActions}>
+                                <button type="button" className="soft-button" onClick={() => deletePinpoint(pin.id)}>
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            <section className={`panel ${styles.groupCard}`}>
+                <h4>Trails ({trails.length})</h4>
+                <div className={styles.helpText}>Draw Trail above for manual tap-to-place paths, or Record Walked Trail while carrying your phone.</div>
+                <label className={styles.fileButton}>
+                    Import GPX File
+                    <input type="file" accept=".gpx,application/gpx+xml,text/xml" onChange={importGpxFile} />
+                </label>
+                <div className={styles.itemList}>
+                    {trails.length === 0 && <div className={styles.helpText}>No saved trails yet.</div>}
+                    {trails.map(trail => (
+                        <div key={trail.id} className={styles.itemRow}>
+                            <div style={{ flex: 1 }}>
+                                <div className={styles.itemTitle}>{trail.name}</div>
+                                <div className={styles.helpText}>
+                                    {trail.type} | {trail.points.length} points | {formatDistance(trail.distanceMeters)} | {formatDuration(trail.durationSeconds)}
+                                </div>
+                                <div className={styles.inlineActions}>
+                                    {trail.photos.map(photo => (
+                                        <div key={photo.id} style={{ position: 'relative' }}>
+                                            {photo.url || photo.dataUrl ? (
+                                                <Image src={photo.url || (photo.dataUrl as string)} alt={photo.name} width={64} height={64} unoptimized style={{ borderRadius: 8, objectFit: 'cover' }} />
+                                            ) : null}
+                                            <button
+                                                type="button"
+                                                onClick={() => removeTrailPhoto(trail.id, photo.id)}
+                                                title="Remove photo"
+                                                style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 999, border: '1px solid #334155', background: '#0f172a', color: '#fca5a5', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }}
+                                            >
+                                                x
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <label className={styles.fileButton}>
+                                        Add Photo
+                                        <input type="file" accept="image/*" multiple onChange={event => { void uploadPhotosForTrail(trail.id, event.target.files); event.target.value = ''; }} />
+                                    </label>
+                                </div>
+                            </div>
+                            <div className={styles.inlineActions}>
+                                <button type="button" className="soft-button" onClick={() => setSelectedTrailId(trail.id)}>
+                                    Analytics
+                                </button>
+                                <button type="button" className="soft-button" onClick={() => exportTrail(trail)}>
+                                    GPX
+                                </button>
                                 <button
                                     type="button"
                                     className="soft-button"
-                                    onClick={() => {
-                                        refreshLocationPermission();
-                                        setGpsEnabled(true);
-                                    }}
+                                    onClick={() =>
+                                        setSnapshot(previous => ({
+                                            ...previous,
+                                            trails: previous.trails.filter(item => item.id !== trail.id)
+                                        }))
+                                    }
                                 >
-                                    I Fixed It, Retry GPS
+                                    Delete
                                 </button>
-                            )}
+                            </div>
                         </div>
-                    </div>
-                )}
-            </section>
-
-            <section className={`panel ${styles.drawer}`}>
-                <div className={styles.drawerTabs}>
-                    {BOTTOM_DRAWER_TABS.map(tab => (
-                        <button
-                            key={tab.id}
-                            type="button"
-                            className={drawerTab === tab.id ? styles.drawerTabActive : styles.drawerTab}
-                            onClick={() => setDrawerTab(tab.id)}
-                        >
-                            {tab.label}
-                        </button>
                     ))}
                 </div>
 
-                {drawerTab === 'boundary' && (
-                    <div className={styles.drawerContent}>
+                {selectedTrail && (
+                    <div className={styles.groupCard}>
+                        <h4>Trail Analytics: {selectedTrail.name}</h4>
                         <div className={styles.helpText}>
-                            The starting shape is an unsurveyed estimate. Tap Edit Boundary, then drag the orange
-                            corner dots and blue midpoint dots on the satellite view to trace your real tree lines
-                            and field edges. Your saved shape is now kept exactly as you draw it and will not be
-                            reset on reload.
+                            Distance {formatDistance(selectedTrail.distanceMeters)} | Duration {formatDuration(selectedTrail.durationSeconds)} | Pace {formatPace(selectedTrail.paceSecondsPerKm)}
                         </div>
                         <div className={styles.helpText}>
-                            Saved boundary is currently <strong>{boundaryAreaAcres.toFixed(2)} acres</strong> (target ~40 acres for 825 West Ave).
-                            {boundaryDraftAreaAcres !== null && (
-                                <> Draft in progress: <strong>{boundaryDraftAreaAcres.toFixed(2)} acres</strong> - keep dragging corners/midpoints until this is close to 40 before saving.</>
-                            )}
+                            Elevation gain {Math.round(selectedTrail.elevationGainMeters)}m | Elevation loss {Math.round(selectedTrail.elevationLossMeters)}m | Splits {selectedTrailSplits.length}
                         </div>
-                        <div className={styles.inlineActions}>
-                            <button type="button" className="soft-button" onClick={toggleBoundaryEditMode}>
-                                {toolMode === 'boundary' ? 'Stop Editing Boundary' : 'Edit Boundary'}
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => setBoundaryDraft(prev => prev.slice(0, -1))} disabled={boundaryDraft.length === 0}>
-                                Undo Last Point
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => setBoundaryDraft([])} disabled={boundaryDraft.length === 0}>
-                                Clear Draft
-                            </button>
-                            <button type="button" className="soft-button" onClick={saveBoundaryDraft} disabled={boundaryDraft.length < 3}>
-                                Save Boundary Polygon
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
-                                Fit Full Property
-                            </button>
-                            <button type="button" className="soft-button" onClick={loadCurrentBoundaryIntoDraft}>
-                                Load Current Boundary
-                            </button>
-                            <button type="button" className="soft-button" onClick={resetToPropertyShape}>
-                                Reset to ONX Property Shape
-                            </button>
-                            <button type="button" className="soft-button" onClick={autoDraftBoundaryFromSavedData}>
-                                Auto-Draft From Map Data
-                            </button>
-                        </div>
-                        <div className={styles.inlineActions}>
-                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(8, 0)}>
-                                Nudge North
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(-8, 0)}>
-                                Nudge South
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, -8)}>
-                                Nudge West
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => nudgeBoundaryDraft(0, 8)}>
-                                Nudge East
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(1.01)}>
-                                Expand 1%
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => scaleBoundaryDraft(0.99)}>
-                                Tighten 1%
-                            </button>
-                        </div>
-                        <div className={styles.helpText}>
-                            Boundary polygon is synced to Supabase and shared with all family devices. Drag orange corners to move points, or drag blue midpoint handles to add new corners.
-                        </div>
-                    </div>
-                )}
-
-                {drawerTab === 'pins' && (
-                    <div className={styles.drawerContent}>
-                        <div className={styles.groupCard}>
-                            <h4>Pinpoints ({pinpoints.length})</h4>
-                            <div className={styles.helpText}>
-                                Rename, retype (e.g. Posted Sign, Treestand, Gate), edit notes, or delete any marker placed with Add Pinpoint.
-                            </div>
-                            <div className={styles.itemList}>
-                                {pinpoints.length === 0 && <div className={styles.helpText}>No pinpoints yet. Use Add Pinpoint on the map to place one.</div>}
-                                {pinpoints.map(pin => (
-                                    <div key={pin.id} className={styles.itemRow}>
-                                        <div style={{ display: 'grid', gap: '0.4rem', flex: 1 }}>
-                                            <input
-                                                value={pin.title}
-                                                onChange={event => updatePinpointField(pin.id, { title: event.target.value })}
-                                                placeholder="Pinpoint label"
-                                            />
-                                            <div className={styles.inlineActions}>
-                                                <select
-                                                    value={pin.pinType}
-                                                    onChange={event => updatePinpointField(pin.id, { pinType: event.target.value as Pinpoint['pinType'] })}
-                                                >
-                                                    {PIN_TYPES.map(option => (
-                                                        <option key={option.value} value={option.value}>{option.label}</option>
-                                                    ))}
-                                                </select>
-                                                <span className={styles.helpText}>
-                                                    {pin.position[0].toFixed(6)}, {pin.position[1].toFixed(6)} | {pin.photos.length} photo(s)
-                                                </span>
-                                            </div>
-                                            <textarea
-                                                value={pin.description}
-                                                onChange={event => updatePinpointField(pin.id, { description: event.target.value })}
-                                                placeholder="Notes (e.g. posted sign wording, gate combo, etc.)"
-                                                rows={2}
-                                            />
-                                        </div>
-                                        <div className={styles.inlineActions}>
-                                            <button type="button" className="soft-button" onClick={() => setSelectedEntity({ type: 'pinpoint', id: pin.id })}>
-                                                Photos
-                                            </button>
-                                            <button type="button" className="soft-button" onClick={() => deletePinpoint(pin.id)}>
-                                                Delete
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {drawerTab === 'trails' && (
-                    <div className={styles.drawerContent}>
-                        <div className={styles.groupCard}>
-                            <h4>Planned Trail Draft</h4>
-                            <div className={styles.inlineActions}>
-                                <input value={newTrailName} onChange={event => setNewTrailName(event.target.value)} placeholder="Trail name (optional)" />
-                                <button type="button" className="soft-button" onClick={savePlannedTrail} disabled={plannedTrailDraft.length < 2}>
-                                    Save Planned Trail
-                                </button>
-                                <button type="button" className="soft-button" onClick={() => setPlannedTrailDraft([])} disabled={plannedTrailDraft.length === 0}>
-                                    Clear Draft Trail
-                                </button>
-                                <label className={styles.fileButton}>
-                                    Import GPX
-                                    <input type="file" accept=".gpx,application/gpx+xml,text/xml" onChange={importGpxFile} />
-                                </label>
-                            </div>
-                            <div className={styles.helpText}>Draft points: {plannedTrailDraft.length}</div>
-                        </div>
-
-                        <div className={styles.groupCard}>
-                            <h4>Saved Trails</h4>
-                            <div className={styles.itemList}>
-                                {trails.length === 0 && <div className={styles.helpText}>No saved trails yet.</div>}
-                                {trails.map(trail => (
-                                    <div key={trail.id} className={styles.itemRow}>
-                                        <div>
-                                            <div className={styles.itemTitle}>{trail.name}</div>
-                                            <div className={styles.helpText}>
-                                                {trail.type} | {trail.points.length} points | {formatDistance(trail.distanceMeters)} | {formatDuration(trail.durationSeconds)}
-                                            </div>
-                                        </div>
-                                        <div className={styles.inlineActions}>
-                                            <button type="button" className="soft-button" onClick={() => setSelectedTrailId(trail.id)}>
-                                                Analytics
-                                            </button>
-                                            <button type="button" className="soft-button" onClick={() => setSelectedEntity({ type: 'trail', id: trail.id })}>
-                                                Photos
-                                            </button>
-                                            <button type="button" className="soft-button" onClick={() => exportTrail(trail)}>
-                                                GPX
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="soft-button"
-                                                onClick={() =>
-                                                    setSnapshot(previous => ({
-                                                        ...previous,
-                                                        trails: previous.trails.filter(item => item.id !== trail.id)
-                                                    }))
-                                                }
-                                            >
-                                                Delete
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {selectedTrail && (
-                            <div className={styles.groupCard}>
-                                <h4>Trail Analytics: {selectedTrail.name}</h4>
-                                <div className={styles.helpText}>
-                                    Distance {formatDistance(selectedTrail.distanceMeters)} | Duration {formatDuration(selectedTrail.durationSeconds)} | Pace {formatPace(selectedTrail.paceSecondsPerKm)}
-                                </div>
-                                <div className={styles.helpText}>
-                                    Elevation gain {Math.round(selectedTrail.elevationGainMeters)}m | Elevation loss {Math.round(selectedTrail.elevationLossMeters)}m | Splits {selectedTrailSplits.length}
-                                </div>
-                                {selectedTrailElevation.length >= 2 ? (
-                                    <svg viewBox="0 0 640 180" role="img" aria-label="Elevation profile" className={styles.elevationChart}>
-                                        <path d={buildElevationPath(selectedTrailElevation)} fill="none" stroke="#22d3ee" strokeWidth="3" />
-                                    </svg>
-                                ) : (
-                                    <div className={styles.helpText}>No elevation points captured for this trail yet.</div>
-                                )}
-                            </div>
+                        {selectedTrailElevation.length >= 2 ? (
+                            <svg viewBox="0 0 640 180" role="img" aria-label="Elevation profile" className={styles.elevationChart}>
+                                <path d={buildElevationPath(selectedTrailElevation)} fill="none" stroke="#22d3ee" strokeWidth="3" />
+                            </svg>
+                        ) : (
+                            <div className={styles.helpText}>No elevation points captured for this trail yet.</div>
                         )}
                     </div>
                 )}
-
-                {drawerTab === 'photos' && (
-                    <div className={styles.drawerContent}>
-                        <div className={styles.groupCard}>
-                            <h4>Attach Photos to Trail or Pinpoint</h4>
-                            <div className={styles.inlineActions}>
-                                <select
-                                    value={selectedEntity ? `${selectedEntity.type}:${selectedEntity.id}` : ''}
-                                    onChange={event => onSelectEntity(event.target.value)}
-                                >
-                                    <option value="">Select trail or pinpoint</option>
-                                    {selectedEntityOptions.map(option => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <label className={styles.fileButton}>
-                                    Upload Photos
-                                    <input type="file" accept="image/*" multiple onChange={uploadPhotosToSelected} />
-                                </label>
-                            </div>
-                        </div>
-
-                        <div className={styles.photoGrid}>
-                            {selectedEntityPhotos.length === 0 && <div className={styles.helpText}>No photos attached for the selected item yet.</div>}
-                            {selectedEntityPhotos.map(photo => (
-                                <figure key={photo.id} className={styles.photoCard}>
-                                    {photo.url || photo.dataUrl ? (
-                                        <Image src={photo.url || (photo.dataUrl as string)} alt={photo.name} width={300} height={200} unoptimized />
-                                    ) : (
-                                        <div className={styles.helpText}>Photo source unavailable until sync completes.</div>
-                                    )}
-                                    <figcaption>{photo.name}</figcaption>
-                                    <button type="button" className="soft-button" onClick={() => removePhoto(photo.id)}>
-                                        Remove Photo
-                                    </button>
-                                </figure>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {drawerTab === 'io' && (
-                    <div className={styles.drawerContent}>
-                        <div className={styles.inlineActions}>
-                            <button type="button" className="soft-button" onClick={() => void runSync()}>
-                                Sync Now
-                            </button>
-                            <button type="button" className="soft-button" onClick={() => void flushQueue()}>
-                                Flush Offline Queue ({loadSyncQueue().length})
-                            </button>
-                            <button type="button" className="soft-button" onClick={exportSnapshot}>
-                                Export Full Map JSON
-                            </button>
-                            <label className={styles.fileButton}>
-                                Import Full Map JSON
-                                <input type="file" accept="application/json,.json" onChange={importSnapshot} />
-                            </label>
-                            <button
-                                type="button"
-                                className="soft-button"
-                                onClick={() => {
-                                    const center = boundaryCenter(boundary);
-                                    mapActionsRef.current?.recenter();
-                                    setStatus(`Map recentered near ${center[0].toFixed(5)}, ${center[1].toFixed(5)}.`);
-                                }}
-                                disabled={!mapReady}
-                            >
-                                Recenter to Boundary
-                            </button>
-                        </div>
-                        <div className={styles.helpText}>
-                            Import/export gives device backup; Supabase sync and queue flush share updates across phones and PCs.
-                        </div>
-                    </div>
-                )}
             </section>
+
+            <details className={styles.groupCard}>
+                <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Import / Export &amp; Diagnostics</summary>
+                <div className={styles.inlineActions} style={{ marginTop: '0.6rem' }}>
+                    <button type="button" className="soft-button" onClick={() => void runSync()}>
+                        Sync Now
+                    </button>
+                    <button type="button" className="soft-button" onClick={() => void flushQueue()}>
+                        Flush Offline Queue ({loadSyncQueue().length})
+                    </button>
+                    <button type="button" className="soft-button" onClick={exportSnapshot}>
+                        Export Full Map JSON
+                    </button>
+                    <label className={styles.fileButton}>
+                        Import Full Map JSON
+                        <input type="file" accept="application/json,.json" onChange={importSnapshot} />
+                    </label>
+                    <button
+                        type="button"
+                        className="soft-button"
+                        onClick={() => {
+                            const center = boundaryCenter(boundary);
+                            mapActionsRef.current?.recenter();
+                            setStatus(`Map recentered near ${center[0].toFixed(5)}, ${center[1].toFixed(5)}.`);
+                        }}
+                        disabled={!mapReady}
+                    >
+                        Recenter to Boundary
+                    </button>
+                </div>
+                <div className={styles.diagnosticsRow} style={{ marginTop: '0.6rem' }}>
+                    <span className={styles.diagnosticsChip}>Build: {PROPERTY_MAP_BUILD_STAMP}</span>
+                    <span className={styles.diagnosticsChip}>Runtime: {PROPERTY_MAP_RUNTIME_HASH}</span>
+                    <span className={styles.diagnosticsChip}>Center: {mapDiagnostics.center[0].toFixed(5)}, {mapDiagnostics.center[1].toFixed(5)}</span>
+                    <span className={styles.diagnosticsChip}>Zoom: {mapDiagnostics.zoom.toFixed(2)}</span>
+                    <span className={styles.diagnosticsChip}>Boundary points: {mapDiagnostics.boundaryPointCount}</span>
+                </div>
+            </details>
         </div>
     );
 }
+
