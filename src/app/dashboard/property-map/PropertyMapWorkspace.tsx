@@ -260,6 +260,49 @@ export default function PropertyMapWorkspace() {
         }
     }, [profileId, snapshot, supabase]);
 
+    // Explicit save actions (e.g. Save Boundary) must not depend on the passive debounce timer below,
+    // which gets cancelled (and the sync silently dropped) if the user navigates away within the delay.
+    const persistSnapshotNow = useCallback(
+        async (nextSnapshot: PropertyMapSnapshot) => {
+            if (!profileId) return;
+
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+                setSyncState('offline');
+                return;
+            }
+
+            syncInFlightRef.current = true;
+            setSyncState('syncing');
+
+            try {
+                let activeMapId = nextSnapshot.mapId;
+                if (!activeMapId || activeMapId === OFFLINE_MAP_ID) {
+                    const sharedMap = await ensureSharedMap(supabase, profileId);
+                    activeMapId = sharedMap.id;
+                }
+
+                const synced = await syncSnapshotToSupabase(supabase, profileId, {
+                    ...nextSnapshot,
+                    mapId: activeMapId
+                });
+                setSnapshot(synced);
+                saveCachedSnapshot(synced);
+                dirtyRef.current = false;
+                setSyncState('idle');
+                setStatus(`Boundary saved and synced to family shared map at ${new Date().toLocaleTimeString()}.`);
+            } catch (err: any) {
+                enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+                setSyncState('queued');
+                setStatus('Boundary saved locally. Will sync to shared map once connection is available.');
+                setError(getSupabaseErrorMessage(err, 'Could not sync boundary to Supabase right now; it is queued and will retry automatically.'));
+            } finally {
+                syncInFlightRef.current = false;
+            }
+        },
+        [profileId, supabase]
+    );
+
     const flushQueue = useCallback(async () => {
         if (!profileId) return;
         const queue = loadSyncQueue();
@@ -736,13 +779,14 @@ export default function PropertyMapWorkspace() {
         const nextBoundary = buildBoundary(boundaryDraft, boundary.name);
         nextBoundary.sourceFeatureId = boundary.sourceFeatureId || createId('boundary');
 
-        setSnapshot(previous => ({
-            ...previous,
-            boundary: nextBoundary
-        }));
+        const nextSnapshot = { ...snapshot, boundary: nextBoundary };
+        setSnapshot(nextSnapshot);
         setBoundaryDraft([]);
         setToolMode('idle');
-        setStatus('Boundary polygon saved. GPS containment checks now use this shape.');
+        setStatus('Boundary polygon saved. Syncing to shared map now...');
+        // Sync immediately instead of waiting on the passive debounce timer, which gets
+        // cancelled (losing the edit) if the user navigates away right after saving.
+        void persistSnapshotNow(nextSnapshot);
         window.setTimeout(() => {
             mapActionsRef.current?.fitBoundary();
             mapActionsRef.current?.refresh();
