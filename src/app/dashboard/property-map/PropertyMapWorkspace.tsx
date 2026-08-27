@@ -217,6 +217,10 @@ export default function PropertyMapWorkspace() {
     const mapActionsRef = useRef<MapActions | null>(null);
     const syncInFlightRef = useRef(false);
     const dirtyRef = useRef(false);
+    const snapshotRef = useRef(snapshot);
+    const profileIdRef = useRef<string | null>(profileId);
+    snapshotRef.current = snapshot;
+    profileIdRef.current = profileId;
 
     const router = useRouter();
     const supabase = supabaseClient();
@@ -226,10 +230,12 @@ export default function PropertyMapWorkspace() {
     const trails = snapshot.trails;
 
     const runSync = useCallback(async () => {
-        if (syncInFlightRef.current || !dirtyRef.current || !profileId) return;
+        const currentSnapshot = snapshotRef.current;
+        const currentProfileId = profileIdRef.current;
+        if (syncInFlightRef.current || !dirtyRef.current || !currentProfileId) return;
 
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
-            enqueueSnapshotSync(snapshot.mapId || OFFLINE_MAP_ID, snapshot);
+            enqueueSnapshotSync(currentSnapshot.mapId || OFFLINE_MAP_ID, currentSnapshot);
             setSyncState('offline');
             return;
         }
@@ -238,14 +244,14 @@ export default function PropertyMapWorkspace() {
         setSyncState('syncing');
 
         try {
-            let activeMapId = snapshot.mapId;
+            let activeMapId = currentSnapshot.mapId;
             if (!activeMapId || activeMapId === OFFLINE_MAP_ID) {
-                const sharedMap = await ensureSharedMap(supabase, profileId);
+                const sharedMap = await ensureSharedMap(supabase, currentProfileId);
                 activeMapId = sharedMap.id;
             }
 
-            const synced = await syncSnapshotToSupabase(supabase, profileId, {
-                ...snapshot,
+            const synced = await syncSnapshotToSupabase(supabase, currentProfileId, {
+                ...currentSnapshot,
                 mapId: activeMapId
             });
             setSnapshot(synced);
@@ -254,18 +260,19 @@ export default function PropertyMapWorkspace() {
             setSyncState('idle');
             setStatus(`Synced to family shared map at ${new Date().toLocaleTimeString()}.`);
         } catch {
-            enqueueSnapshotSync(snapshot.mapId || OFFLINE_MAP_ID, snapshot);
+            enqueueSnapshotSync(currentSnapshot.mapId || OFFLINE_MAP_ID, currentSnapshot);
             setSyncState('queued');
         } finally {
             syncInFlightRef.current = false;
         }
-    }, [profileId, snapshot, supabase]);
+    }, [supabase]);
 
     // Explicit save actions (e.g. Save Boundary) must not depend on the passive debounce timer below,
     // which gets cancelled (and the sync silently dropped) if the user navigates away within the delay.
     const persistSnapshotNow = useCallback(
         async (nextSnapshot: PropertyMapSnapshot) => {
-            if (!profileId) return;
+            const currentProfileId = profileIdRef.current;
+            if (!currentProfileId) return;
 
             if (typeof navigator !== 'undefined' && !navigator.onLine) {
                 enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
@@ -279,11 +286,11 @@ export default function PropertyMapWorkspace() {
             try {
                 let activeMapId = nextSnapshot.mapId;
                 if (!activeMapId || activeMapId === OFFLINE_MAP_ID) {
-                    const sharedMap = await ensureSharedMap(supabase, profileId);
+                    const sharedMap = await ensureSharedMap(supabase, currentProfileId);
                     activeMapId = sharedMap.id;
                 }
 
-                const synced = await syncSnapshotToSupabase(supabase, profileId, {
+                const synced = await syncSnapshotToSupabase(supabase, currentProfileId, {
                     ...nextSnapshot,
                     mapId: activeMapId
                 });
@@ -301,11 +308,12 @@ export default function PropertyMapWorkspace() {
                 syncInFlightRef.current = false;
             }
         },
-        [profileId, supabase]
+        [supabase]
     );
 
     const flushQueue = useCallback(async () => {
-        if (!profileId) return;
+        const currentProfileId = profileIdRef.current;
+        if (!currentProfileId) return;
         const queue = loadSyncQueue();
         if (queue.length === 0) return;
 
@@ -315,11 +323,11 @@ export default function PropertyMapWorkspace() {
             try {
                 let nextMapId = item.snapshot.mapId;
                 if (!nextMapId || nextMapId === OFFLINE_MAP_ID) {
-                    const sharedMap = await ensureSharedMap(supabase, profileId);
+                    const sharedMap = await ensureSharedMap(supabase, currentProfileId);
                     nextMapId = sharedMap.id;
                 }
 
-                await syncSnapshotToSupabase(supabase, profileId, {
+                await syncSnapshotToSupabase(supabase, currentProfileId, {
                     ...item.snapshot,
                     mapId: nextMapId
                 });
@@ -332,7 +340,7 @@ export default function PropertyMapWorkspace() {
 
         setSyncState('idle');
         setStatus('Offline updates synced successfully.');
-    }, [profileId, supabase]);
+    }, [supabase]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
