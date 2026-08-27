@@ -38,6 +38,7 @@ type V2Meta =
         photos: PhotoAttachment[];
         createdAt: string;
         updatedAt: string;
+        lastCheckedAt?: string;
     }
     | {
         kind: 'trail';
@@ -246,6 +247,7 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
                 photos: normalizePhotos(meta.photos),
                 createdAt: meta.createdAt,
                 updatedAt: meta.updatedAt,
+                lastCheckedAt: meta.lastCheckedAt,
                 sourceFeatureId: row.id
             });
             boundaryFallbackPoints.push(meta.position);
@@ -399,7 +401,8 @@ export const syncSnapshotToSupabase = async (
                 position: pin.position,
                 photos: pin.photos,
                 createdAt: pin.createdAt,
-                updatedAt: pin.updatedAt
+                updatedAt: pin.updatedAt,
+                lastCheckedAt: pin.lastCheckedAt
             };
 
             return {

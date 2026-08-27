@@ -25,6 +25,7 @@ export type Pinpoint = {
     photos: PhotoAttachment[];
     createdAt: string;
     updatedAt: string;
+    lastCheckedAt?: string;
     sourceFeatureId?: string;
 };
 

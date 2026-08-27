@@ -198,6 +198,7 @@ export default function PropertyMapWorkspace() {
     const [boundaryDraft, setBoundaryDraft] = useState<LatLngTuple[]>([]);
 
     const [selectedTrailId, setSelectedTrailId] = useState<string>('');
+    const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
     const [newTrailName, setNewTrailName] = useState('');
 
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'queued' | 'offline'>('idle');
@@ -690,17 +691,17 @@ export default function PropertyMapWorkspace() {
         setError(null);
 
         if (toolMode === 'pin') {
+            const nextPin = createPinpoint(position, pinpoints.length);
+            nextPin.pinType = pinDraftType;
             setSnapshot(previous => ({
                 ...previous,
                 pinpoints: [
-                    {
-                        ...createPinpoint(position, previous.pinpoints.length),
-                        pinType: pinDraftType
-                    },
+                    nextPin,
                     ...previous.pinpoints
                 ]
             }));
-            setStatus('Pinpoint added. Add photos from the Photo Attachments tab.');
+            setSelectedPinId(nextPin.id);
+            setStatus('Pinpoint added. Edit its name, location, notes, or last-checked date below.');
             return;
         }
 
@@ -905,7 +906,7 @@ export default function PropertyMapWorkspace() {
         }));
     };
 
-    const updatePinpointField = (pinId: string, updates: Partial<Pick<Pinpoint, 'title' | 'description' | 'pinType'>>) => {
+    const updatePinpointField = (pinId: string, updates: Partial<Pick<Pinpoint, 'title' | 'description' | 'pinType' | 'position' | 'lastCheckedAt'>>) => {
         setSnapshot(previous => ({
             ...previous,
             pinpoints: previous.pinpoints.map(pin =>
@@ -919,6 +920,7 @@ export default function PropertyMapWorkspace() {
             ...previous,
             pinpoints: previous.pinpoints.filter(pin => pin.id !== pinId)
         }));
+        setSelectedPinId(previous => (previous === pinId ? null : previous));
         setStatus('Pinpoint deleted.');
     };
 
@@ -1241,6 +1243,8 @@ export default function PropertyMapWorkspace() {
                             trails={trails}
                             selectedTrailId={selectedTrail?.id || null}
                             pinpoints={pinpoints}
+                            selectedPinId={selectedPinId}
+                            onPinSelect={setSelectedPinId}
                             walkedTrailDraft={walkedTrailDraft}
                             plannedTrailDraft={plannedTrailDraft}
                             boundaryDraft={boundaryDraft}
@@ -1336,10 +1340,50 @@ export default function PropertyMapWorkspace() {
                         <div key={pin.id} className={styles.itemRow}>
                             <div style={{ display: 'grid', gap: '0.4rem', flex: 1 }}>
                                 <input
+                                    aria-label="Pinpoint title"
                                     value={pin.title}
                                     onChange={event => updatePinpointField(pin.id, { title: event.target.value })}
                                     placeholder="Pinpoint label"
                                 />
+                                <div className={styles.inlineActions}>
+                                    <label>
+                                        Latitude
+                                        <input
+                                            aria-label="Pinpoint latitude"
+                                            type="number"
+                                            step="0.000001"
+                                            value={pin.position[0]}
+                                            onChange={event => {
+                                                const latitude = Number(event.target.value);
+                                                if (Number.isFinite(latitude) && latitude >= -90 && latitude <= 90) {
+                                                    updatePinpointField(pin.id, { position: [latitude, pin.position[1]] });
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                    <label>
+                                        Longitude
+                                        <input
+                                            type="number"
+                                            step="0.000001"
+                                            value={pin.position[1]}
+                                            onChange={event => {
+                                                const longitude = Number(event.target.value);
+                                                if (Number.isFinite(longitude) && longitude >= -180 && longitude <= 180) {
+                                                    updatePinpointField(pin.id, { position: [pin.position[0], longitude] });
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                    <label>
+                                        Last checked
+                                        <input
+                                            type="date"
+                                            value={pin.lastCheckedAt || ''}
+                                            onChange={event => updatePinpointField(pin.id, { lastCheckedAt: event.target.value || undefined })}
+                                        />
+                                    </label>
+                                </div>
                                 <div className={styles.inlineActions}>
                                     <select
                                         value={pin.pinType}
@@ -1382,6 +1426,9 @@ export default function PropertyMapWorkspace() {
                                 </div>
                             </div>
                             <div className={styles.inlineActions}>
+                                <button type="button" className="soft-button" onClick={() => setSelectedPinId(pin.id)}>
+                                    Edit
+                                </button>
                                 <button type="button" className="soft-button" onClick={() => deletePinpoint(pin.id)}>
                                     Delete
                                 </button>
@@ -1439,12 +1486,14 @@ export default function PropertyMapWorkspace() {
                                 <button
                                     type="button"
                                     className="soft-button"
-                                    onClick={() =>
+                                    onClick={() => {
                                         setSnapshot(previous => ({
                                             ...previous,
                                             trails: previous.trails.filter(item => item.id !== trail.id)
-                                        }))
-                                    }
+                                        }));
+                                        setSelectedTrailId(previous => (previous === trail.id ? '' : previous));
+                                        setStatus(`${trail.name} deleted.`);
+                                    }}
                                 >
                                     Delete
                                 </button>
