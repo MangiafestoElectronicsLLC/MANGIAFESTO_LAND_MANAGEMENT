@@ -1,4 +1,4 @@
-export type MeshNodeRole = 'portable' | 'relay' | 'gateway';
+export type MeshNodeRole = 'portable' | 'relay' | 'gateway' | 'unknown';
 
 export type MeshNode = {
     id: string;

@@ -10,6 +10,7 @@ import MessageConsole from '@/components/satcom/MessageConsole';
 import HowToUse from '@/components/satcom/HowToUse';
 import EmergencyGuide from '@/components/satcom/EmergencyGuide';
 import type { MeshMetrics, MeshNode } from '@/lib/meshTypes';
+import type { LiveConnectionStatus } from '@/lib/useMeshtasticConnection';
 
 const STATUS_POLL_MS = 15000;
 
@@ -22,7 +23,8 @@ export default function SatcomPage() {
     const [metrics, setMetrics] = useState<MeshMetrics | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [simulated, setSimulated] = useState(false);
+    const [liveNodes, setLiveNodes] = useState<MeshNode[]>([]);
+    const [liveStatus, setLiveStatus] = useState<LiveConnectionStatus>('disconnected');
 
     useEffect(() => {
         const bootstrap = async () => {
@@ -65,7 +67,6 @@ export default function SatcomPage() {
                 if (cancelled) return;
                 setNodes(data.nodes || []);
                 setMetrics(data.metrics || null);
-                setSimulated(Boolean(data.simulated));
                 setError(null);
             } catch {
                 if (!cancelled) setError('Could not reach the mesh status API. Showing last known data.');
@@ -75,13 +76,30 @@ export default function SatcomPage() {
         };
 
         void fetchStatus();
-        const interval = window.setInterval(() => void fetchStatus(), STATUS_POLL_MS);
+        const interval = window.setInterval(() => {
+            // Skip demo polling once a real node is connected; live events take over.
+            if (liveStatus !== 'connected') void fetchStatus();
+        }, STATUS_POLL_MS);
 
         return () => {
             cancelled = true;
             window.clearInterval(interval);
         };
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveStatus]);
+
+    const displayNodes = liveStatus === 'connected' ? liveNodes : nodes;
+    const displayMetrics =
+        liveStatus === 'connected'
+            ? {
+                total_nodes: liveNodes.length,
+                online_nodes: liveNodes.length,
+                reachable_nodes: liveNodes.length,
+                gateway_online: true,
+                channel_utilization_pct: 0,
+                last_updated: new Date().toISOString()
+            }
+            : metrics;
 
     return (
         <div className="page-stack">
@@ -111,35 +129,40 @@ export default function SatcomPage() {
 
             <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
                 <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
-                    <MeshOverview nodes={nodes} metrics={metrics} loading={loading} error={error} simulated={simulated} />
-                    <NodeList nodes={nodes} loading={loading} />
+                    <MeshOverview
+                        nodes={displayNodes}
+                        metrics={displayMetrics}
+                        loading={loading}
+                        error={error}
+                        simulated={liveStatus !== 'connected'}
+                    />
+                    <NodeList nodes={displayNodes} loading={loading} />
                 </div>
                 <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
-                    <MessageConsole senderName={senderName} />
+                    <MessageConsole senderName={senderName} onLiveNodesChange={setLiveNodes} onLiveStatusChange={setLiveStatus} />
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
-                <HowToUse />
-                <EmergencyGuide />
-            </div>
+            <EmergencyGuide />
 
-            <section className="panel panel-pad" style={{ display: 'grid', gap: '0.6rem' }}>
-                <h2 style={{ margin: 0 }}>How This Ties Into the Land Dashboard</h2>
-                <div style={{ fontSize: '0.9rem', opacity: 0.85, display: 'grid', gap: '0.4rem' }}>
-                    <p style={{ margin: 0 }}>
-                        The cabin gateway node bridges the Meshtastic mesh to the internet. Once a real gateway bridge
-                        (Meshtastic HTTP API or MQTT) is deployed, <code>/api/mesh/status</code> and{' '}
-                        <code>/api/mesh/send</code> can be pointed at it so this page reflects the live mesh instead of
-                        the current simulated demo data (shown with an orange &quot;Simulated demo data&quot; badge above).
-                    </p>
-                    <p style={{ margin: 0 }}>
-                        Messages you send here are stored locally in your browser (IndexedDB) so history survives
-                        reloads and works offline, then sync to the mesh API automatically once you&apos;re back online —
-                        the same pattern used by Property Map and Land Wifi for offline-first editing on this dashboard.
-                    </p>
+            <details className="panel panel-pad">
+                <summary style={{ cursor: 'pointer', fontWeight: 700 }}>How Meshnology Works (Setup &amp; Guide)</summary>
+                <div style={{ display: 'grid', gap: '1rem', marginTop: '0.85rem' }}>
+                    <HowToUse />
+                    <div style={{ fontSize: '0.9rem', opacity: 0.85, display: 'grid', gap: '0.4rem' }}>
+                        <p style={{ margin: 0 }}>
+                            The cabin gateway node bridges the Meshtastic mesh to the internet. Once connected via
+                            Bluetooth above, this page talks directly to your paired node using the same protocol as the
+                            Meshtastic app — no separate gateway server required for basic messaging and node status.
+                        </p>
+                        <p style={{ margin: 0 }}>
+                            Messages you send here are stored locally in your browser (IndexedDB) so history survives
+                            reloads and works offline, then sync automatically once you&apos;re back online — the same
+                            pattern used by Property Map and Land Wifi for offline-first editing on this dashboard.
+                        </p>
+                    </div>
                 </div>
-            </section>
+            </details>
         </div>
     );
 }

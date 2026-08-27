@@ -1,4 +1,9 @@
 /** @type {import('next').NextConfig} */
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const nextConfig = {
     env: {
         NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA || '',
@@ -14,6 +19,12 @@ const nextConfig = {
                 hostname: '*.supabase.co'
             }
         ]
+    },
+    webpack(config) {
+        // @meshtastic/js@2.6.0-0 ships a broken "exports" map pointing at its
+        // uncompiled .ts source; alias it to the real compiled dist/index.js.
+        config.resolve.alias['@meshtastic/js'] = path.resolve(__dirname, 'node_modules/@meshtastic/js/dist/index.js');
+        return config;
     },
     async headers() {
         const isDev = process.env.NODE_ENV !== 'production';
@@ -39,7 +50,7 @@ const nextConfig = {
                     },
                     {
                         key: 'Permissions-Policy',
-                        value: 'camera=(self), microphone=(self), geolocation=(self)'
+                        value: 'camera=(self), microphone=(self), geolocation=(self), bluetooth=(self)'
                     },
                     {
                         key: 'Content-Security-Policy',

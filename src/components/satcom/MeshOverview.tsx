@@ -10,7 +10,7 @@ type MeshOverviewProps = {
     simulated: boolean;
 };
 
-const roleOrder: Record<MeshNode['role'], number> = { gateway: 0, relay: 1, portable: 2 };
+const roleOrder: Record<MeshNode['role'], number> = { gateway: 0, relay: 1, portable: 2, unknown: 3 };
 
 export default function MeshOverview({ nodes, metrics, loading, error, simulated }: MeshOverviewProps) {
     const sorted = [...nodes].sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.hop_count - b.hop_count);

@@ -10,7 +10,8 @@ type NodeListProps = {
 const ROLE_LABELS: Record<MeshNode['role'], string> = {
     portable: 'Portable',
     relay: 'Relay',
-    gateway: 'Gateway'
+    gateway: 'Gateway',
+    unknown: 'Mesh Node'
 };
 
 const formatLastHeard = (iso: string) => {

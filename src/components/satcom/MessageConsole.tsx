@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MeshMessage, MeshSendResponse } from '@/lib/meshTypes';
+import type { MeshMessage, MeshNode, MeshSendResponse } from '@/lib/meshTypes';
 import {
     loadMessages,
     loadQueuedMessages,
@@ -10,14 +10,26 @@ import {
     removeQueuedMessage,
     saveMessage
 } from '@/lib/meshMessageStore';
+import { useMeshtasticConnection, type LiveConnectionStatus } from '@/lib/useMeshtasticConnection';
+import { createQuickMessage, loadQuickMessages, saveQuickMessages, type QuickMessage } from '@/lib/quickMessages';
 
 type MessageConsoleProps = {
     senderName: string;
+    onLiveNodesChange?: (nodes: MeshNode[]) => void;
+    onLiveStatusChange?: (status: LiveConnectionStatus) => void;
 };
 
 const POLL_MS = 20000;
 
-export default function MessageConsole({ senderName }: MessageConsoleProps) {
+const LIVE_STATUS_LABEL: Record<LiveConnectionStatus, string> = {
+    disconnected: 'Not connected',
+    connecting: 'Connecting...',
+    connected: 'Connected',
+    unsupported: 'Bluetooth not supported',
+    error: 'Connection error'
+};
+
+export default function MessageConsole({ senderName, onLiveNodesChange, onLiveStatusChange }: MessageConsoleProps) {
     const [messages, setMessages] = useState<MeshMessage[]>([]);
     const [draft, setDraft] = useState('');
     const [emergency, setEmergency] = useState(false);
@@ -27,11 +39,48 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
     const [status, setStatus] = useState<string | null>(null);
     const seenIds = useRef<Set<string>>(new Set());
 
+    const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
+    const [newQuickLabel, setNewQuickLabel] = useState('');
+    const [newQuickText, setNewQuickText] = useState('');
+    const [newQuickEmergency, setNewQuickEmergency] = useState(false);
+
+    useEffect(() => {
+        setQuickMessages(loadQuickMessages());
+    }, []);
+
     const refreshFromStore = useCallback(async () => {
         const stored = await loadMessages();
         setMessages(stored);
         stored.forEach(m => seenIds.current.add(m.id));
     }, []);
+
+    const handleIncomingLiveMessage = useCallback(
+        ({ text, fromNodeName, emergency: incomingEmergency }: { text: string; fromNodeName: string; emergency: boolean }) => {
+            const incoming: MeshMessage = {
+                id: makeMessageId(),
+                text,
+                sender: fromNodeName,
+                direction: 'incoming',
+                relayed_by: fromNodeName,
+                emergency: incomingEmergency,
+                created_at: new Date().toISOString(),
+                synced: true
+            };
+            seenIds.current.add(incoming.id);
+            void saveMessage(incoming).then(() => setMessages(prev => [...prev, incoming]));
+        },
+        []
+    );
+
+    const live = useMeshtasticConnection({ onIncomingMessage: handleIncomingLiveMessage });
+
+    useEffect(() => {
+        onLiveNodesChange?.(live.nodes);
+    }, [live.nodes, onLiveNodesChange]);
+
+    useEffect(() => {
+        onLiveStatusChange?.(live.status);
+    }, [live.status, onLiveStatusChange]);
 
     // Best-effort flush of anything queued while offline, in send order.
     const flushQueue = useCallback(async () => {
@@ -84,8 +133,10 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
+        // Live BLE mode receives its own real-time events, so only poll the
+        // simulated demo API when there's no real node connected.
         const interval = window.setInterval(() => {
-            if (navigator.onLine) void pollIncoming();
+            if (navigator.onLine && live.status !== 'connected') void pollIncoming();
         }, POLL_MS);
 
         return () => {
@@ -93,12 +144,14 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
             window.removeEventListener('offline', handleOffline);
             window.clearInterval(interval);
         };
-    }, [flushQueue, pollIncoming, refreshFromStore]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [flushQueue, pollIncoming, refreshFromStore, live.status]);
 
-    const sendMessage = async () => {
+    const sendMessage = async (overrideText?: string, overrideEmergency?: boolean) => {
         setError(null);
         setStatus(null);
-        const text = draft.trim();
+        const text = (overrideText ?? draft).trim();
+        const isEmergency = overrideEmergency ?? emergency;
 
         if (!text) {
             setError('Type a message first.');
@@ -116,7 +169,7 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
             sender: senderName,
             direction: 'outgoing',
             relayed_by: null,
-            emergency,
+            emergency: isEmergency,
             created_at: new Date().toISOString(),
             synced: false
         };
@@ -127,6 +180,17 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
             seenIds.current.add(localMessage.id);
             setDraft('');
             setEmergency(false);
+
+            // Real node connected over Bluetooth: send straight to the mesh, no demo API involved.
+            if (live.status === 'connected') {
+                const sentPrefix = localMessage.emergency ? 'EMERGENCY: ' : '';
+                const delivered = await live.sendText(`${sentPrefix}${text}`);
+                const synced: MeshMessage = { ...localMessage, relayed_by: 'Your node', synced: delivered };
+                await saveMessage(synced);
+                setMessages(prev => prev.map(m => (m.id === localMessage.id ? synced : m)));
+                setStatus(delivered ? 'Broadcast sent over your mesh.' : 'Could not send over Bluetooth; try reconnecting.');
+                return;
+            }
 
             if (!navigator.onLine) {
                 await queueOutgoingMessage(localMessage);
@@ -150,13 +214,36 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
             const synced: MeshMessage = { ...localMessage, relayed_by: data.message.relayed_by, synced: true };
             await saveMessage(synced);
             setMessages(prev => prev.map(m => (m.id === localMessage.id ? synced : m)));
-            setStatus(`Broadcast sent via ${data.message.relayed_by}.`);
+            setStatus(`Demo broadcast sent via ${data.message.relayed_by}.`);
         } catch {
             await queueOutgoingMessage(localMessage);
             setStatus('Offline or unreachable: message queued locally and will broadcast when connection returns.');
         } finally {
             setSending(false);
         }
+    };
+
+    const sendQuickMessage = (quick: QuickMessage) => void sendMessage(quick.text, quick.emergency);
+
+    const addQuickMessage = () => {
+        const text = newQuickText.trim();
+        if (!text) {
+            setError('Type the quick message text first.');
+            return;
+        }
+        const label = newQuickLabel.trim() || text.slice(0, 24);
+        const next = [...quickMessages, createQuickMessage(label, text, newQuickEmergency)];
+        setQuickMessages(next);
+        saveQuickMessages(next);
+        setNewQuickLabel('');
+        setNewQuickText('');
+        setNewQuickEmergency(false);
+    };
+
+    const removeQuickMessage = (id: string) => {
+        const next = quickMessages.filter(q => q.id !== id);
+        setQuickMessages(next);
+        saveQuickMessages(next);
     };
 
     return (
@@ -177,6 +264,101 @@ export default function MessageConsole({ senderName }: MessageConsoleProps) {
                 >
                     {online ? 'Connected' : 'Offline (queuing locally)'}
                 </span>
+            </div>
+
+            <div
+                style={{
+                    border: `1px solid ${live.status === 'connected' ? '#166534' : '#334155'}`,
+                    borderRadius: 10,
+                    padding: '0.6rem 0.75rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.6rem',
+                    flexWrap: 'wrap'
+                }}
+            >
+                <div style={{ display: 'grid', gap: '0.15rem' }}>
+                    <strong style={{ fontSize: '0.9rem' }}>
+                        {live.status === 'connected' ? `Connected: ${live.deviceName || 'Your node'}` : LIVE_STATUS_LABEL[live.status]}
+                    </strong>
+                    <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
+                        {live.status === 'connected'
+                            ? 'Messages send and receive for real over your paired Meshtastic node.'
+                            : 'Tap connect and pick the node you already paired in the Meshtastic app.'}
+                    </span>
+                </div>
+                {live.status === 'connected' ? (
+                    <button className="soft-button" onClick={live.disconnect}>
+                        Disconnect
+                    </button>
+                ) : (
+                    <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
+                        {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node (Bluetooth)'}
+                    </button>
+                )}
+            </div>
+            {live.error && <div style={{ color: '#fecaca', fontSize: '0.82rem' }}>{live.error}</div>}
+
+            <div style={{ display: 'grid', gap: '0.4rem' }}>
+                <div style={{ fontSize: '0.82rem', opacity: 0.75, fontWeight: 600 }}>Quick Messages (one tap, works with your connected node)</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {quickMessages.map(quick => (
+                        <button
+                            key={quick.id}
+                            className="soft-button"
+                            onClick={() => sendQuickMessage(quick)}
+                            disabled={sending}
+                            style={quick.emergency ? { borderColor: '#7f1d1d', color: '#fecaca' } : undefined}
+                            title={quick.text}
+                        >
+                            {quick.emergency ? '⚠ ' : ''}
+                            {quick.label}
+                        </button>
+                    ))}
+                    {quickMessages.length === 0 && <span style={{ opacity: 0.65, fontSize: '0.82rem' }}>No quick messages yet — add one below.</span>}
+                </div>
+                <details>
+                    <summary style={{ cursor: 'pointer', fontSize: '0.82rem', opacity: 0.8 }}>Manage quick messages</summary>
+                    <div style={{ display: 'grid', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        {quickMessages.map(quick => (
+                            <div key={quick.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', fontSize: '0.84rem' }}>
+                                <span>
+                                    {quick.emergency ? 'EMERGENCY · ' : ''}
+                                    {quick.label} — <span style={{ opacity: 0.75 }}>{quick.text}</span>
+                                </span>
+                                <button className="soft-button" onClick={() => removeQuickMessage(quick.id)} style={{ borderColor: '#7f1d1d', color: '#fecaca' }}>
+                                    Remove
+                                </button>
+                            </div>
+                        ))}
+                        <div style={{ display: 'grid', gap: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid #334155' }}>
+                            <input
+                                value={newQuickLabel}
+                                onChange={e => setNewQuickLabel(e.target.value)}
+                                placeholder="Button label (e.g. Heading home)"
+                                maxLength={24}
+                                style={{ borderRadius: 8, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.4rem 0.5rem' }}
+                            />
+                            <input
+                                value={newQuickText}
+                                onChange={e => setNewQuickText(e.target.value)}
+                                placeholder="Message text to send"
+                                maxLength={200}
+                                style={{ borderRadius: 8, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.4rem 0.5rem' }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.84rem' }}>
+                                    <input type="checkbox" checked={newQuickEmergency} onChange={e => setNewQuickEmergency(e.target.checked)} />
+                                    Emergency
+                                </label>
+                                <button className="soft-button" onClick={addQuickMessage}>
+                                    Add quick message
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
             </div>
 
             <div

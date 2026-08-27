@@ -1,36 +1,27 @@
 const STEPS = [
     {
-        title: 'Charge and power on your node',
+        title: 'Already paired your node in the Meshtastic app? You\'re ready.',
         detail:
-            'Each ESP32 LoRa V3 node (with the 1100mAh battery + protective case) charges over USB-C. Press and hold the side button ~1 second to power on — the OLED screen (if fitted) or LED will light up.'
+            'Go to the Off-Grid Messaging Console above and tap "Connect My Node (Bluetooth)". Pick your node from the popup — that\'s it, no extra setup needed on this page.'
     },
     {
-        title: 'Install the Meshtastic app',
-        detail: 'Install "Meshtastic" from the App Store or Google Play on your phone. One app pairs with any of your nodes.'
-    },
-    {
-        title: 'Pair via Bluetooth',
+        title: 'Turn on your node',
         detail:
-            'In the Meshtastic app, tap "+" / "Connect a device" → Bluetooth, then select your node from the scan list. First-time pairing may ask for a PIN shown on the node.'
+            'Each ESP32 LoRa V3 node (with the 1100mAh battery + protective case) charges over USB-C. Press and hold the side button ~1 second to power on.'
     },
     {
-        title: 'Join the private channel',
+        title: 'First time pairing a brand-new node?',
         detail:
-            'Under Channels, import or enter the shared family channel (PSK + name) so every node/phone talks on the same private mesh instead of the public default channel.'
+            'Install "Meshtastic" from the App Store or Google Play, connect over Bluetooth once there, and join your family\'s private channel. After that, this page can connect to it directly too.'
     },
     {
-        title: 'Set region + role once per node',
-        detail:
-            'In device settings, confirm Region = US_915 and Role = Portable (handheld), Relay (fixed high point), or Gateway (the one node connected to internet/power at the cabin).'
-    },
-    {
-        title: 'Open the SatCom page to monitor the mesh',
-        detail: 'Come back to this /dashboard/satcom page any time to see node health, signal, and battery without opening the Meshtastic app.'
+        title: 'Monitor the mesh here anytime',
+        detail: 'Once connected, node battery/signal/last-heard and message history update live on this page without opening the Meshtastic app.'
     },
     {
         title: 'Use the messaging console with no phone signal',
         detail:
-            'When you have zero cell bars, use the Off-Grid Messaging Console below — it broadcasts over LoRa to every node in range, and queues automatically if you\'re also offline from this dashboard.'
+            'When you have zero cell bars, use the Off-Grid Messaging Console — it broadcasts over LoRa to every node in range, and queues automatically if you\'re also offline from this dashboard.'
     }
 ];
 
