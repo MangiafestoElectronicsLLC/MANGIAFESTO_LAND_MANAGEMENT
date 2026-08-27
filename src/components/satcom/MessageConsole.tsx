@@ -30,6 +30,8 @@ const LIVE_STATUS_LABEL: Record<LiveConnectionStatus, string> = {
 };
 
 export default function MessageConsole({ senderName, live, registerIncomingHandler }: MessageConsoleProps) {
+    const liveStatus = live.status;
+    const sendLiveText = live.sendText;
     const [messages, setMessages] = useState<MeshMessage[]>([]);
     const [draft, setDraft] = useState('');
     const [emergency, setEmergency] = useState(false);
@@ -81,6 +83,16 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
         const queued = await loadQueuedMessages();
         for (const message of queued.sort((a, b) => a.created_at.localeCompare(b.created_at))) {
             try {
+                if (liveStatus === 'connected') {
+                    const sentPrefix = message.emergency ? 'EMERGENCY: ' : '';
+                    const delivered = await sendLiveText(`${sentPrefix}${message.text}`);
+                    if (!delivered) break;
+                    const synced: MeshMessage = { ...message, relayed_by: 'Your node', synced: true };
+                    await saveMessage(synced);
+                    await removeQueuedMessage(message.id);
+                    setMessages(prev => prev.map(m => (m.id === message.id ? synced : m)));
+                    continue;
+                }
                 const response = await fetch('/api/mesh/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -96,7 +108,7 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
                 break; // still offline, try again next time
             }
         }
-    }, []);
+    }, [liveStatus, sendLiveText]);
 
     const pollIncoming = useCallback(async () => {
         try {
@@ -116,6 +128,7 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
 
     useEffect(() => {
         void refreshFromStore();
+        if (liveStatus === 'connected') void flushQueue().then(refreshFromStore);
         setOnline(typeof navigator === 'undefined' ? true : navigator.onLine);
 
         const handleOnline = () => {
@@ -179,7 +192,12 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
             if (live.status === 'connected') {
                 const sentPrefix = localMessage.emergency ? 'EMERGENCY: ' : '';
                 const delivered = await live.sendText(`${sentPrefix}${text}`);
-                const synced: MeshMessage = { ...localMessage, relayed_by: 'Your node', synced: delivered };
+                if (!delivered) {
+                    await queueOutgoingMessage(localMessage);
+                    setStatus('Bluetooth send failed; message queued for the next successful node connection.');
+                    return;
+                }
+                const synced: MeshMessage = { ...localMessage, relayed_by: 'Your node', synced: true };
                 await saveMessage(synced);
                 setMessages(prev => prev.map(m => (m.id === localMessage.id ? synced : m)));
                 setStatus(delivered ? 'Broadcast sent over your mesh.' : 'Could not send over Bluetooth; try reconnecting.');

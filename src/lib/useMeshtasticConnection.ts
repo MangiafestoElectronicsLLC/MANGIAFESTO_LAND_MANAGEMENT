@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MeshNode } from './meshTypes';
 
 // Real integration with devices already paired in the Meshtastic app, via the
@@ -84,6 +84,16 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
     const connectBluetooth = useCallback(async (preferDeviceName?: string) => {
         setError(null);
 
+        if (status === 'connecting') return;
+        if (connectionRef.current) {
+            try {
+                connectionRef.current.disconnect();
+            } catch {
+                // best-effort cleanup before switching devices
+            }
+            connectionRef.current = null;
+        }
+
         const support = checkBrowserSupport();
         if (!support.bluetoothApi) {
             setStatus('unsupported');
@@ -118,14 +128,15 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
 
             connection.events.onMessagePacket.subscribe((packet: any) => {
                 const fromName = nodeNamesRef.current.get(packet.from) || `Node ${packet.from}`;
-                onIncomingMessage({ text: packet.data, fromNodeName: fromName, emergency: false });
+                const text = typeof packet.data === 'string' ? packet.data : String(packet.data ?? '');
+                if (text) onIncomingMessage({ text, fromNodeName: fromName, emergency: false });
             });
 
             const device = (await findPreviouslyAllowedDevice(preferDeviceName)) ?? (await connection.getDevice({ filters: [{ services: [meshtastic.ServiceUuid] }] }));
             setDeviceName(device.name || 'Meshtastic node');
+            connectionRef.current = connection;
             await connection.connect({ device });
 
-            connectionRef.current = connection;
             setStatus('connected');
         } catch (err: any) {
             connectionRef.current = null;
@@ -137,7 +148,18 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             setStatus('error');
             setError(err?.message || 'Could not connect to your Meshtastic node over Bluetooth.');
         }
-    }, [onIncomingMessage, upsertNodeFromInfo]);
+    }, [onIncomingMessage, status, upsertNodeFromInfo]);
+
+    useEffect(() => {
+        return () => {
+            try {
+                connectionRef.current?.disconnect();
+            } catch {
+                // best-effort cleanup when leaving the page
+            }
+            connectionRef.current = null;
+        };
+    }, []);
 
     const disconnect = useCallback(() => {
         try {
@@ -152,10 +174,10 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
     }, []);
 
     const sendText = useCallback(async (text: string): Promise<boolean> => {
-        if (!connectionRef.current) return false;
+        if (status !== 'connected' || !connectionRef.current) return false;
         await connectionRef.current.sendText(text);
         return true;
-    }, []);
+    }, [status]);
 
     return { status, deviceName, nodes, error, connectBluetooth, disconnect, sendText };
 }
