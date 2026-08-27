@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MeshMessage, MeshNode, MeshSendResponse } from '@/lib/meshTypes';
+import type { MeshMessage, MeshSendResponse } from '@/lib/meshTypes';
 import {
     loadMessages,
     loadQueuedMessages,
@@ -10,13 +10,13 @@ import {
     removeQueuedMessage,
     saveMessage
 } from '@/lib/meshMessageStore';
-import { useMeshtasticConnection, type LiveConnectionStatus } from '@/lib/useMeshtasticConnection';
+import { type LiveConnectionStatus, type LiveIncomingMessage, type MeshtasticConnection } from '@/lib/useMeshtasticConnection';
 import { createQuickMessage, loadQuickMessages, saveQuickMessages, type QuickMessage } from '@/lib/quickMessages';
 
 type MessageConsoleProps = {
     senderName: string;
-    onLiveNodesChange?: (nodes: MeshNode[]) => void;
-    onLiveStatusChange?: (status: LiveConnectionStatus) => void;
+    live: MeshtasticConnection;
+    registerIncomingHandler: (handler: (message: LiveIncomingMessage) => void) => void;
 };
 
 const POLL_MS = 20000;
@@ -29,7 +29,7 @@ const LIVE_STATUS_LABEL: Record<LiveConnectionStatus, string> = {
     error: 'Connection error'
 };
 
-export default function MessageConsole({ senderName, onLiveNodesChange, onLiveStatusChange }: MessageConsoleProps) {
+export default function MessageConsole({ senderName, live, registerIncomingHandler }: MessageConsoleProps) {
     const [messages, setMessages] = useState<MeshMessage[]>([]);
     const [draft, setDraft] = useState('');
     const [emergency, setEmergency] = useState(false);
@@ -72,15 +72,9 @@ export default function MessageConsole({ senderName, onLiveNodesChange, onLiveSt
         []
     );
 
-    const live = useMeshtasticConnection({ onIncomingMessage: handleIncomingLiveMessage });
-
     useEffect(() => {
-        onLiveNodesChange?.(live.nodes);
-    }, [live.nodes, onLiveNodesChange]);
-
-    useEffect(() => {
-        onLiveStatusChange?.(live.status);
-    }, [live.status, onLiveStatusChange]);
+        registerIncomingHandler(handleIncomingLiveMessage);
+    }, [handleIncomingLiveMessage, registerIncomingHandler]);
 
     // Best-effort flush of anything queued while offline, in send order.
     const flushQueue = useCallback(async () => {

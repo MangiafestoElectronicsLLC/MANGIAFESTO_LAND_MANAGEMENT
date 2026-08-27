@@ -20,6 +20,21 @@ type UseMeshtasticConnectionArgs = {
     onIncomingMessage: (message: LiveIncomingMessage) => void;
 };
 
+export type BrowserSupport = {
+    bluetoothApi: boolean;
+    secureContext: boolean;
+    ok: boolean;
+};
+
+export function checkBrowserSupport(): BrowserSupport {
+    if (typeof navigator === 'undefined' || typeof window === 'undefined') {
+        return { bluetoothApi: false, secureContext: false, ok: false };
+    }
+    const bluetoothApi = 'bluetooth' in navigator;
+    const secureContext = window.isSecureContext;
+    return { bluetoothApi, secureContext, ok: bluetoothApi && secureContext };
+}
+
 const hwModelLabelFallback = (num: number) => `Node ${num}`;
 
 export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConnectionArgs) {
@@ -66,12 +81,18 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
         });
     }, []);
 
-    const connectBluetooth = useCallback(async () => {
+    const connectBluetooth = useCallback(async (preferDeviceName?: string) => {
         setError(null);
 
-        if (typeof navigator === 'undefined' || !('bluetooth' in navigator)) {
+        const support = checkBrowserSupport();
+        if (!support.bluetoothApi) {
             setStatus('unsupported');
             setError('This browser does not support Web Bluetooth. Use Chrome or Edge on desktop/Android.');
+            return;
+        }
+        if (!support.secureContext) {
+            setStatus('unsupported');
+            setError('Web Bluetooth needs a secure (HTTPS) page. Open this dashboard over https and try again.');
             return;
         }
 
@@ -100,7 +121,7 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                 onIncomingMessage({ text: packet.data, fromNodeName: fromName, emergency: false });
             });
 
-            const device = await connection.getDevice({ filters: [{ services: [meshtastic.ServiceUuid] }] });
+            const device = (await findPreviouslyAllowedDevice(preferDeviceName)) ?? (await connection.getDevice({ filters: [{ services: [meshtastic.ServiceUuid] }] }));
             setDeviceName(device.name || 'Meshtastic node');
             await connection.connect({ device });
 
@@ -137,4 +158,20 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
     }, []);
 
     return { status, deviceName, nodes, error, connectBluetooth, disconnect, sendText };
+}
+
+export type MeshtasticConnection = ReturnType<typeof useMeshtasticConnection>;
+
+// Chromium exposes already-permitted devices via getDevices(), which lets an
+// onboarded node reconnect without showing the picker again.
+async function findPreviouslyAllowedDevice(preferDeviceName?: string): Promise<any | null> {
+    if (!preferDeviceName) return null;
+    const bluetooth = (navigator as any).bluetooth;
+    if (typeof bluetooth?.getDevices !== 'function') return null;
+    try {
+        const devices = await bluetooth.getDevices();
+        return devices.find((device: any) => device?.name === preferDeviceName) ?? null;
+    } catch {
+        return null;
+    }
 }

@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import MeshOverview from '@/components/satcom/MeshOverview';
 import NodeList from '@/components/satcom/NodeList';
 import MessageConsole from '@/components/satcom/MessageConsole';
+import DeviceOnboarding from '@/components/satcom/DeviceOnboarding';
 import HowToUse from '@/components/satcom/HowToUse';
 import EmergencyGuide from '@/components/satcom/EmergencyGuide';
 import type { MeshMetrics, MeshNode } from '@/lib/meshTypes';
-import type { LiveConnectionStatus } from '@/lib/useMeshtasticConnection';
+import { useMeshtasticConnection, type LiveIncomingMessage } from '@/lib/useMeshtasticConnection';
 
 const STATUS_POLL_MS = 15000;
 
@@ -23,8 +24,19 @@ export default function SatcomPage() {
     const [metrics, setMetrics] = useState<MeshMetrics | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [liveNodes, setLiveNodes] = useState<MeshNode[]>([]);
-    const [liveStatus, setLiveStatus] = useState<LiveConnectionStatus>('disconnected');
+
+    // The connection lives here so both the onboarding wizard and the message
+    // console drive the same paired node.
+    const incomingHandlerRef = useRef<((message: LiveIncomingMessage) => void) | null>(null);
+    const handleIncomingMessage = useCallback((message: LiveIncomingMessage) => {
+        incomingHandlerRef.current?.(message);
+    }, []);
+    const registerIncomingHandler = useCallback((handler: (message: LiveIncomingMessage) => void) => {
+        incomingHandlerRef.current = handler;
+    }, []);
+    const live = useMeshtasticConnection({ onIncomingMessage: handleIncomingMessage });
+    const liveStatus = live.status;
+    const liveNodes = live.nodes;
 
     useEffect(() => {
         const bootstrap = async () => {
@@ -129,6 +141,7 @@ export default function SatcomPage() {
 
             <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
                 <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
+                    <DeviceOnboarding live={live} ownerName={senderName} />
                     <MeshOverview
                         nodes={displayNodes}
                         metrics={displayMetrics}
@@ -139,7 +152,7 @@ export default function SatcomPage() {
                     <NodeList nodes={displayNodes} loading={loading} />
                 </div>
                 <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
-                    <MessageConsole senderName={senderName} onLiveNodesChange={setLiveNodes} onLiveStatusChange={setLiveStatus} />
+                    <MessageConsole senderName={senderName} live={live} registerIncomingHandler={registerIncomingHandler} />
                 </div>
             </div>
 

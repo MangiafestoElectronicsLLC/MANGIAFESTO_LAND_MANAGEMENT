@@ -1,18 +1,23 @@
 const STEPS = [
     {
-        title: 'Already paired your node in the Meshtastic app? You\'re ready.',
+        title: 'Adding a brand-new node? Use "My Mesh Devices" above.',
         detail:
-            'Go to the Off-Grid Messaging Console above and tap "Connect My Node (Bluetooth)". Pick your node from the popup — that\'s it, no extra setup needed on this page.'
+            'Tap "Add a node" and the four-step guide checks your browser, walks the prep checklist (antenna, US_915 region, family channel), lets you name the node and its station, then connects and saves it for one-tap reconnects later.'
+    },
+    {
+        title: 'Already added? Just tap Connect on the device card.',
+        detail:
+            'Saved nodes appear in My Mesh Devices with their nickname, role, and last-connected time. Connect reuses the same node without hunting through the Bluetooth picker.'
     },
     {
         title: 'Turn on your node',
         detail:
-            'Each ESP32 LoRa V3 node (with the 1100mAh battery + protective case) charges over USB-C. Press and hold the side button ~1 second to power on.'
+            'Each ESP32 LoRa V3 node (with the 1100mAh battery + protective case) charges over USB-C. Screw on the 915MHz antenna first, then press and hold the side button ~1 second to power on.'
     },
     {
-        title: 'First time pairing a brand-new node?',
+        title: 'First-time pairing happens in the Meshtastic app',
         detail:
-            'Install "Meshtastic" from the App Store or Google Play, connect over Bluetooth once there, and join your family\'s private channel. After that, this page can connect to it directly too.'
+            'Install "Meshtastic" from the App Store or Google Play, pair over Bluetooth once there, set region US_915, and join your family\'s private channel. After that, this page can connect to it directly.'
     },
     {
         title: 'Monitor the mesh here anytime',
