@@ -22,7 +22,8 @@ const REQUIRED_TABLES = [
     'board_meeting_notes',
     'property_maps',
     'property_map_features',
-    'property_map_access_requests'
+    'property_map_access_requests',
+    'land_wifi_networks'
 ];
 
 const statusColor = (state: CheckState) => {

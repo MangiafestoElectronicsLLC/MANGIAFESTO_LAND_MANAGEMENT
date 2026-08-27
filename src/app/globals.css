@@ -240,6 +240,13 @@ canvas {
     min-width: 130px;
 }
 
+.land-wifi-management-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
 .page-stack {
     display: grid;
     gap: 1rem;
@@ -487,6 +494,10 @@ canvas {
     }
 
     .trail-cams-management-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .land-wifi-management-grid {
         grid-template-columns: 1fr;
     }
 

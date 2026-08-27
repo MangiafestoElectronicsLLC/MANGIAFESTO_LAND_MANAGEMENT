@@ -339,6 +339,20 @@ export default function DashboardPage() {
                     </Link>
                     <span className="inline-dot">•</span>
                     <Link
+                        href="/dashboard/land-wifi"
+                        className="chip-link-muted"
+                    >
+                        Open Land Wifi
+                    </Link>
+                    <span className="inline-dot">•</span>
+                    <Link
+                        href="/dashboard/satcom"
+                        className="chip-link-muted"
+                    >
+                        Open SatCom / Off-Grid Comms
+                    </Link>
+                    <span className="inline-dot">•</span>
+                    <Link
                         href="/dashboard/calendar"
                         className="chip-link-muted"
                     >

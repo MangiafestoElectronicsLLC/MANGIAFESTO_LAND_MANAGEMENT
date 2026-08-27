@@ -60,6 +60,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                             <Link href="/dashboard">Dashboard</Link>
                             <Link href="/dashboard/tickets">Tickets</Link>
                             <Link href="/dashboard/trail-cams">Trail Cams</Link>
+                            <Link href="/dashboard/land-wifi">Land Wifi</Link>
+                            <Link href="/dashboard/satcom">SatCom / Off-Grid Comms</Link>
                             <Link href="/dashboard/property-map">Property Map</Link>
                             <Link href="/dashboard/treestands">Treestands / Range</Link>
                             <Link href="/dashboard/calendar">Hunting / Fishing Calendar</Link>
