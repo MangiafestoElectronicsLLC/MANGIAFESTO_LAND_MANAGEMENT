@@ -1201,6 +1201,12 @@ export default function PropertyMapWorkspace() {
                     <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
                         Fit Full Property
                     </button>
+                    <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.zoomIn()} disabled={!mapReady}>
+                        Zoom In
+                    </button>
+                    <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.zoomOut()} disabled={!mapReady}>
+                        Zoom Out
+                    </button>
                     <button
                         type="button"
                         className="soft-button"

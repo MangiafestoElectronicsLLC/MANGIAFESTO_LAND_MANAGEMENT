@@ -9,6 +9,8 @@ import {
     buildTrailSplits,
     DEFAULT_CENTER,
     DEFAULT_ZOOM,
+    PROPERTY_MAP_MAX_ZOOM,
+    PROPERTY_MAP_MIN_ZOOM,
     SATELLITE_LABEL_TILE_ATTRIBUTION,
     SATELLITE_LABEL_TILE_URL,
     SATELLITE_TILE_ATTRIBUTION,
@@ -259,7 +261,7 @@ function MapController({
 
         hasDoneInitialFitRef.current = true;
         runProgrammaticMove(() => {
-            map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: 19, animate: false });
+            map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: PROPERTY_MAP_MAX_ZOOM, animate: false });
         });
     }, [boundary.polygon, boundaryDraft, map]);
 
@@ -268,7 +270,7 @@ function MapController({
         if (boundary.polygon.length < 3) return;
 
         runProgrammaticMove(() => {
-            map.fitBounds(L.latLngBounds(boundary.polygon), { padding: [24, 24], maxZoom: 19, animate: true });
+            map.fitBounds(L.latLngBounds(boundary.polygon), { padding: [24, 24], maxZoom: PROPERTY_MAP_MAX_ZOOM, animate: true });
         });
     }, [boundary.updatedAt, boundaryEditEnabled, boundary.polygon, map]);
 
@@ -288,7 +290,7 @@ function MapController({
                 const polygon = boundaryEditEnabled && boundaryDraft.length >= 3 ? boundaryDraft : boundary.polygon;
                 if (polygon.length < 3) return;
                 runProgrammaticMove(() => {
-                    map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: 19, animate: true });
+                    map.fitBounds(L.latLngBounds(polygon), { padding: [24, 24], maxZoom: PROPERTY_MAP_MAX_ZOOM, animate: true });
                 });
             },
             refresh: () => {
@@ -302,12 +304,16 @@ function MapController({
             },
             zoomIn: () => {
                 runProgrammaticMove(() => {
-                    map.setZoom(clampZoom(map.getZoom() + 1));
+                    if (map.getZoom() < PROPERTY_MAP_MAX_ZOOM) {
+                        map.zoomIn(1, { animate: true });
+                    }
                 });
             },
             zoomOut: () => {
                 runProgrammaticMove(() => {
-                    map.setZoom(clampZoom(map.getZoom() - 1));
+                    if (map.getZoom() > PROPERTY_MAP_MIN_ZOOM) {
+                        map.zoomOut(1, { animate: true });
+                    }
                 });
             }
         };
@@ -408,6 +414,8 @@ export default function LeafletMapCanvas({
         <MapContainer
             center={initialCenter}
             zoom={DEFAULT_ZOOM}
+            minZoom={PROPERTY_MAP_MIN_ZOOM}
+            maxZoom={PROPERTY_MAP_MAX_ZOOM}
             scrollWheelZoom
             style={{ height: '100%', width: '100%', background: '#0b1220' }}
         >

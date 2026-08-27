@@ -5,6 +5,8 @@ import { LatLngTuple, PropertyBoundary, Trail, TrailPoint } from './types';
 // real address, which made the starting boundary (and therefore GPS inside/outside status) wrong.
 export const DEFAULT_CENTER: LatLngTuple = [43.2195770, -77.9754249];
 export const DEFAULT_ZOOM = 17;
+export const PROPERTY_MAP_MIN_ZOOM = 12;
+export const PROPERTY_MAP_MAX_ZOOM = 21;
 
 // Unsurveyed ~40 acre square centered on the verified address point above. This is still only a
 // starting shape for the user to drag/trace onto the real tree lines - not a surveyed parcel.
@@ -399,7 +401,8 @@ export const parseGpxTrailPoints = (rawGpx: string): TrailPoint[] => {
     return points;
 };
 
-export const clampZoom = (zoom: number, min = 14, max = 21) => Math.max(min, Math.min(max, zoom));
+export const clampZoom = (zoom: number, min = PROPERTY_MAP_MIN_ZOOM, max = PROPERTY_MAP_MAX_ZOOM) =>
+    Math.max(min, Math.min(max, zoom));
 
 const escapeXml = (value: string) =>
     value
