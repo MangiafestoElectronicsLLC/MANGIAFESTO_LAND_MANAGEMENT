@@ -68,7 +68,7 @@ const defaultSnapshot: PropertyMapSnapshot = {
     pinpoints: []
 };
 
-const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v1';
+const BASEMAP_MODE_STORAGE_KEY = 'family-land-map-basemap-mode-v2';
 const OFFLINE_MAP_ID = 'offline-local-map';
 const PROPERTY_MAP_BUILD_STAMP = 'pm-boundary-south-2026-08-05-6';
 const PROPERTY_MAP_RUNTIME_HASH = (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'local-dev').slice(0, 12);
