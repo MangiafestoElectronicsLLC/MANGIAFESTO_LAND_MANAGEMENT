@@ -186,7 +186,7 @@ export default function PropertyMapWorkspace() {
     const [pinDraftType, setPinDraftType] = useState<PinType>('note');
 
     const [snapshot, setSnapshot] = useState<PropertyMapSnapshot>(defaultSnapshot);
-    const [gpsEnabled, setGpsEnabled] = useState(() => typeof navigator !== 'undefined' && 'geolocation' in navigator);
+    const [gpsEnabled, setGpsEnabled] = useState(false);
     const [autoFollow, setAutoFollow] = useState(true);
     const [recordingTrail, setRecordingTrail] = useState(false);
     const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite');
