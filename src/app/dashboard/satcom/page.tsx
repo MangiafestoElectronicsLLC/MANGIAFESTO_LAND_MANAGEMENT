@@ -11,9 +11,82 @@ import DeviceOnboarding from '@/components/satcom/DeviceOnboarding';
 import HowToUse from '@/components/satcom/HowToUse';
 import EmergencyGuide from '@/components/satcom/EmergencyGuide';
 import type { MeshMetrics, MeshNode } from '@/lib/meshTypes';
-import { useMeshtasticConnection, type LiveIncomingMessage } from '@/lib/useMeshtasticConnection';
+import { useMeshtasticConnection, type LiveIncomingMessage, type MeshtasticConnection } from '@/lib/useMeshtasticConnection';
+import { batteryHealth, BATTERY_HEALTH_COLOR, BATTERY_HEALTH_LABEL } from '@/lib/meshDeviceRegistry';
 
 const STATUS_POLL_MS = 15000;
+
+// Big, simple status card at the top of the page: one glance tells you whether
+// you're connected, to what, and how much battery it has left.
+function ConnectionHero({ live }: { live: MeshtasticConnection }) {
+    const connected = live.status === 'connected';
+    const health = batteryHealth(live.ownBattery?.pct ?? null);
+
+    const statusText: Record<typeof live.status, string> = {
+        disconnected: 'Not connected',
+        connecting: 'Connecting...',
+        connected: `Connected: ${live.deviceName || 'Your node'}`,
+        unsupported: 'Bluetooth not supported on this browser',
+        error: 'Connection error'
+    };
+
+    return (
+        <section
+            className="panel panel-pad"
+            style={{
+                border: `1px solid ${connected ? '#166534' : '#334155'}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.75rem',
+                flexWrap: 'wrap'
+            }}
+        >
+            <div style={{ display: 'grid', gap: '0.25rem' }}>
+                <span
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        fontWeight: 700,
+                        fontSize: '1.05rem'
+                    }}
+                >
+                    <span
+                        style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: '50%',
+                            background: connected ? '#22c55e' : '#64748b',
+                            display: 'inline-block'
+                        }}
+                    />
+                    {statusText[live.status]}
+                    {connected && live.ownBattery?.pct != null && (
+                        <span style={{ fontSize: '0.85rem', color: BATTERY_HEALTH_COLOR[health], fontWeight: 400 }}>
+                            🔋 {live.ownBattery.pct}% ({BATTERY_HEALTH_LABEL[health]})
+                        </span>
+                    )}
+                </span>
+                <span style={{ opacity: 0.75, fontSize: '0.85rem' }}>
+                    {connected
+                        ? 'Send messages and see live mesh status below.'
+                        : 'Tap connect and pick the node you already paired in the Meshtastic app.'}
+                </span>
+                {live.error && <span style={{ color: '#fecaca', fontSize: '0.82rem' }}>{live.error}</span>}
+            </div>
+            {connected ? (
+                <button className="soft-button" onClick={live.disconnect}>
+                    Disconnect
+                </button>
+            ) : (
+                <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
+                    {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node'}
+                </button>
+            )}
+        </section>
+    );
+}
 
 export default function SatcomPage() {
     const router = useRouter();
@@ -134,48 +207,50 @@ export default function SatcomPage() {
                 <div style={{ opacity: 0.8, fontSize: '0.85rem' }}>Off-Grid Communications</div>
                 <h1 style={{ margin: 0 }}>SatCom / Off-Grid Comms</h1>
                 <p style={{ margin: 0, opacity: 0.8 }}>
-                    Monitor your ESP32 LoRa V3 (SX1262) Meshtastic mesh, send off-grid messages when phone signal is
-                    gone, and use emergency communication tools anywhere on the land.
+                    Connect your Meshtastic node, then send a message — no phone signal needed anywhere on the land.
                 </p>
             </section>
 
-            <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
-                <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
-                    <DeviceOnboarding live={live} ownerName={senderName} />
-                    <MeshOverview
-                        nodes={displayNodes}
-                        metrics={displayMetrics}
-                        loading={loading}
-                        error={error}
-                        simulated={liveStatus !== 'connected'}
-                    />
-                    <NodeList nodes={displayNodes} loading={loading} />
-                </div>
-                <div style={{ display: 'grid', gap: '1rem', alignContent: 'start' }}>
-                    <MessageConsole senderName={senderName} live={live} registerIncomingHandler={registerIncomingHandler} />
-                </div>
-            </div>
+            <ConnectionHero live={live} />
 
-            <EmergencyGuide />
+            <div style={{ display: 'grid', gap: '1rem' }}>
+                <MessageConsole senderName={senderName} live={live} registerIncomingHandler={registerIncomingHandler} />
+                <DeviceOnboarding live={live} ownerName={senderName} />
+                <EmergencyGuide />
 
-            <details className="panel panel-pad">
-                <summary style={{ cursor: 'pointer', fontWeight: 700 }}>How Meshnology Works (Setup &amp; Guide)</summary>
-                <div style={{ display: 'grid', gap: '1rem', marginTop: '0.85rem' }}>
-                    <HowToUse />
-                    <div style={{ fontSize: '0.9rem', opacity: 0.85, display: 'grid', gap: '0.4rem' }}>
-                        <p style={{ margin: 0 }}>
-                            The cabin gateway node bridges the Meshtastic mesh to the internet. Once connected via
-                            Bluetooth above, this page talks directly to your paired node using the same protocol as the
-                            Meshtastic app — no separate gateway server required for basic messaging and node status.
-                        </p>
-                        <p style={{ margin: 0 }}>
-                            Messages you send here are stored locally in your browser (IndexedDB) so history survives
-                            reloads and works offline, then sync automatically once you&apos;re back online — the same
-                            pattern used by Property Map and Land Wifi for offline-first editing on this dashboard.
-                        </p>
+                <details className="panel panel-pad">
+                    <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Mesh Network Details (Advanced)</summary>
+                    <div style={{ display: 'grid', gap: '1rem', marginTop: '0.85rem' }}>
+                        <MeshOverview
+                            nodes={displayNodes}
+                            metrics={displayMetrics}
+                            loading={loading}
+                            error={error}
+                            simulated={liveStatus !== 'connected'}
+                        />
+                        <NodeList nodes={displayNodes} loading={loading} />
                     </div>
-                </div>
-            </details>
+                </details>
+
+                <details className="panel panel-pad">
+                    <summary style={{ cursor: 'pointer', fontWeight: 700 }}>How Meshnology Works (Setup &amp; Guide)</summary>
+                    <div style={{ display: 'grid', gap: '1rem', marginTop: '0.85rem' }}>
+                        <HowToUse />
+                        <div style={{ fontSize: '0.9rem', opacity: 0.85, display: 'grid', gap: '0.4rem' }}>
+                            <p style={{ margin: 0 }}>
+                                The cabin gateway node bridges the Meshtastic mesh to the internet. Once connected via
+                                Bluetooth above, this page talks directly to your paired node using the same protocol as the
+                                Meshtastic app — no separate gateway server required for basic messaging and node status.
+                            </p>
+                            <p style={{ margin: 0 }}>
+                                Messages you send here are stored locally in your browser (IndexedDB) so history survives
+                                reloads and works offline, then sync automatically once you&apos;re back online — the same
+                                pattern used by Property Map and Land Wifi for offline-first editing on this dashboard.
+                            </p>
+                        </div>
+                    </div>
+                </details>
+            </div>
         </div>
     );
 }

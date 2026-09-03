@@ -12,6 +12,7 @@ import {
 } from '@/lib/meshMessageStore';
 import { type LiveConnectionStatus, type LiveIncomingMessage, type MeshtasticConnection } from '@/lib/useMeshtasticConnection';
 import { createQuickMessage, loadQuickMessages, saveQuickMessages, type QuickMessage } from '@/lib/quickMessages';
+import { batteryHealth, BATTERY_HEALTH_COLOR } from '@/lib/meshDeviceRegistry';
 
 type MessageConsoleProps = {
     senderName: string;
@@ -291,8 +292,13 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
                 }}
             >
                 <div style={{ display: 'grid', gap: '0.15rem' }}>
-                    <strong style={{ fontSize: '0.9rem' }}>
+                    <strong style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                         {live.status === 'connected' ? `Connected: ${live.deviceName || 'Your node'}` : LIVE_STATUS_LABEL[live.status]}
+                        {live.status === 'connected' && live.ownBattery?.pct != null && (
+                            <span style={{ color: BATTERY_HEALTH_COLOR[batteryHealth(live.ownBattery.pct)], fontSize: '0.78rem' }}>
+                                🔋 {live.ownBattery.pct}%
+                            </span>
+                        )}
                     </strong>
                     <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
                         {live.status === 'connected'
@@ -305,9 +311,20 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
                         Disconnect
                     </button>
                 ) : (
-                    <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
-                        {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node (Bluetooth)'}
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
+                            {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node (Bluetooth)'}
+                        </button>
+                        {live.status === 'error' && (
+                            <button
+                                className="soft-button"
+                                onClick={() => void live.connectBluetooth(undefined, { forcePicker: true })}
+                                title="Open the Bluetooth device picker instead of auto-reconnecting"
+                            >
+                                Choose device...
+                            </button>
+                        )}
+                    </div>
                 )}
             </div>
             {live.error && <div style={{ color: '#fecaca', fontSize: '0.82rem' }}>{live.error}</div>}

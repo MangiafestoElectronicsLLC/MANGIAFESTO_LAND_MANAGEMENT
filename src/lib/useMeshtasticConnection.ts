@@ -16,6 +16,12 @@ export type LiveIncomingMessage = {
     emergency: boolean;
 };
 
+export type LiveBattery = {
+    pct: number | null;
+    voltage: number | null;
+    updatedAt: string;
+};
+
 type UseMeshtasticConnectionArgs = {
     onIncomingMessage: (message: LiveIncomingMessage) => void;
 };
@@ -37,14 +43,53 @@ export function checkBrowserSupport(): BrowserSupport {
 
 const hwModelLabelFallback = (num: number) => `Node ${num}`;
 
+// A silently-reconnected (previously-permitted) device may be powered off or
+// out of range; without a timeout `connection.connect()` can hang forever and
+// the UI gets stuck on "Connecting..." with no way out.
+const CONNECT_TIMEOUT_MS = 15000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error('TIMEOUT')), ms);
+        promise.then(
+            value => {
+                window.clearTimeout(timer);
+                resolve(value);
+            },
+            err => {
+                window.clearTimeout(timer);
+                reject(err);
+            }
+        );
+    });
+}
+
+function describeConnectError(err: any): string {
+    if (err?.message === 'TIMEOUT') {
+        return 'Timed out connecting. Make sure the node is powered on, nearby, and not already connected to the Meshtastic phone app — a node can only talk to one Bluetooth client at a time, so disconnect it there first.';
+    }
+    if (err?.name === 'NetworkError') {
+        return 'Bluetooth connection dropped. Move closer to the node and make sure it is not already connected in the Meshtastic phone app (only one Bluetooth client can be connected at once).';
+    }
+    if (err?.name === 'SecurityError' || err?.name === 'NotAllowedError') {
+        return 'This browser blocked Bluetooth access. Reload the page and allow the Bluetooth permission prompt.';
+    }
+    if (err?.name === 'InvalidStateError') {
+        return 'Bluetooth adapter is off or unavailable. Turn on Bluetooth on this device and try again.';
+    }
+    return err?.message || 'Could not connect to your Meshtastic node over Bluetooth.';
+}
+
 export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConnectionArgs) {
     const [status, setStatus] = useState<LiveConnectionStatus>('disconnected');
     const [deviceName, setDeviceName] = useState<string | null>(null);
     const [nodes, setNodes] = useState<MeshNode[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [ownBattery, setOwnBattery] = useState<LiveBattery | null>(null);
 
     const connectionRef = useRef<any>(null);
     const nodeNamesRef = useRef<Map<number, string>>(new Map());
+    const myNodeNumRef = useRef<number | null>(null);
 
     const upsertNodeFromInfo = useCallback((info: any) => {
         const num: number = info?.num;
@@ -81,7 +126,79 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
         });
     }, []);
 
-    const connectBluetooth = useCallback(async (preferDeviceName?: string) => {
+    const buildConnection = useCallback(
+        (meshtastic: any) => {
+            const client = new meshtastic.Client();
+            const connection = client.createBleConnection();
+
+            connection.events.onDeviceStatus.subscribe((deviceStatus: number) => {
+                if (deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceConnected) {
+                    setStatus('connected');
+                } else if (
+                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceDisconnected ||
+                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceRestarting
+                ) {
+                    setStatus('disconnected');
+                }
+            });
+
+            connection.events.onNodeInfoPacket.subscribe((info: any) => {
+                upsertNodeFromInfo(info);
+                if (typeof info?.num === 'number' && info.num === myNodeNumRef.current) {
+                    const batteryPct = info?.deviceMetrics?.batteryLevel;
+                    const voltage = info?.deviceMetrics?.voltage;
+                    if (typeof batteryPct === 'number' || typeof voltage === 'number') {
+                        setOwnBattery({
+                            pct: typeof batteryPct === 'number' ? Math.min(100, Math.max(0, batteryPct)) : null,
+                            voltage: typeof voltage === 'number' ? voltage : null,
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                }
+            });
+
+            // MyNodeInfo tells us which node number IS this browser's connected
+            // node, so we can tell its battery telemetry apart from other mesh nodes.
+            connection.events.onMyNodeInfo.subscribe((info: any) => {
+                if (typeof info?.myNodeNum === 'number') myNodeNumRef.current = info.myNodeNum;
+            });
+
+            // Telemetry packets arrive far more often than full NodeInfo rebroadcasts,
+            // so this keeps battery/voltage readings fresh for every known node.
+            connection.events.onTelemetryPacket.subscribe((packet: any) => {
+                const metrics = packet?.data?.deviceMetrics;
+                if (!metrics) return;
+                const batteryPct = typeof metrics.batteryLevel === 'number' ? Math.min(100, Math.max(0, metrics.batteryLevel)) : null;
+                const voltage = typeof metrics.voltage === 'number' ? metrics.voltage : null;
+
+                if (packet.from === myNodeNumRef.current) {
+                    setOwnBattery({ pct: batteryPct, voltage, updatedAt: new Date().toISOString() });
+                }
+
+                setNodes(prev =>
+                    prev.map(node =>
+                        node.id === `live-${packet.from}`
+                            ? { ...node, battery_pct: batteryPct ?? node.battery_pct }
+                            : node
+                    )
+                );
+            });
+
+            connection.events.onMessagePacket.subscribe((packet: any) => {
+                const fromName = nodeNamesRef.current.get(packet.from) || `Node ${packet.from}`;
+                const text = typeof packet.data === 'string' ? packet.data : String(packet.data ?? '');
+                if (text) onIncomingMessage({ text, fromNodeName: fromName, emergency: false });
+            });
+
+            return connection;
+        },
+        [onIncomingMessage, upsertNodeFromInfo]
+    );
+
+    // `forcePicker` skips the silent-reconnect-by-name attempt and always opens
+    // the browser's device chooser, so users have a reliable way to pick a
+    // different/nearby node when the remembered one won't reconnect.
+    const connectBluetooth = useCallback(async (preferDeviceName?: string, opts?: { forcePicker?: boolean }) => {
         setError(null);
 
         if (status === 'connecting') return;
@@ -110,32 +227,37 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
 
         try {
             const meshtastic = await import('@meshtastic/js');
-            const client = new meshtastic.Client();
-            const connection = client.createBleConnection();
+            const filterOptions = {
+                filters: [{ services: [meshtastic.ServiceUuid] }],
+                optionalServices: [meshtastic.ServiceUuid]
+            };
 
-            connection.events.onDeviceStatus.subscribe((deviceStatus: number) => {
-                if (deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceConnected) {
+            const remembered = opts?.forcePicker ? null : await findPreviouslyAllowedDevice(preferDeviceName);
+
+            if (remembered) {
+                // Try the remembered device first, but don't let a stale/out-of-range
+                // device hang the UI forever — fall back to the picker below instead.
+                const connection = buildConnection(meshtastic);
+                try {
+                    await withTimeout(connection.connect({ device: remembered }), CONNECT_TIMEOUT_MS);
+                    setDeviceName(remembered.name || 'Meshtastic node');
+                    connectionRef.current = connection;
                     setStatus('connected');
-                } else if (
-                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceDisconnected ||
-                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceRestarting
-                ) {
-                    setStatus('disconnected');
+                    return;
+                } catch {
+                    try {
+                        connection.disconnect();
+                    } catch {
+                        // best-effort cleanup before falling back to the picker
+                    }
                 }
-            });
+            }
 
-            connection.events.onNodeInfoPacket.subscribe((info: any) => upsertNodeFromInfo(info));
-
-            connection.events.onMessagePacket.subscribe((packet: any) => {
-                const fromName = nodeNamesRef.current.get(packet.from) || `Node ${packet.from}`;
-                const text = typeof packet.data === 'string' ? packet.data : String(packet.data ?? '');
-                if (text) onIncomingMessage({ text, fromNodeName: fromName, emergency: false });
-            });
-
-            const device = (await findPreviouslyAllowedDevice(preferDeviceName)) ?? (await connection.getDevice({ filters: [{ services: [meshtastic.ServiceUuid] }] }));
+            const connection = buildConnection(meshtastic);
+            const device = await connection.getDevice(filterOptions);
             setDeviceName(device.name || 'Meshtastic node');
             connectionRef.current = connection;
-            await connection.connect({ device });
+            await withTimeout(connection.connect({ device }), CONNECT_TIMEOUT_MS);
 
             setStatus('connected');
         } catch (err: any) {
@@ -146,9 +268,9 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                 return;
             }
             setStatus('error');
-            setError(err?.message || 'Could not connect to your Meshtastic node over Bluetooth.');
+            setError(describeConnectError(err));
         }
-    }, [onIncomingMessage, status, upsertNodeFromInfo]);
+    }, [buildConnection, status]);
 
     useEffect(() => {
         return () => {
@@ -168,9 +290,11 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             // best-effort disconnect
         }
         connectionRef.current = null;
+        myNodeNumRef.current = null;
         setStatus('disconnected');
         setDeviceName(null);
         setNodes([]);
+        setOwnBattery(null);
     }, []);
 
     const sendText = useCallback(async (text: string): Promise<boolean> => {
@@ -179,7 +303,7 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
         return true;
     }, [status]);
 
-    return { status, deviceName, nodes, error, connectBluetooth, disconnect, sendText };
+    return { status, deviceName, nodes, error, ownBattery, connectBluetooth, disconnect, sendText };
 }
 
 export type MeshtasticConnection = ReturnType<typeof useMeshtasticConnection>;

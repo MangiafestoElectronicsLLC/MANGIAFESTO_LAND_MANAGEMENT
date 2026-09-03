@@ -25,7 +25,14 @@ export const supabaseClient = () => {
 
     const { url, anonKey } = getSupabaseConfig();
 
-    browserClient = createClient(url, anonKey);
+    // Implicit flow embeds the session tokens in the email link itself, so recovery/confirm
+    // links work even when opened on a different device/browser than where they were requested
+    // (PKCE would fail there since its code verifier only exists in the requesting browser).
+    browserClient = createClient(url, anonKey, {
+        auth: {
+            flowType: 'implicit'
+        }
+    });
 
     return browserClient;
 };

@@ -51,8 +51,13 @@ function AuthConfirmPageContent() {
         const load = async () => {
             try {
                 const supabase = supabaseClient();
+                const hashParams = new URLSearchParams(window.location.hash.slice(1));
+                const accessToken = hashParams.get('access_token');
+                const refreshToken = hashParams.get('refresh_token');
 
-                if (code) {
+                if (accessToken && refreshToken) {
+                    await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+                } else if (code) {
                     await supabase.auth.exchangeCodeForSession(code);
                 } else if (tokenHash && type) {
                     await supabase.auth.verifyOtp({

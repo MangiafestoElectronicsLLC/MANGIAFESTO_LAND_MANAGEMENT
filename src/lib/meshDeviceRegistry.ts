@@ -17,6 +17,8 @@ export type OnboardedDevice = {
     ownerName: string;
     addedAt: string;
     lastConnectedAt: string | null;
+    lastBatteryPct: number | null;
+    lastBatteryAt: string | null;
 };
 
 export const DEVICE_ROLE_OPTIONS: { value: MeshNodeRole; label: string; hint: string }[] = [
@@ -50,7 +52,7 @@ export function saveDevices(devices: OnboardedDevice[]) {
     }
 }
 
-export function createDevice(input: Omit<OnboardedDevice, 'id' | 'addedAt' | 'lastConnectedAt'>): OnboardedDevice {
+export function createDevice(input: Omit<OnboardedDevice, 'id' | 'addedAt' | 'lastConnectedAt' | 'lastBatteryPct' | 'lastBatteryAt'>): OnboardedDevice {
     return {
         ...input,
         id:
@@ -58,7 +60,9 @@ export function createDevice(input: Omit<OnboardedDevice, 'id' | 'addedAt' | 'la
                 ? window.crypto.randomUUID()
                 : `device-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         addedAt: new Date().toISOString(),
-        lastConnectedAt: null
+        lastConnectedAt: null,
+        lastBatteryPct: null,
+        lastBatteryAt: null
     };
 }
 
@@ -74,3 +78,34 @@ export function markDeviceConnected(devices: OnboardedDevice[], bluetoothName: s
     const stamp = new Date().toISOString();
     return devices.map(device => (device.bluetoothName === bluetoothName ? { ...device, lastConnectedAt: stamp } : device));
 }
+
+export function updateDeviceBattery(devices: OnboardedDevice[], bluetoothName: string, pct: number | null): OnboardedDevice[] {
+    if (pct == null) return devices;
+    const stamp = new Date().toISOString();
+    return devices.map(device =>
+        device.bluetoothName === bluetoothName ? { ...device, lastBatteryPct: pct, lastBatteryAt: stamp } : device
+    );
+}
+
+export type BatteryHealth = 'good' | 'low' | 'critical' | 'unknown';
+
+export function batteryHealth(pct: number | null): BatteryHealth {
+    if (pct == null) return 'unknown';
+    if (pct >= 60) return 'good';
+    if (pct >= 25) return 'low';
+    return 'critical';
+}
+
+export const BATTERY_HEALTH_LABEL: Record<BatteryHealth, string> = {
+    good: 'Good',
+    low: 'Low',
+    critical: 'Charge soon',
+    unknown: 'Unknown'
+};
+
+export const BATTERY_HEALTH_COLOR: Record<BatteryHealth, string> = {
+    good: '#bbf7d0',
+    low: '#fde68a',
+    critical: '#fecaca',
+    unknown: '#94a3b8'
+};

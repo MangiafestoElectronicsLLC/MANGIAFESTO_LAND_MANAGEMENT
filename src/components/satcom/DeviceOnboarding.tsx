@@ -2,11 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+    BATTERY_HEALTH_COLOR,
+    BATTERY_HEALTH_LABEL,
     DEVICE_ROLE_OPTIONS,
+    batteryHealth,
     createDevice,
     loadDevices,
     markDeviceConnected,
     saveDevices,
+    updateDeviceBattery,
     upsertDevice,
     type OnboardedDevice
 } from '@/lib/meshDeviceRegistry';
@@ -37,6 +41,25 @@ const inputStyle: React.CSSProperties = {
 
 const stepTitles = ['Check this device', 'Prep the node', 'Name it', 'Connect & verify'];
 
+// Small reusable pill showing a device's battery health, live or last-known.
+function BatteryBadge({ pct }: { pct: number | null }) {
+    const health = batteryHealth(pct);
+    return (
+        <span
+            style={{
+                border: `1px solid ${BATTERY_HEALTH_COLOR[health]}`,
+                color: BATTERY_HEALTH_COLOR[health],
+                borderRadius: 999,
+                padding: '0.15rem 0.55rem',
+                fontSize: '0.76rem',
+                whiteSpace: 'nowrap'
+            }}
+        >
+            🔋 {pct != null ? `${pct}%` : BATTERY_HEALTH_LABEL[health]}
+        </span>
+    );
+}
+
 export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingProps) {
     const [devices, setDevices] = useState<OnboardedDevice[]>([]);
     const [wizardOpen, setWizardOpen] = useState(false);
@@ -62,6 +85,17 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
             return next;
         });
     }, [live.status, live.deviceName]);
+
+    // Persist the connected node's live battery reading so it's still visible
+    // as "last known" once the browser disconnects or the page reloads.
+    useEffect(() => {
+        if (live.status !== 'connected' || !live.deviceName || live.ownBattery?.pct == null) return;
+        setDevices(prev => {
+            const next = updateDeviceBattery(prev, live.deviceName as string, live.ownBattery!.pct);
+            saveDevices(next);
+            return next;
+        });
+    }, [live.status, live.deviceName, live.ownBattery]);
 
     const allPrepChecked = PREP_CHECKS.every(check => checks[check.id]);
     const knownDevice = devices.find(device => device.bluetoothName === live.deviceName);
@@ -154,6 +188,15 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                 </p>
             )}
 
+            {devices.length > 0 && !wizardOpen && (
+                <p style={{ margin: 0, opacity: 0.7, fontSize: '0.82rem' }}>
+                    Only one node talks to this browser over Bluetooth at a time — whichever one you carry and tap{' '}
+                    <strong>Connect</strong> on below. It must be powered on, nearby, and not already connected in the
+                    Meshtastic phone app (a node only accepts one Bluetooth client at once). The rest of the mesh
+                    still shows up automatically through that connection.
+                </p>
+            )}
+
             {devices.length > 0 && (
                 <div style={{ display: 'grid', gap: '0.5rem' }}>
                     {devices.map(device => {
@@ -179,6 +222,7 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                                     <span style={{ fontSize: '0.78rem', opacity: 0.8 }}>
                                         {DEVICE_ROLE_OPTIONS.find(option => option.value === device.role)?.label || device.role}
                                     </span>
+                                    <BatteryBadge pct={isActive ? live.ownBattery?.pct ?? device.lastBatteryPct : device.lastBatteryPct} />
                                 </div>
                                 <div style={{ fontSize: '0.78rem', opacity: 0.7 }}>
                                     Bluetooth name: {device.bluetoothName}
@@ -186,6 +230,9 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                                     {device.lastConnectedAt
                                         ? ` · last connected ${new Date(device.lastConnectedAt).toLocaleString()}`
                                         : ' · not connected yet'}
+                                    {!isActive && device.lastBatteryAt
+                                        ? ` · battery last seen ${new Date(device.lastBatteryAt).toLocaleString()}`
+                                        : ''}
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                     {isActive ? (
@@ -193,13 +240,23 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                                             Disconnect
                                         </button>
                                     ) : (
-                                        <button
-                                            className="soft-button"
-                                            onClick={() => void live.connectBluetooth(device.bluetoothName)}
-                                            disabled={live.status === 'connecting'}
-                                        >
-                                            {live.status === 'connecting' ? 'Connecting...' : 'Connect'}
-                                        </button>
+                                        <>
+                                            <button
+                                                className="soft-button"
+                                                onClick={() => void live.connectBluetooth(device.bluetoothName)}
+                                                disabled={live.status === 'connecting'}
+                                            >
+                                                {live.status === 'connecting' ? 'Connecting...' : 'Connect'}
+                                            </button>
+                                            <button
+                                                className="soft-button"
+                                                onClick={() => void live.connectBluetooth(device.bluetoothName, { forcePicker: true })}
+                                                disabled={live.status === 'connecting'}
+                                                title="Open the Bluetooth device picker instead of auto-reconnecting by name"
+                                            >
+                                                Choose device...
+                                            </button>
+                                        </>
                                     )}
                                     <button className="soft-button" onClick={() => removeDevice(device.id)} style={{ borderColor: '#7f1d1d', color: '#fecaca' }}>
                                         Remove
@@ -305,13 +362,21 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                                 Tap connect, then choose your node in the browser popup. Once it says connected, the node
                                 list and mesh chat switch from demo data to your real mesh.
                             </p>
+                            <p style={{ margin: 0, opacity: 0.7, fontSize: '0.82rem' }}>
+                                No devices in the popup? Close the Meshtastic phone app first — a node only accepts one
+                                Bluetooth connection at a time — then make sure it&apos;s powered on and within a few
+                                meters before tapping connect again.
+                            </p>
                             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                                 {live.status === 'connected' ? (
-                                    <span style={{ color: '#bbf7d0' }}>Connected to {live.deviceName}</span>
+                                    <span style={{ color: '#bbf7d0', display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                        Connected to {live.deviceName}
+                                        <BatteryBadge pct={live.ownBattery?.pct ?? null} />
+                                    </span>
                                 ) : (
                                     <button
                                         className="soft-button"
-                                        onClick={() => void live.connectBluetooth()}
+                                        onClick={() => void live.connectBluetooth(undefined, { forcePicker: true })}
                                         disabled={live.status === 'connecting'}
                                     >
                                         {live.status === 'connecting' ? 'Connecting...' : 'Connect over Bluetooth'}
