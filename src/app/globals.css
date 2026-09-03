@@ -210,6 +210,82 @@ canvas {
     width: 100%;
 }
 
+.password-field {
+    position: relative;
+}
+
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 0.35rem;
+    width: auto !important;
+    min-height: 34px;
+    padding: 0.35rem 0.55rem;
+    transform: translateY(-50%);
+    border: 0;
+    background: transparent;
+    color: #7dd3fc;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.auth-primary-button,
+.auth-magic-button {
+    min-height: 50px;
+    border-radius: 10px;
+}
+
+.auth-magic-button {
+    border: 1px solid #22d3ee;
+    background: rgba(8, 145, 178, 0.14);
+    color: #cffafe;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+    height: 1px;
+    flex: 1;
+    background: #334155;
+    content: '';
+}
+
+.auth-action-hint {
+    color: #a5b4c8;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    text-align: center;
+}
+
+.auth-help {
+    margin-top: 0.2rem;
+    border-top: 1px solid #334155;
+    padding-top: 0.85rem;
+}
+
+.auth-help summary {
+    color: #bae6fd;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.auth-help-actions {
+    display: grid;
+    gap: 0.65rem;
+    padding-top: 0.75rem;
+}
+
 .auth-message {
     padding: 0.75rem 0.85rem;
     border-radius: 14px;

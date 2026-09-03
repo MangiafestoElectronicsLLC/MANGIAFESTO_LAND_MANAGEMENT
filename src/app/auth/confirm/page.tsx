@@ -28,13 +28,26 @@ function AuthConfirmPageContent() {
     const [info, setInfo] = useState<string | null>(null);
     const [password, setPassword] = useState('');
     const [saving, setSaving] = useState(false);
+    const [isRecovery, setIsRecovery] = useState<boolean | null>(null);
 
     const code = searchParams.get('code');
     const tokenHash = searchParams.get('token_hash');
     const type = searchParams.get('type');
-    const isRecovery = type === 'recovery' || searchParams.get('mode') === 'recovery';
 
     useEffect(() => {
+        const hashParams = new URLSearchParams(window.location.hash.slice(1));
+        setIsRecovery(
+            type === 'recovery' ||
+            searchParams.get('mode') === 'recovery' ||
+            hashParams.get('type') === 'recovery'
+        );
+    }, [searchParams, type]);
+
+    useEffect(() => {
+        if (isRecovery === null) {
+            return;
+        }
+
         const load = async () => {
             try {
                 const supabase = supabaseClient();
@@ -100,7 +113,7 @@ function AuthConfirmPageContent() {
         }
     };
 
-    if (loading) {
+    if (loading || isRecovery === null) {
         return (
             <div className="panel panel-pad" style={{ display: 'grid', gap: '0.5rem', maxWidth: 620 }}>
                 <div style={{ fontWeight: 700 }}>Completing sign-in...</div>

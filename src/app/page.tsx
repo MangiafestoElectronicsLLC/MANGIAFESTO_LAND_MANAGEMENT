@@ -25,6 +25,7 @@ export default function AuthPage() {
 function AuthPageContent() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [mode, setMode] = useState<'signin' | 'signup'>('signin');
     const [fallbackMode, setFallbackMode] = useState<'magic' | 'reset' | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -288,7 +289,7 @@ function AuthPageContent() {
                             {mode === 'signin' ? 'Sign in to continue' : 'Create an account'}
                         </h2>
                         <p style={{ margin: 0, opacity: 0.78, maxWidth: 56 * 8 }}>
-                            Use the same email and password from your Supabase auth user. If password sign-in fails, try the magic-link or reset-password buttons below.
+                            Sign in with your password, or receive a secure sign-in link by email.
                         </p>
                     </div>
                 </div>
@@ -312,15 +313,25 @@ function AuthPageContent() {
                     </label>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Password</span>
-                        <input
-                            type="password"
-                            placeholder="Your account password"
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                            autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                            required
-                            style={{ padding: '0.85rem 0.95rem' }}
-                        />
+                        <div className="password-field">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                placeholder="Your account password"
+                                value={password}
+                                onChange={e => setPassword(e.target.value)}
+                                autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                                required
+                                style={{ padding: '0.85rem 4.8rem 0.85rem 0.95rem' }}
+                            />
+                            <button
+                                type="button"
+                                className="password-toggle"
+                                onClick={() => setShowPassword(visible => !visible)}
+                                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                            >
+                                {showPassword ? 'Hide' : 'Show'}
+                            </button>
+                        </div>
                     </label>
                     {error && (
                         <div className="auth-message auth-error" style={{ color: '#fca5a5', fontSize: '0.92rem', lineHeight: 1.4 }}>
@@ -332,21 +343,11 @@ function AuthPageContent() {
                             {info}
                         </div>
                     )}
-                    {fallbackMode === 'magic' && (
-                        <div style={{ color: '#bfdbfe', fontSize: '0.88rem', lineHeight: 1.4 }}>
-                            If the email app opens on the same device, tap the link and you should land back in the board automatically.
-                        </div>
-                    )}
-                    {fallbackMode === 'reset' && (
-                        <div style={{ color: '#bfdbfe', fontSize: '0.88rem', lineHeight: 1.4 }}>
-                            After choosing a new password, come back here and use normal sign-in.
-                        </div>
-                    )}
                     <button
                         type="submit"
+                        className="auth-primary-button"
                         style={{
                             padding: '0.85rem 1rem',
-                            borderRadius: 14,
                             background: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
                             border: 'none',
                             color: '#eff6ff',
@@ -359,33 +360,45 @@ function AuthPageContent() {
                     </button>
                     {mode === 'signin' && (
                         <>
-                            <button
-                                type="button"
-                                onClick={handleResendConfirmation}
-                                disabled={sendingConfirm}
-                                className="soft-button"
-                                style={{ borderColor: '#60a5fa', color: '#bfdbfe' }}
-                            >
-                                {sendingConfirm ? 'Sending...' : 'Resend confirmation email'}
-                            </button>
+                            <div className="auth-divider"><span>or</span></div>
                             <button
                                 type="button"
                                 onClick={() => sendFallbackEmail('magic')}
                                 disabled={sendingFallback}
-                                className="soft-button"
-                                style={{ borderColor: '#38bdf8', color: '#cffafe' }}
+                                className="auth-magic-button"
                             >
-                                {sendingFallback && fallbackMode === 'magic' ? 'Sending...' : 'Send magic link'}
+                                {sendingFallback && fallbackMode === 'magic' ? 'Sending sign-in link...' : 'Email me a sign-in link'}
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => sendFallbackEmail('reset')}
-                                disabled={sendingFallback}
-                                className="soft-button"
-                                style={{ borderColor: '#34d399', color: '#dcfce7' }}
-                            >
-                                {sendingFallback && fallbackMode === 'reset' ? 'Sending...' : 'Reset password email'}
-                            </button>
+                            <div className="auth-action-hint">No password needed. Open the email on this device and you will be signed in.</div>
+                            {fallbackMode === 'magic' && (
+                                <div className="auth-message auth-info">
+                                    Your sign-in link is on its way. Check your inbox and spam folder, then open the newest email.
+                                </div>
+                            )}
+                            <details className="auth-help">
+                                <summary>Need help signing in?</summary>
+                                <div className="auth-help-actions">
+                                    <button
+                                        type="button"
+                                        onClick={() => sendFallbackEmail('reset')}
+                                        disabled={sendingFallback}
+                                        className="soft-button"
+                                    >
+                                        {sendingFallback && fallbackMode === 'reset' ? 'Sending reset link...' : 'Reset my password'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleResendConfirmation}
+                                        disabled={sendingConfirm}
+                                        className="soft-button"
+                                    >
+                                        {sendingConfirm ? 'Sending confirmation...' : 'Resend confirmation email'}
+                                    </button>
+                                    {fallbackMode === 'reset' && (
+                                        <div className="auth-action-hint">Open the reset email, choose a new password, then return here to sign in.</div>
+                                    )}
+                                </div>
+                            </details>
                         </>
                     )}
                     <button
@@ -399,18 +412,6 @@ function AuthPageContent() {
                 </form>
             </section>
 
-            <section className="panel panel-pad" style={{ display: 'grid', gap: '0.5rem' }}>
-                <div style={{ fontWeight: 700 }}>Login help</div>
-                <div style={{ fontSize: '0.92rem', opacity: 0.82, lineHeight: 1.5 }}>
-                    If sign-in still fails, the most common causes are a missing Supabase env file, an unconfirmed email, a password typo, a stale session on the device, or a network issue reaching Supabase. Magic-link and reset-email fallback buttons are available.
-                </div>
-                <div style={{ fontSize: '0.9rem', opacity: 0.78, lineHeight: 1.5 }}>
-                    On a phone, enter your email once, then use the fallback button that fits your situation. The email link will return you to the app automatically.
-                </div>
-                <div style={{ fontSize: '0.9rem', opacity: 0.78 }}>
-                    After signup, a Chairman can set your role in Supabase under the profiles table.
-                </div>
-            </section>
         </div>
     );
 }
