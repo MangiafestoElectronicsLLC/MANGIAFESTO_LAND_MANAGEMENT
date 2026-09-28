@@ -15,6 +15,8 @@ import {
 import {
     enqueueSnapshotSync,
     loadCachedSnapshot,
+    loadSyncQueue,
+    removeQueueItem,
     saveCachedSnapshot
 } from '../property-map/offline-sync';
 import { filesToAttachments, removeAttachmentById } from '../property-map/photo-attachments';
@@ -202,9 +204,30 @@ export default function TreestandsPage() {
 
                 const map = await ensureSharedMap(supabase, user.id);
                 const remoteSnapshot = await loadSnapshotFromSupabase(supabase, map.id);
-                setSnapshot(remoteSnapshot);
-                saveCachedSnapshot(remoteSnapshot);
-                setStatusMessage('Live property map markers and photos loaded.');
+                const pendingMapUpdate = loadSyncQueue()
+                    .filter(item => item.mapId === OFFLINE_MAP_ID || item.mapId === map.id || item.snapshot.mapId === map.id)
+                    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+                const visibleSnapshot = pendingMapUpdate
+                    ? { ...pendingMapUpdate.snapshot, mapId: map.id }
+                    : remoteSnapshot;
+
+                setSnapshot(visibleSnapshot);
+                saveCachedSnapshot(visibleSnapshot);
+                if (pendingMapUpdate && navigator.onLine) {
+                    try {
+                        const syncedSnapshot = await syncSnapshotToSupabase(supabase, user.id, visibleSnapshot);
+                        removeQueueItem(pendingMapUpdate.id);
+                        setSnapshot(syncedSnapshot);
+                        saveCachedSnapshot(syncedSnapshot);
+                        setStatusMessage('Pending Property Map updates synced. Markers and photos are up to date.');
+                    } catch {
+                        setStatusMessage('Showing pending Property Map updates. They are still queued to sync.');
+                    }
+                } else if (pendingMapUpdate) {
+                    setStatusMessage('Showing pending Property Map updates saved on this device.');
+                } else {
+                    setStatusMessage('Live property map markers and photos loaded.');
+                }
 
                 try {
                     await loadRequests(remoteSnapshot.mapId);
@@ -340,6 +363,18 @@ export default function TreestandsPage() {
         };
 
         await persistSnapshot(nextSnapshot, 'Photo removed and synced to the Property Map page.');
+    };
+
+    const togglePinUse = async (pin: Pinpoint) => {
+        const inUse = !pin.inUse;
+        const nextSnapshot: PropertyMapSnapshot = {
+            ...snapshot,
+            pinpoints: snapshot.pinpoints.map(item =>
+                item.id === pin.id ? { ...item, inUse, updatedAt: new Date().toISOString() } : item
+            )
+        };
+
+        await persistSnapshot(nextSnapshot, `${pin.title} marked ${inUse ? 'in use' : 'available'}.`);
     };
 
     const saveRequest = async (event: FormEvent) => {
@@ -481,6 +516,9 @@ export default function TreestandsPage() {
 
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
                     <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Markers: {standPins.length}</span>
+                    <span style={{ border: '1px solid #b91c1c', borderRadius: 999, padding: '0.22rem 0.6rem', color: '#fecaca' }}>
+                        In use: {standPins.filter(pin => pin.inUse).length}
+                    </span>
                     <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Approved requests: {activeRequests.length}</span>
                     <span style={{ border: '1px solid #334155', borderRadius: 999, padding: '0.22rem 0.6rem' }}>Property size: {boundaryAreaAcres.toFixed(2)} ac</span>
                 </div>
@@ -546,7 +584,13 @@ export default function TreestandsPage() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
                                     <div style={{ fontWeight: 700 }}>{selectedPin.title}</div>
                                     <div style={{ opacity: 0.8, textTransform: 'capitalize' }}>{selectedPin.pinType}</div>
+                                    <strong style={{ color: selectedPin.inUse ? '#fca5a5' : '#86efac' }}>
+                                        {selectedPin.inUse ? 'IN USE' : 'AVAILABLE'}
+                                    </strong>
                                 </div>
+                                <button type="button" className="soft-button" onClick={() => void togglePinUse(selectedPin)}>
+                                    Mark {selectedPin.inUse ? 'Available' : 'In Use'}
+                                </button>
                                 <div style={{ fontSize: '0.88rem', opacity: 0.78 }}>
                                     {selectedPin.position[0].toFixed(6)}, {selectedPin.position[1].toFixed(6)}
                                 </div>
@@ -554,7 +598,7 @@ export default function TreestandsPage() {
                                     <div style={{ fontSize: '0.86rem', opacity: 0.78 }}>{selectedPin.description}</div>
                                 )}
                                 <div style={{ fontSize: '0.86rem', opacity: 0.78 }}>
-                                    Approved use: {requestsByPinId.get(selectedPin.id)?.find(request => request.status === 'approved')?.requester_name || 'None yet'}
+                                    Approved reservation: {requestsByPinId.get(selectedPin.id)?.find(request => request.status === 'approved')?.requester_name || 'None'}
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
@@ -701,16 +745,42 @@ export default function TreestandsPage() {
                             >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
                                     <div style={{ fontWeight: 600 }}>{pin.title}</div>
-                                    <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>{pin.pinType} • {pin.photos.length} photo(s)</div>
+                                    <div style={{ opacity: 0.78, textTransform: 'capitalize' }}>
+                                        {pin.pinType} • {pin.photos.length} photo(s)
+                                    </div>
+                                    <strong style={{
+                                        color: pin.inUse ? '#fecaca' : '#bbf7d0',
+                                        background: pin.inUse ? 'rgba(127, 29, 29, 0.48)' : 'rgba(6, 78, 59, 0.38)',
+                                        border: `1px solid ${pin.inUse ? '#b91c1c' : '#15803d'}`,
+                                        borderRadius: 999,
+                                        padding: '0.15rem 0.55rem'
+                                    }}>
+                                        {pin.inUse ? 'IN USE' : 'AVAILABLE'}
+                                    </strong>
                                 </div>
                                 <div style={{ opacity: 0.8, fontSize: '0.9rem', marginTop: '0.2rem' }}>
                                     Lat/Lng: {pin.position[0].toFixed(6)}, {pin.position[1].toFixed(6)}
-                                    {approved ? ` • In use by ${approved.requester_name}` : ''}
+                                    {approved ? ` • Approved reservation: ${approved.requester_name}` : ''}
                                     {pending.length > 0 ? ` • Pending requests: ${pending.length}` : ''}
                                 </div>
                                 <div style={{ opacity: 0.68, fontSize: '0.82rem', marginTop: '0.15rem' }}>
                                     Updated: {formatDate(pin.updatedAt)}
                                 </div>
+                                {pin.photos.length > 0 && (
+                                    <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.45rem', overflowX: 'auto' }}>
+                                        {pin.photos.map(photo => {
+                                            const src = photoSrc(photo);
+                                            return src ? (
+                                                <img
+                                                    key={photo.id}
+                                                    src={src}
+                                                    alt={photo.name}
+                                                    style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: '1px solid #475569', flex: '0 0 auto' }}
+                                                />
+                                            ) : null;
+                                        })}
+                                    </div>
+                                )}
                             </button>
                         );
                     })}

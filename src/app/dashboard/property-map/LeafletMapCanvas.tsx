@@ -560,6 +560,7 @@ export default function LeafletMapCanvas({
                 >
                     <Tooltip direction="top" offset={[0, -8]}>
                         {pin.title} ({pin.pinType})
+                        {(pin.pinType === 'treestand' || pin.pinType === 'range') && ` - ${pin.inUse ? 'IN USE' : 'Available'}`}
                     </Tooltip>
                 </CircleMarker>
             ))}

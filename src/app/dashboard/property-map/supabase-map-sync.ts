@@ -36,6 +36,7 @@ type V2Meta =
         pinType: Pinpoint['pinType'];
         position: [number, number];
         photos: PhotoAttachment[];
+        inUse?: boolean;
         createdAt: string;
         updatedAt: string;
         lastCheckedAt?: string;
@@ -245,6 +246,7 @@ export const loadSnapshotFromSupabase = async (supabase: any, mapId: string): Pr
                 pinType: meta.pinType,
                 position: meta.position,
                 photos: normalizePhotos(meta.photos),
+                inUse: meta.inUse ?? false,
                 createdAt: meta.createdAt,
                 updatedAt: meta.updatedAt,
                 lastCheckedAt: meta.lastCheckedAt,
@@ -400,6 +402,7 @@ export const syncSnapshotToSupabase = async (
                 pinType: pin.pinType,
                 position: pin.position,
                 photos: pin.photos,
+                inUse: pin.inUse ?? false,
                 createdAt: pin.createdAt,
                 updatedAt: pin.updatedAt,
                 lastCheckedAt: pin.lastCheckedAt
