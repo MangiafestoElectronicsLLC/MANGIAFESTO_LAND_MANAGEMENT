@@ -28,9 +28,10 @@ const nextConfig = {
     },
     async headers() {
         const isDev = process.env.NODE_ENV !== 'production';
+        const jitsiHost = String(process.env.NEXT_PUBLIC_JITSI_DOMAIN || 'meet.jit.si').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
         const scriptSrc = isDev
-            ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://meet.jit.si https://*.daily.co https://unpkg.com"
-            : "script-src 'self' 'unsafe-inline' https://meet.jit.si https://*.daily.co https://unpkg.com";
+            ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://${jitsiHost} https://*.daily.co https://unpkg.com`
+            : `script-src 'self' 'unsafe-inline' https://${jitsiHost} https://*.daily.co https://unpkg.com`;
 
         return [
             {
@@ -50,12 +51,12 @@ const nextConfig = {
                     },
                     {
                         key: 'Permissions-Policy',
-                        value: 'camera=(self "https://meet.jit.si" "https://*.daily.co"), microphone=(self "https://meet.jit.si" "https://*.daily.co"), geolocation=(self), bluetooth=(self)'
+                        value: `camera=(self "https://${jitsiHost}" "https://*.daily.co"), microphone=(self "https://${jitsiHost}" "https://*.daily.co"), geolocation=(self), bluetooth=(self)`
                     },
                     {
                         key: 'Content-Security-Policy',
                         value:
-                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline' https://*.daily.co; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net https://*.daily.co https://*.amazonaws.com; connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net wss://*.supabase.co wss://*.supabase.in wss://*.supabase.com wss://*.supabase.net https://*.daily.co wss://*.daily.co; frame-src 'self' https://me-cam.replit.app https://meet.jit.si https://*.daily.co; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
+                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline' https://*.daily.co; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net https://*.daily.co https://*.amazonaws.com; connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net wss://*.supabase.co wss://*.supabase.in wss://*.supabase.com wss://*.supabase.net https://*.daily.co wss://*.daily.co; frame-src 'self' https://me-cam.replit.app https://${jitsiHost} https://*.daily.co; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
                     }
                 ]
             }

@@ -526,6 +526,109 @@ canvas {
     line-height: 1.45;
 }
 
+.family-call {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.family-call-grid {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.family-call-grid[data-count="1"] {
+    grid-template-columns: minmax(0, 720px);
+}
+
+.family-call-tile {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #020617;
+    border: 1px solid #334155;
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.family-call-tile video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #020617;
+}
+
+.family-call-name {
+    position: absolute;
+    left: 0.5rem;
+    bottom: 0.5rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.8);
+    color: #e2e8f0;
+    font-size: 0.8rem;
+}
+
+.family-call-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.family-call-note {
+    flex: 1 1 200px;
+    opacity: 0.8;
+    font-size: 0.9rem;
+}
+
+.meetings-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid #2563eb;
+    color: #dbeafe;
+    font-weight: 700;
+}
+
+.meetings-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.6rem;
+    width: 100%;
+}
+
+.meetings-mode-card {
+    display: grid;
+    gap: 0.25rem;
+    text-align: left;
+    padding: 0.75rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid #334155;
+    background: rgba(2, 6, 23, 0.6);
+    color: #cbd5e1;
+    cursor: pointer;
+    font: inherit;
+}
+
+.meetings-mode-card span {
+    font-size: 0.85rem;
+    opacity: 0.78;
+    line-height: 1.4;
+}
+
+.meetings-mode-card.is-selected {
+    border-color: #22c55e;
+    background: rgba(22, 101, 52, 0.25);
+    color: #bbf7d0;
+}
+
+.meetings-mode-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .meetings-diagnostics>summary {
     width: fit-content;
     padding: 0.5rem 0;

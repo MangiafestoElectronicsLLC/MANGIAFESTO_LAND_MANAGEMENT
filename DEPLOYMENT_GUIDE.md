@@ -88,6 +88,8 @@ Replace `YOUR_USERNAME` with your actual GitHub username.
 
    Cloud recording is a paid Daily feature. Run `supabase/board_meetings_cloud_recording.sql` in Supabase SQL Editor. Then create a Daily webhook pointing to `https://YOUR_SITE/api/board-meetings/daily-webhook` for `meeting.ended`, `recording.ready-to-download`, and `recording.error`; set the webhook HMAC secret to `DAILY_WEBHOOK_SECRET`. Keep the service-role key server-only; never prefix it with `NEXT_PUBLIC_`.
 
+   Free call option: set `NEXT_PUBLIC_JITSI_DOMAIN` to `meet.jit.si` or your self-hosted Jitsi hostname. For a self-hosted Jitsi/Jibri setup, see [SELF_HOSTED_JITSI.md](./SELF_HOSTED_JITSI.md). Jibri records on its own server; importing those files into this app's replay list requires a separate uploader.
+
    Run `supabase/board_meeting_invitees.sql` in Supabase SQL Editor to sync the main invite list across family devices. The page seeds Dad, Sam, and Jeff when the shared table is empty; without this table, contact edits stay in the current browser only.
 
    *Find these in Supabase: Project Settings → API*

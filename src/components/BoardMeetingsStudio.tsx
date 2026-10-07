@@ -6,9 +6,10 @@ import Daily, { type DailyCall } from '@daily-co/daily-js';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { getSupabaseErrorCode, getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
 import ConnectionDiagnostics from '@/components/ConnectionDiagnostics';
+import FamilyCallRoom from '@/components/FamilyCallRoom';
 
 type StorageMode = 'supabase' | 'local';
-type RecordingSource = 'cloud' | 'local' | 'call-room';
+type RecordingSource = 'cloud' | 'free-call' | 'local' | 'call-room' | 'family-call';
 
 type BoardMeeting = {
     id: string;
@@ -48,6 +49,8 @@ type MeetingInvitee = {
 
 type JitsiMeetApi = {
     dispose: () => void;
+    executeCommand: (command: string, ...args: any[]) => void;
+    addEventListener: (eventName: string, listener: (event: any) => void) => void;
 };
 
 type JitsiMeetConstructor = new (domain: string, options: Record<string, unknown>) => JitsiMeetApi;
@@ -55,6 +58,7 @@ type JitsiMeetConstructor = new (domain: string, options: Record<string, unknown
 const LOCAL_MEETINGS_KEY = 'family-land-local-meetings';
 const LOCAL_NOTES_KEY = 'family-land-local-meeting-notes';
 const LOCAL_INVITEES_KEY = 'family-land-meeting-invitees-v1';
+const JITSI_DOMAIN = (process.env.NEXT_PUBLIC_JITSI_DOMAIN || 'meet.jit.si').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
 const DEFAULT_INVITEES: Omit<MeetingInvitee, 'id'>[] = [
     { name: 'Dad', phone: '585-489-7452', email: 'steve@speedygraphics.us' },
     { name: 'Sam', phone: '585-329-6841', email: 'setinstone585@gmail.com' },
@@ -62,14 +66,20 @@ const DEFAULT_INVITEES: Omit<MeetingInvitee, 'id'>[] = [
 ];
 
 const SUPPORTED_MIME_TYPES = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
-    'video/webm'
+    'video/webm',
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4'
 ];
 
 const PLAYBACK_REFRESH_TIMEOUT_MS = 7000;
+
+const RECORDING_MODES: { value: RecordingSource; label: string; description: string }[] = [
+    { value: 'family-call', label: 'Family group call (recorded)', description: 'Video call inside this app. Everyone joins with a link, and the call is recorded automatically and saved to Saved recordings. Keep this page open while hosting.' },
+    { value: 'cloud', label: 'Cloud-recorded call (Daily)', description: 'Server-side recording that continues if you leave. Requires a Daily account and API key.' },
+    { value: 'local', label: 'Solo recording', description: 'Record only your own camera and microphone, with no call.' }
+];
 const AUTO_REFRESH_COOLDOWN_MS = 20000;
 
 const extensionForMimeType = (mimeType: string | null | undefined) => {
@@ -171,12 +181,20 @@ export default function BoardMeetingsStudio() {
     const supabase = supabaseClient();
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const callRoomHostRef = useRef<HTMLDivElement | null>(null);
+    const jitsiCallRef = useRef<JitsiMeetApi | null>(null);
+    const jitsiLocalParticipantIdRef = useRef<string | null>(null);
+    const jitsiRemoteParticipantsRef = useRef<Set<string>>(new Set());
+    const jitsiLocalHasLeftRef = useRef(false);
+    const jitsiAutoStopRequestedRef = useRef(false);
+    const autoStopRecordingRef = useRef<() => void>(() => undefined);
     const dailyCallRef = useRef<DailyCall | null>(null);
+    const playRequestedRef = useRef(false);
     const recorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<BlobPart[]>([]);
     const recordedMimeTypeRef = useRef<string | null>(null);
     const liveMeetingIdRef = useRef<string | null>(null);
     const liveStartedAtRef = useRef<number>(0);
+    const recorderStartedAtRef = useRef<number>(0);
     const manualStopRequestedRef = useRef(false);
     const autoRefreshAttemptAtRef = useRef<Record<string, number>>({});
 
@@ -190,7 +208,13 @@ export default function BoardMeetingsStudio() {
     const [selectedMeetingId, setSelectedMeetingId] = useState<string>('');
     const [liveMeetingId, setLiveMeetingId] = useState<string | null>(null);
     const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
-    const [recordingSource, setRecordingSource] = useState<RecordingSource>('cloud');
+    const [jitsiRecordingActive, setJitsiRecordingActive] = useState(false);
+    const [jitsiJoined, setJitsiJoined] = useState(false);
+    const [recordingSource, setRecordingSource] = useState<RecordingSource>('family-call');
+    const [joinRoomId, setJoinRoomId] = useState<string | null>(null);
+    const [familyParticipantCount, setFamilyParticipantCount] = useState(0);
+    const familyStreamRef = useRef<MediaStream | null>(null);
+    const startFamilyRecordingRef = useRef<() => void>(() => undefined);
     const [liveTitle, setLiveTitle] = useState('Family Board Meeting');
     const [liveDescription, setLiveDescription] = useState('');
     const [noteDraft, setNoteDraft] = useState('');
@@ -201,6 +225,7 @@ export default function BoardMeetingsStudio() {
     const [isMigratingRecording, setIsMigratingRecording] = useState(false);
     const [isResumingCapture, setIsResumingCapture] = useState(false);
     const [isRefreshingPlayback, setIsRefreshingPlayback] = useState(false);
+    const [isUploadingRecording, setIsUploadingRecording] = useState(false);
     const [isDeletingMeetingId, setIsDeletingMeetingId] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -533,6 +558,10 @@ export default function BoardMeetingsStudio() {
             video: true,
             audio: true
         });
+        if (displayStream.getAudioTracks().length === 0) {
+            displayStream.getTracks().forEach(track => track.stop());
+            throw new Error('No call audio was shared. Choose the Jitsi browser tab and enable its share-audio option.');
+        }
         return displayStream;
     };
 
@@ -544,6 +573,22 @@ export default function BoardMeetingsStudio() {
                     await loadInvitees(userId);
                 }
                 const nextMeetings = await loadMeetings();
+                const joinParam = new URLSearchParams(window.location.search).get('join');
+                if (joinParam && /^[a-zA-Z0-9-]{8,64}$/.test(joinParam)) {
+                    setJoinRoomId(joinParam);
+                }
+                const activeMeeting = joinParam ? undefined : nextMeetings.find(meeting => meeting.status === 'live');
+                if (activeMeeting) {
+                    liveMeetingIdRef.current = activeMeeting.id;
+                    liveStartedAtRef.current = Date.parse(activeMeeting.started_at) || Date.now();
+                    setLiveMeetingId(activeMeeting.id);
+                    setSelectedMeetingId(activeMeeting.id);
+                    setRecordingSource(activeMeeting.call_provider === 'daily'
+                        ? 'cloud'
+                        : activeMeeting.call_provider === 'jitsi'
+                            ? (activeMeeting.recording_provider === 'jitsi' ? 'free-call' : 'call-room')
+                            : 'family-call');
+                }
                 await loadNotesForMeetings(nextMeetings.map(meeting => meeting.id));
                 setDiagnosticSuccess('Load meetings and notes');
 
@@ -678,14 +723,21 @@ export default function BoardMeetingsStudio() {
         [meetings, selectedMeetingId]
     );
 
-    const activeRoomMeetingId = liveMeetingId || (selectedMeeting?.status === 'live' ? selectedMeeting.id : '');
+    const familyRoomId = joinRoomId || (liveMeetingId && recordingSource === 'family-call' ? liveMeetingId : '');
+    const isFamilyHost = Boolean(familyRoomId) && !joinRoomId;
+    const activeRoomMeetingId = familyRoomId ? '' : liveMeetingId || (selectedMeeting?.status === 'live' ? selectedMeeting.id : '');
     const activeRoomName = activeRoomMeetingId ? toMeetingRoomName(activeRoomMeetingId) : '';
-    const dailyRoomUrl = selectedMeeting?.call_provider === 'daily' && selectedMeeting.status === 'live'
+    const dailyRoomUrl = !familyRoomId && selectedMeeting?.call_provider === 'daily' && selectedMeeting.status === 'live'
         ? selectedMeeting.call_url || ''
         : '';
     const dailyMeetingId = dailyRoomUrl ? selectedMeeting?.id || '' : '';
-    const activeRoomUrl = dailyRoomUrl || (activeRoomName ? `https://meet.jit.si/${activeRoomName}` : '');
-    const invitationText = `${liveTitle.trim() || 'Family Board Meeting'}\nJoin the meeting: ${activeRoomUrl}`;
+    const familyJoinUrl = familyRoomId && typeof window !== 'undefined'
+        ? `${window.location.origin}/dashboard/meetings?join=${familyRoomId}`
+        : '';
+    const activeRoomUrl = familyJoinUrl || dailyRoomUrl || (activeRoomName ? `https://${JITSI_DOMAIN}/${activeRoomName}` : '');
+    const invitationText = activeRoomUrl
+        ? `${liveTitle.trim() || 'Family Board Meeting'}\nJoin the meeting: ${activeRoomUrl}`
+        : 'Start a meeting to generate the room invite link.';
 
     useEffect(() => {
         const host = callRoomHostRef.current;
@@ -748,11 +800,23 @@ export default function BoardMeetingsStudio() {
 
         let disposed = false;
         let api: JitsiMeetApi | null = null;
+        const roomParticipants = new Set<string>();
+        const maybeAutoStopRecording = () => {
+            if (
+                jitsiLocalHasLeftRef.current &&
+                jitsiRemoteParticipantsRef.current.size === 0 &&
+                recorderRef.current &&
+                !jitsiAutoStopRequestedRef.current
+            ) {
+                jitsiAutoStopRequestedRef.current = true;
+                autoStopRecordingRef.current();
+            }
+        };
         const createRoom = () => {
             const JitsiMeet = (window as Window & { JitsiMeetExternalAPI?: JitsiMeetConstructor }).JitsiMeetExternalAPI;
             if (disposed || !host.isConnected || !JitsiMeet) return;
 
-            api = new JitsiMeet('meet.jit.si', {
+            api = new JitsiMeet(JITSI_DOMAIN, {
                 roomName: activeRoomName,
                 parentNode: host,
                 width: '100%',
@@ -763,12 +827,78 @@ export default function BoardMeetingsStudio() {
                     startWithVideoMuted: false
                 }
             });
+            jitsiCallRef.current = api;
+            jitsiLocalParticipantIdRef.current = null;
+            jitsiRemoteParticipantsRef.current = roomParticipants;
+            jitsiLocalHasLeftRef.current = false;
+            jitsiAutoStopRequestedRef.current = false;
+            api.addEventListener('videoConferenceJoined', event => {
+                jitsiLocalParticipantIdRef.current = String(event?.id || '');
+                setJitsiJoined(true);
+            });
+            api.addEventListener('videoConferenceLeft', () => {
+                jitsiLocalHasLeftRef.current = true;
+                setJitsiJoined(false);
+                maybeAutoStopRecording();
+            });
+            api.addEventListener('participantJoined', event => {
+                const participantId = String(event?.id || '');
+                if (participantId && participantId !== jitsiLocalParticipantIdRef.current) {
+                    jitsiRemoteParticipantsRef.current.add(participantId);
+                }
+            });
+            api.addEventListener('participantLeft', event => {
+                const participantId = String(event?.id || '');
+                if (participantId && participantId !== jitsiLocalParticipantIdRef.current) {
+                    jitsiRemoteParticipantsRef.current.delete(participantId);
+                }
+                maybeAutoStopRecording();
+            });
+            api.addEventListener('recordingStatusChanged', event => {
+                setJitsiRecordingActive(Boolean(event?.on));
+                if (event?.error) {
+                    setError(`Jibri recording failed: ${String(event.error)}. Confirm Jibri is installed and enabled on your Jitsi server.`);
+                } else if (event?.on) {
+                    setStatusMessage('Jibri recording is active on your Jitsi server. It will finish when the conference ends.');
+                } else if (event?.mode === 'file') {
+                    setStatusMessage('Jibri recording stopped. Waiting for the server recording link.');
+                }
+            });
+            api.addEventListener('recordingLinkAvailable', event => {
+                const recordingUrl = String(event?.link || '');
+                if (!recordingUrl || !/^https:\/\//i.test(recordingUrl)) return;
+                void (async () => {
+                    const { data, error: saveError } = await supabase
+                        .from('board_meetings')
+                        .update({
+                            status: 'recorded',
+                            recording_url: recordingUrl,
+                            recording_provider: 'jitsi',
+                            ended_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('call_room_name', activeRoomName)
+                        .select('*')
+                        .maybeSingle();
+                    if (saveError) {
+                        setError(`Jibri finished, but the recording link could not be saved: ${saveError.message}`);
+                        return;
+                    }
+                    if (data) {
+                        const updatedMeeting = data as BoardMeeting;
+                        setMeetings(prev => prev.map(meeting => meeting.id === updatedMeeting.id ? updatedMeeting : meeting));
+                        setPlaybackUrls(prev => ({ ...prev, [updatedMeeting.id]: recordingUrl }));
+                        setSelectedMeetingId(updatedMeeting.id);
+                        setStatusMessage('Jibri recording saved and ready to replay.');
+                    }
+                })();
+            });
         };
 
         const existingScript = document.querySelector<HTMLScriptElement>('script[data-jitsi-external-api]');
         const script = existingScript || document.createElement('script');
         if (!existingScript) {
-            script.src = 'https://meet.jit.si/external_api.js';
+            script.src = `https://${JITSI_DOMAIN}/external_api.js`;
             script.async = true;
             script.dataset.jitsiExternalApi = 'true';
             script.onload = createRoom;
@@ -783,9 +913,16 @@ export default function BoardMeetingsStudio() {
         return () => {
             disposed = true;
             api?.dispose();
+            if (jitsiCallRef.current === api) jitsiCallRef.current = null;
+            jitsiLocalParticipantIdRef.current = null;
+            roomParticipants.clear();
+            jitsiRemoteParticipantsRef.current = new Set();
+            jitsiLocalHasLeftRef.current = false;
+            setJitsiJoined(false);
+            setJitsiRecordingActive(false);
             host.replaceChildren();
         };
-    }, [activeRoomName, dailyMeetingId, dailyRoomUrl, email, supabase]);
+    }, [activeRoomName, dailyMeetingId, dailyRoomUrl, email, supabase, isLoading]);
 
     const liveMeetingLabel = liveMeetingId
         ? `${liveTitle.trim() || 'Family Board Meeting'} • live`
@@ -795,6 +932,14 @@ export default function BoardMeetingsStudio() {
 
     const currentMeetingId = liveMeetingId || selectedMeeting?.id || meetings[0]?.id || '';
     const currentNotes = currentMeetingId ? notesByMeeting[currentMeetingId] || [] : [];
+    const meetingsWithRecordings = useMemo(
+        () => meetings.filter(meeting => Boolean(meeting.recording_path || meeting.recording_url || meeting.provider_recording_id || playbackUrls[meeting.id])),
+        [meetings, playbackUrls]
+    );
+    const meetingsWithoutRecordings = useMemo(
+        () => meetings.filter(meeting => !meeting.recording_path && !meeting.recording_url && !meeting.provider_recording_id && !playbackUrls[meeting.id]),
+        [meetings, playbackUrls]
+    );
     const selectedPlaybackUrl = selectedMeeting
         ? playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url || null
         : null;
@@ -866,7 +1011,7 @@ export default function BoardMeetingsStudio() {
                 void (async () => {
                     const activeMeetingId = liveMeetingIdRef.current;
                     const shouldFinalizeMeeting = manualStopRequestedRef.current;
-                    const recordedSeconds = Math.max(0, Math.floor((Date.now() - liveStartedAtRef.current) / 1000));
+                    const recordedSeconds = Math.max(0, Math.floor((Date.now() - recorderStartedAtRef.current) / 1000));
                     const finalMimeType = recordedMimeTypeRef.current || recorder.mimeType || 'video/webm';
                     const fileExtension = extensionForMimeType(finalMimeType);
                     const blob = new Blob(chunksRef.current, {
@@ -875,6 +1020,7 @@ export default function BoardMeetingsStudio() {
 
                     chunksRef.current = [];
                     recordedMimeTypeRef.current = null;
+                    recorderStartedAtRef.current = 0;
                     recorderRef.current = null;
                     setLiveStream(null);
 
@@ -991,6 +1137,7 @@ export default function BoardMeetingsStudio() {
 
             try {
                 recorder.start(1000);
+                recorderStartedAtRef.current = Date.now();
                 recorderRef.current = recorder;
             } catch (err: any) {
                 throw new Error(`Could not start the video recorder: ${String(err?.message || 'unsupported media stream')}`);
@@ -1011,6 +1158,27 @@ export default function BoardMeetingsStudio() {
         },
         [isSupabaseMode, meetings, supabase, upsertLocalMeeting]
     );
+
+    const startFamilyRecording = () => {
+        const stream = familyStreamRef.current;
+        const meetingId = liveMeetingIdRef.current;
+        if (!stream || !meetingId || recorderRef.current) return;
+        void ensureUser().then(userId => {
+            if (!userId || recorderRef.current || !liveMeetingIdRef.current) return;
+            try {
+                attachRecorder({ stream, userId, sourceMode: 'family-call', meetingId });
+                setLiveStream(stream);
+            } catch (err: any) {
+                setError(String(err?.message || 'Could not start recording.'));
+            }
+        });
+    };
+    startFamilyRecordingRef.current = startFamilyRecording;
+
+    const handleFamilyStream = useCallback((stream: MediaStream | null) => {
+        familyStreamRef.current = stream;
+        if (stream) startFamilyRecordingRef.current();
+    }, []);
 
     const retrySupabaseMode = async () => {
         setError(null);
@@ -1075,17 +1243,15 @@ export default function BoardMeetingsStudio() {
         }
     };
 
-    const startMeeting = async () => {
+    const startMeeting = async (requestedSource?: RecordingSource) => {
         setError(null);
         setStatusMessage(null);
         let stream: MediaStream | null = null;
-        let sourceMode: RecordingSource = recordingSource;
+        let sourceMode: RecordingSource = requestedSource || recordingSource;
 
         try {
-            const userId = await ensureUser();
-            if (!userId) return;
-
-            sourceMode = recordingSource;
+            sourceMode = requestedSource || recordingSource;
+            if (requestedSource) setRecordingSource(requestedSource);
 
             if (sourceMode === 'cloud' && !isSupabaseMode) {
                 setError('Cloud recording requires Supabase meeting storage. Restore Supabase mode, then start the cloud meeting again.');
@@ -1097,12 +1263,22 @@ export default function BoardMeetingsStudio() {
                 return;
             }
 
-            if (sourceMode === 'call-room' && !navigator.mediaDevices?.getDisplayMedia) {
-                setError('This browser cannot capture a shared call room. Use local recording mode or a modern browser that supports tab/window capture.');
+            if (sourceMode === 'family-call' && !navigator.mediaDevices?.getUserMedia) {
+                setError('This browser cannot access the camera and microphone, which the group call needs.');
                 return;
             }
 
             setIsStarting(true);
+
+            if (sourceMode === 'local') {
+                stream = await getMeetingMediaStream();
+            }
+
+            const userId = await ensureUser();
+            if (!userId) {
+                stream?.getTracks().forEach(track => track.stop());
+                return;
+            }
 
             const nowIso = new Date().toISOString();
             let meeting: BoardMeeting;
@@ -1164,12 +1340,16 @@ export default function BoardMeetingsStudio() {
                 });
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok || !result.roomUrl || !result.roomName) {
-                    await supabase.from('board_meetings').update({
-                        status: 'no_recording',
-                        ended_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    }).eq('id', meeting.id);
-                    throw new Error(String(result?.error || 'Daily cloud recording could not be started.'));
+                    liveMeetingIdRef.current = meeting.id;
+                    liveStartedAtRef.current = Date.now();
+                    manualStopRequestedRef.current = false;
+                    familyStreamRef.current = null;
+                    setRecordingSource('family-call');
+                    setLiveMeetingId(meeting.id);
+                    setSelectedMeetingId(meeting.id);
+                    setMeetings(prev => [meeting, ...prev.filter(item => item.id !== meeting.id)]);
+                    setStatusMessage(`Cloud recording is unavailable (${String(result?.error || 'provider not configured')}), so a family group call with in-app recording was started instead.`);
+                    return;
                 }
 
                 const cloudMeeting: BoardMeeting = {
@@ -1190,6 +1370,26 @@ export default function BoardMeetingsStudio() {
                 return;
             }
 
+            if (sourceMode === 'free-call') {
+                const roomName = toMeetingRoomName(meeting.id);
+                const freeCallMeeting: BoardMeeting = {
+                    ...meeting,
+                    status: 'live',
+                    call_provider: 'jitsi',
+                    call_room_name: roomName,
+                    call_url: `https://${JITSI_DOMAIN}/${roomName}`
+                };
+                liveMeetingIdRef.current = meeting.id;
+                liveStartedAtRef.current = Date.now();
+                manualStopRequestedRef.current = false;
+                setRecordingSource('free-call');
+                setLiveMeetingId(meeting.id);
+                setSelectedMeetingId(meeting.id);
+                setMeetings(prev => [freeCallMeeting, ...prev.filter(item => item.id !== freeCallMeeting.id)]);
+                setStatusMessage('Free group call is ready. The call stays open for your family if you leave. Recording continues after you leave only when Jibri is enabled on the self-hosted Jitsi server.');
+                return;
+            }
+
             liveMeetingIdRef.current = meeting.id;
             liveStartedAtRef.current = Date.now();
             manualStopRequestedRef.current = false;
@@ -1197,15 +1397,21 @@ export default function BoardMeetingsStudio() {
             setSelectedMeetingId(meeting.id);
             setMeetings(prev => [meeting, ...prev.filter(item => item.id !== meeting.id)]);
 
-            stream = sourceMode === 'call-room' ? await getCallRoomMediaStream() : await getMeetingMediaStream();
+            if (sourceMode === 'family-call') {
+                familyStreamRef.current = null;
+                setStatusMessage('Call started. Allow camera and microphone; recording begins automatically. Share the invite link so family can join.');
+                return;
+            }
 
-            setLiveStream(stream);
-            attachRecorder({
-                stream,
-                userId,
-                sourceMode,
-                meetingId: meeting.id
-            });
+            if (stream) {
+                setLiveStream(stream);
+                attachRecorder({
+                    stream,
+                    userId,
+                    sourceMode,
+                    meetingId: meeting.id
+                });
+            }
         } catch (err: any) {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -1225,6 +1431,10 @@ export default function BoardMeetingsStudio() {
         }
 
         setStatusMessage('Saving meeting...');
+
+    autoStopRecordingRef.current = () => {
+        void stopMeeting();
+    };
         setIsStopping(true);
         manualStopRequestedRef.current = true;
 
@@ -1240,6 +1450,16 @@ export default function BoardMeetingsStudio() {
             if (liveMeetingIdRef.current) {
                 const meetingId = liveMeetingIdRef.current;
                 const activeMeeting = meetings.find(meeting => meeting.id === meetingId);
+                if (activeMeeting?.call_provider === 'jitsi' && recordingSource === 'free-call') {
+                    jitsiCallRef.current?.executeCommand('hangup');
+                    liveMeetingIdRef.current = null;
+                    liveStartedAtRef.current = 0;
+                    manualStopRequestedRef.current = false;
+                    setLiveMeetingId(null);
+                    setLiveStream(null);
+                    setStatusMessage('You left the call. The room remains open for family members. A self-hosted Jibri recorder will save when the last participant leaves; upload its MP4/WebM in this app to replay it here.');
+                    return;
+                }
                 if (activeMeeting?.call_provider === 'daily') {
                     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
                     if (sessionError || !session?.access_token) {
@@ -1310,7 +1530,7 @@ export default function BoardMeetingsStudio() {
                     ? 'Live meeting ended. The saved recording is ready for replay.'
                     : 'Meeting ended without a recording. There is no video to replay.');
                 if (!meetingHasRecording) {
-                    setError('No recording was uploaded for this meeting.');
+                    setStatusMessage('Meeting ended without a recording, so there is no video to replay.');
                 }
             }
         } catch (err: any) {
@@ -1322,8 +1542,42 @@ export default function BoardMeetingsStudio() {
         }
     };
 
+    autoStopRecordingRef.current = () => {
+        void stopMeeting();
+    };
+
+    const startJitsiRecording = () => {
+        if (!jitsiCallRef.current || !jitsiJoined) {
+            setError('Join the call first, then start Jibri recording.');
+            return;
+        }
+        setError(null);
+        jitsiCallRef.current.executeCommand('startRecording', { mode: 'file' });
+        setStatusMessage('Requesting a Jibri server recording. This requires Jibri to be enabled on your Jitsi server.');
+    };
+
+    const stopJitsiRecording = () => {
+        if (!jitsiCallRef.current || !jitsiRecordingActive) {
+            setError('There is no active Jibri recording to stop.');
+            return;
+        }
+        setError(null);
+        jitsiCallRef.current.executeCommand('stopRecording', { mode: 'file' });
+        setStatusMessage('Stopping Jibri recording; waiting for the server to finalize the file.');
+    };
+
     const resumeRecording = async () => {
         if (!liveMeetingIdRef.current || recorderRef.current) {
+            return;
+        }
+
+        if (recordingSource === 'family-call') {
+            if (!familyStreamRef.current) {
+                setError('The call is not ready yet. Allow camera/microphone access and wait for the video to appear.');
+                return;
+            }
+            setError(null);
+            startFamilyRecording();
             return;
         }
 
@@ -1415,7 +1669,14 @@ export default function BoardMeetingsStudio() {
                 throw new Error('No saved recording file or link exists for this meeting.');
             }
 
-            setPlaybackUrls(prev => ({ ...prev, [meeting.id]: playbackUrl }));
+            const video = videoRef.current;
+            video?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (video && playbackUrls[meeting.id] === playbackUrl && video.readyState >= 2) {
+                void video.play().catch(() => undefined);
+            } else {
+                playRequestedRef.current = true;
+                setPlaybackUrls(prev => ({ ...prev, [meeting.id]: playbackUrl }));
+            }
         } catch (err: any) {
             const message = String(err?.message || 'Could not load this meeting recording.');
             setPlaybackError(`${message} Try Refresh playback link or Migrate legacy recording.`);
@@ -1831,6 +2092,84 @@ export default function BoardMeetingsStudio() {
         }
     };
 
+    const uploadRecoveredRecording = async (file: File | null) => {
+        if (!file || !selectedMeeting) return;
+        if (file.size === 0 || file.size > 100 * 1024 * 1024) {
+            setError('Choose a non-empty MP4 or WebM video under 100 MB.');
+            return;
+        }
+        if (!file.type.startsWith('video/') && !/\.(mp4|webm)$/i.test(file.name)) {
+            setError('Choose an MP4 or WebM video file.');
+            return;
+        }
+
+        setError(null);
+        setIsUploadingRecording(true);
+        try {
+            if (!isSupabaseMode) {
+                const localUrl = URL.createObjectURL(file);
+                upsertLocalMeeting(selectedMeeting.id, meeting => ({
+                    ...meeting,
+                    status: 'recorded',
+                    recording_url: localUrl,
+                    recording_path: null,
+                    duration_seconds: meeting.duration_seconds,
+                    ended_at: meeting.ended_at || new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                }));
+                setPlaybackUrls(prev => ({ ...prev, [selectedMeeting.id]: localUrl }));
+                setStatusMessage(`Uploaded ${file.name} to this browser. It is not synced to other devices in local mode.`);
+                return;
+            }
+
+            const userId = profileId || (await ensureUser());
+            if (!userId) return;
+            const extension = file.type.toLowerCase().includes('mp4') || /\.mp4$/i.test(file.name) ? 'mp4' : 'webm';
+            const filePath = `${userId}/${selectedMeeting.id}-recovered-${Date.now()}.${extension}`;
+            const { error: uploadError } = await supabase.storage.from('board-meetings').upload(filePath, file, {
+                contentType: file.type || `video/${extension}`,
+                upsert: true
+            });
+            if (uploadError) throw uploadError;
+
+            const { data: publicData } = supabase.storage.from('board-meetings').getPublicUrl(filePath);
+            const recordingUrl = publicData?.publicUrl || null;
+            const { error: updateError } = await supabase.from('board_meetings').update({
+                status: 'recorded',
+                recording_path: filePath,
+                recording_url: recordingUrl,
+                recording_provider: 'supabase',
+                provider_recording_id: null,
+                ended_at: selectedMeeting.ended_at || new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            }).eq('id', selectedMeeting.id);
+            if (updateError) {
+                await supabase.storage.from('board-meetings').remove([filePath]);
+                throw updateError;
+            }
+
+            const updatedMeeting = {
+                ...selectedMeeting,
+                status: 'recorded',
+                recording_path: filePath,
+                recording_url: recordingUrl,
+                recording_provider: 'supabase',
+                provider_recording_id: null,
+                ended_at: selectedMeeting.ended_at || new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+            setMeetings(prev => prev.map(meeting => meeting.id === selectedMeeting.id ? updatedMeeting : meeting));
+            const playbackUrl = await resolvePlaybackUrl(updatedMeeting);
+            if (playbackUrl) setPlaybackUrls(prev => ({ ...prev, [selectedMeeting.id]: playbackUrl }));
+            setPlaybackError(null);
+            setStatusMessage(`${file.name} is saved and ready to replay.`);
+        } catch (err: any) {
+            setError(getSupabaseErrorMessage(err, 'Could not upload this meeting video.'));
+        } finally {
+            setIsUploadingRecording(false);
+        }
+    };
+
     const seekToNote = (seconds: number) => {
         const video = videoRef.current;
         if (!video || liveStream) return;
@@ -1855,10 +2194,10 @@ export default function BoardMeetingsStudio() {
                     <div style={{ display: 'grid', gap: '0.25rem' }}>
                         <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>Board Meetings</div>
                         <h2 style={{ margin: 0, fontSize: 'clamp(1.5rem, 4vw, 2.1rem)' }}>
-                            Live meeting capture and replay
+                            Group calls, recording and replay
                         </h2>
                         <div style={{ opacity: 0.78, maxWidth: 800 }}>
-                            Start a live session, record it, and add timestamped notes while live or later during playback.
+                            Pick a mode, start the call, invite family, then find the saved recording under Saved recordings.
                         </div>
                     </div>
                     <div className="meetings-signin" style={{ display: 'grid', gap: '0.35rem', textAlign: 'right' }}>
@@ -1892,86 +2231,67 @@ export default function BoardMeetingsStudio() {
                 )}
 
                 <div className="meetings-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <div
-                        style={{
-                            display: 'flex',
-                            gap: '0.4rem',
-                            alignItems: 'center',
-                            flexWrap: 'wrap',
-                            marginRight: '0.35rem'
-                        }}
-                    >
-                        <span style={{ opacity: 0.82, fontSize: '0.9rem' }}>Recording:</span>
-                        <button
-                            type="button"
-                            onClick={() => setRecordingSource('cloud')}
-                            disabled={Boolean(liveMeetingId)}
-                            className="soft-button"
-                            style={{
-                                borderColor: recordingSource === 'cloud' ? '#22c55e' : '#334155',
-                                color: recordingSource === 'cloud' ? '#bbf7d0' : '#cbd5e1'
-                            }}
-                        >
-                            Cloud recording (continues if you leave)
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setRecordingSource('local')}
-                            disabled={Boolean(liveMeetingId)}
-                            className="soft-button"
-                            style={{
-                                borderColor: recordingSource === 'local' ? '#22c55e' : '#334155',
-                                color: recordingSource === 'local' ? '#bbf7d0' : '#cbd5e1',
-                                opacity: liveMeetingId && recordingSource !== 'local' ? 0.72 : 1
-                            }}
-                        >
-                            This device only
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setRecordingSource('call-room')}
-                            disabled={Boolean(liveMeetingId)}
-                            className="soft-button"
-                            style={{
-                                borderColor: recordingSource === 'call-room' ? '#22c55e' : '#334155',
-                                color: recordingSource === 'call-room' ? '#bbf7d0' : '#cbd5e1',
-                                opacity: liveMeetingId && recordingSource !== 'call-room' ? 0.72 : 1
-                            }}
-                        >
-                            Call room tab/window
-                        </button>
+                    <div role="radiogroup" aria-label="Call and recording mode" className="meetings-mode-grid">
+                        {RECORDING_MODES.map(mode => {
+                            const selected = recordingSource === mode.value;
+                            return (
+                                <button
+                                    key={mode.value}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => setRecordingSource(mode.value)}
+                                    disabled={Boolean(liveMeetingId)}
+                                    className={`meetings-mode-card${selected ? ' is-selected' : ''}`}
+                                >
+                                    <strong>{mode.label}</strong>
+                                    <span>{mode.description}</span>
+                                </button>
+                            );
+                        })}
                     </div>
-                    <button onClick={startMeeting} disabled={isStarting || isStopping || Boolean(liveMeetingId)} className="soft-button" style={{ borderColor: '#2563eb', color: '#dbeafe' }}>
-                        {isStarting
-                            ? 'Starting...'
-                            : liveMeetingId
-                                ? 'Meeting live'
+                    {liveMeetingId ? (
+                        <span className="meetings-live-badge" role="status">● Live{familyParticipantCount > 0 && recordingSource === 'family-call' ? ` · ${familyParticipantCount} in call` : ''}</span>
+                    ) : (
+                        <button onClick={() => { void startMeeting(); }} disabled={isStarting || isStopping || Boolean(joinRoomId)} className="soft-button" style={{ borderColor: '#2563eb', color: '#dbeafe' }}>
+                            {isStarting
+                                ? 'Starting...'
                                 : recordingSource === 'cloud'
                                     ? 'Start cloud-recorded meeting'
-                                    : recordingSource === 'call-room'
-                                    ? 'Start live call recording'
-                                    : 'Start live meeting'}
-                    </button>
+                                    : recordingSource === 'local'
+                                        ? 'Start solo recording'
+                                        : 'Start group call'}
+                        </button>
+                    )}
                     <button onClick={stopMeeting} disabled={isStarting || isStopping || (!liveMeetingId && !recorderRef.current)} className="soft-button" style={{ borderColor: '#ef4444', color: '#fecaca' }}>
-                        {isStopping ? 'Stopping...' : 'Stop and save'}
+                        {isStopping
+                            ? 'Stopping...'
+                            : liveMeetingId && recordingSource === 'free-call'
+                                ? 'Leave free call'
+                                : liveMeetingId && !recorderRef.current && recordingSource !== 'cloud'
+                                    ? 'End call (no recording)'
+                                    : 'End call and save'}
                     </button>
+                    <a href="#saved-recordings" className="soft-button" style={{ textDecoration: 'none' }}>
+                        Saved recordings ({meetings.filter(item => item.recording_path || item.recording_url).length})
+                    </a>
                 </div>
 
-                {recordingSource === 'cloud' && !liveMeetingId && (
-                    <div style={{ opacity: 0.78, fontSize: '0.9rem' }}>
-                        Recommended: server-side recording keeps running if you leave. Requires Daily cloud recording configuration and a paid recording plan.
-                    </div>
-                )}
-
-                {recordingSource === 'call-room' && !liveMeetingId && (
-                    <div style={{ opacity: 0.78, fontSize: '0.9rem' }}>
-                        Browser fallback only: this recording stops when this page or device closes. Pick the call tab/window and enable share audio.
-                    </div>
-                )}
-
-                {recordingSource === 'local' && !liveMeetingId && (
-                    <div style={{ opacity: 0.78, fontSize: '0.9rem' }}>
-                        This-device recording stops if you close this page or device. Choose Cloud recording to let the call continue without you.
+                {recordingSource === 'free-call' && (
+                    <div style={{ display: 'grid', gap: '0.55rem' }}>
+                        <div style={{ opacity: 0.78, fontSize: '0.9rem' }}>
+                            Free Jitsi call. Other participants remain connected if you leave. Server recording requires Jibri on a self-hosted Jitsi server{JITSI_DOMAIN === 'meet.jit.si' ? '; public Jitsi calls do not provide Jibri recording.' : '.'}
+                        </div>
+                        {liveMeetingId && (
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <button type="button" className="soft-button" onClick={startJitsiRecording} disabled={JITSI_DOMAIN === 'meet.jit.si' || !jitsiJoined || jitsiRecordingActive} style={{ borderColor: '#22c55e', color: '#bbf7d0' }}>
+                                    {jitsiRecordingActive ? 'Jibri recording active' : JITSI_DOMAIN === 'meet.jit.si' ? 'Self-host Jitsi + Jibri to record' : jitsiJoined ? 'Start Jibri recording' : 'Join call to record'}
+                                </button>
+                                <button type="button" className="soft-button" onClick={stopJitsiRecording} disabled={!jitsiRecordingActive} style={{ borderColor: '#ef4444', color: '#fecaca' }}>
+                                    Stop Jibri recording
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1981,7 +2301,7 @@ export default function BoardMeetingsStudio() {
                     </div>
                 )}
 
-                {liveMeetingId && recordingSource !== 'cloud' && !liveStream && !recorderRef.current && (
+                {liveMeetingId && recordingSource !== 'cloud' && recordingSource !== 'free-call' && !liveStream && !recorderRef.current && (
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                         <button
                             type="button"
@@ -1990,23 +2310,27 @@ export default function BoardMeetingsStudio() {
                             className="soft-button"
                             style={{ borderColor: '#f59e0b', color: '#fde68a' }}
                         >
-                            {isResumingCapture ? 'Resuming capture...' : 'Start or resume recording'}
+                            {isResumingCapture ? 'Starting recorder...' : recorderRef.current ? 'Recording' : 'Start recording'}
                         </button>
                         <div style={{ alignSelf: 'center', opacity: 0.8, fontSize: '0.9rem' }}>
-                            The meeting stays live until you manually stop and save.
+                            {recordingSource === 'family-call'
+                                ? 'Recording normally starts automatically once your camera is on. Use this if it did not.'
+                                : 'Starts recording your camera and microphone. Keep this page open.'}
                         </div>
                     </div>
                 )}
 
-                <div className="meetings-fields mobile-stack" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
-                    <label style={{ display: 'grid', gap: '0.35rem' }}>
-                        <span style={{ fontWeight: 600 }}>Meeting title</span>
-                        <input value={liveTitle} onChange={e => setLiveTitle(e.target.value)} placeholder="Family Board Meeting" style={{ padding: '0.85rem 0.95rem' }} />
-                    </label>
-                    <label style={{ display: 'grid', gap: '0.35rem' }}>
-                        <span style={{ fontWeight: 600 }}>Agenda or summary</span>
-                        <input value={liveDescription} onChange={e => setLiveDescription(e.target.value)} placeholder="Items to cover today" style={{ padding: '0.85rem 0.95rem' }} />
-                    </label>
+                <div>
+                    <div className="meetings-fields mobile-stack" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
+                        <label style={{ display: 'grid', gap: '0.35rem' }}>
+                            <span style={{ fontWeight: 600 }}>Meeting title</span>
+                            <input value={liveTitle} onChange={e => setLiveTitle(e.target.value)} disabled={Boolean(liveMeetingId)} placeholder="Family Board Meeting" style={{ padding: '0.85rem 0.95rem' }} />
+                        </label>
+                        <label style={{ display: 'grid', gap: '0.35rem' }}>
+                            <span style={{ fontWeight: 600 }}>Agenda or summary</span>
+                            <input value={liveDescription} onChange={e => setLiveDescription(e.target.value)} disabled={Boolean(liveMeetingId)} placeholder="Items to cover today" style={{ padding: '0.85rem 0.95rem' }} />
+                        </label>
+                    </div>
                 </div>
 
                 {statusMessage && <div style={{ color: '#86efac', lineHeight: 1.5 }}>{statusMessage}</div>}
@@ -2025,20 +2349,20 @@ export default function BoardMeetingsStudio() {
                 </details>
             </section>
 
-            {activeRoomUrl && (
+            {
                 <section className="panel panel-pad meetings-room-panel" style={{ display: 'grid', gap: '0.75rem' }}>
                     <div style={{ display: 'grid', gap: '0.2rem' }}>
                         <div style={{ fontWeight: 700 }}>Family live call room (multi-user)</div>
                         <div style={{ opacity: 0.8, fontSize: '0.92rem' }}>
-                            Share this room link with your family so everyone can join the same live call.
+                            {activeRoomUrl
+                                ? 'Share this room link with your family so everyone can join the same live call.'
+                                : 'Start a meeting to create a room link. Your saved family contacts stay available here.'}
                         </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                        <a href={activeRoomUrl} target="_blank" rel="noreferrer" className="soft-button" style={{ textDecoration: 'none', borderColor: '#22c55e', color: '#bbf7d0' }}>
-                            Open call room
-                        </a>
                         <button
                             type="button"
+                            disabled={!activeRoomUrl}
                             onClick={async () => {
                                 try {
                                     await navigator.clipboard.writeText(activeRoomUrl);
@@ -2053,14 +2377,22 @@ export default function BoardMeetingsStudio() {
                             Copy room link
                         </button>
                     </div>
+                    {!activeRoomUrl && (
+                        <div style={{ opacity: 0.75, fontSize: '0.9rem' }}>
+                            Choose a mode above and press Start to create a room link.
+                        </div>
+                    )}
                     <div className="meetings-invites">
                         <div style={{ fontWeight: 700 }}>Main invitees</div>
                         <div style={{ opacity: 0.78, fontSize: '0.92rem' }}>
-                            Send this meeting link to everyone in one step, or update someone&apos;s contact details below.
+                            {activeRoomUrl
+                                ? 'Send this meeting link to everyone in one step, or update someone&apos;s contact details below.'
+                                : 'Add or edit saved contacts now. Start a meeting to activate invite links.'}
                         </div>
                         <div className="meetings-invite-actions">
                             <button
                                 type="button"
+                                disabled={!activeRoomUrl}
                                 onClick={async () => {
                                     try {
                                         if (navigator.share) {
@@ -2079,6 +2411,7 @@ export default function BoardMeetingsStudio() {
                             </button>
                             <button
                                 type="button"
+                                disabled={!activeRoomUrl}
                                 onClick={async () => {
                                     try {
                                         await navigator.clipboard.writeText(invitationText);
@@ -2095,7 +2428,7 @@ export default function BoardMeetingsStudio() {
                                 type="button"
                                 className="soft-button"
                                 onClick={() => { void sendAllMeetingInvites('email'); }}
-                                disabled={!invitees.some(invitee => invitee.email.trim()) || isSendingInvite !== null}
+                                disabled={!activeRoomUrl || !invitees.some(invitee => invitee.email.trim()) || isSendingInvite !== null}
                             >
                                 {isSendingInvite === 'bulk-email' ? 'Sending emails...' : `Invite all by email (${invitees.filter(invitee => invitee.email.trim()).length})`}
                             </button>
@@ -2103,11 +2436,13 @@ export default function BoardMeetingsStudio() {
                                 type="button"
                                 className="soft-button"
                                 onClick={() => { void sendAllMeetingInvites('sms'); }}
-                                disabled={!invitees.some(invitee => invitee.phone.trim()) || isSendingInvite !== null}
+                                disabled={!activeRoomUrl || !invitees.some(invitee => invitee.phone.trim()) || isSendingInvite !== null}
                             >
                                 {isSendingInvite === 'bulk-sms' ? 'Sending texts...' : `Invite all by text (${invitees.filter(invitee => invitee.phone.trim()).length})`}
                             </button>
                         </div>
+                        <details>
+                            <summary style={{ cursor: 'pointer', padding: '0.35rem 0' }}>Manage contacts ({invitees.length})</summary>
                         {inviteContactsNotice && <div role="status" style={{ color: '#fde68a' }}>{inviteContactsNotice}</div>}
                         <div style={{ display: 'grid', gap: '0.45rem' }}>
                             {invitees.map(invitee => (
@@ -2175,13 +2510,14 @@ export default function BoardMeetingsStudio() {
                             </div>
                         </details>
                         <textarea aria-label="Meeting invitation text" readOnly rows={2} value={invitationText} onFocus={event => event.currentTarget.select()} />
+                        </details>
                     </div>
-                    {liveMeetingId && recordingSource === 'call-room' && (
+                    {liveMeetingId && recordingSource === 'family-call' && liveStream && recorderRef.current?.state === 'recording' && (
                         <div className="meetings-recording-limit" role="status">
-                            Recording runs in this browser. Keep this page open and connected until everyone has left, then choose Stop and save. If this device closes or disconnects, recording stops.
+                            The call is being recorded in this browser. Keep this page open and in view until everyone has left, then choose End call and save.
                         </div>
                     )}
-                    {liveMeetingId && recordingSource === 'call-room' && (
+                    {liveMeetingId && (recordingSource === 'call-room' || recordingSource === 'family-call') && liveStream && recorderRef.current?.state === 'recording' && (
                         <div
                             style={{
                                 display: 'inline-flex',
@@ -2210,13 +2546,43 @@ export default function BoardMeetingsStudio() {
                             Call room recording active
                         </div>
                     )}
-                    <div
-                        ref={callRoomHostRef}
-                        className="meetings-call-room"
-                        aria-label="Family live call room"
-                    />
+                    {familyRoomId ? (
+                        <>
+                            <FamilyCallRoom
+                                key={familyRoomId}
+                                roomId={familyRoomId}
+                                displayName={email || 'Family Member'}
+                                onRecordableStream={isFamilyHost ? handleFamilyStream : undefined}
+                                onParticipantCount={setFamilyParticipantCount}
+                                onError={setError}
+                            />
+                            {joinRoomId && (
+                                <button
+                                    type="button"
+                                    className="soft-button"
+                                    style={{ width: 'fit-content', borderColor: '#ef4444', color: '#fecaca' }}
+                                    onClick={() => {
+                                        setJoinRoomId(null);
+                                        router.replace('/dashboard/meetings');
+                                    }}
+                                >
+                                    Leave call
+                                </button>
+                            )}
+                        </>
+                    ) : activeRoomUrl ? (
+                        <div
+                            ref={callRoomHostRef}
+                            className="meetings-call-room"
+                            aria-label="Family live call room"
+                        />
+                    ) : (
+                        <div className="meetings-call-room" style={{ display: 'grid', placeItems: 'center', color: '#a5b4c8' }}>
+                            Start a free group call or cloud-recorded meeting to open the room.
+                        </div>
+                    )}
                 </section>
-            )}
+            }
 
             <section className="panel panel-pad meetings-video-panel" style={{ display: 'grid', gap: '0.85rem' }}>
                 <div className="meetings-video-head" style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -2224,7 +2590,9 @@ export default function BoardMeetingsStudio() {
                         <div style={{ fontWeight: 700 }}>Video</div>
                         <div style={{ opacity: 0.75, fontSize: '0.92rem' }}>
                             {liveMeetingId
-                                ? 'Live camera preview is active.'
+                                ? liveStream && recorderRef.current?.state === 'recording'
+                                    ? 'Live recording preview is active.'
+                                    : 'Call is open. Start recording to create a replayable video.'
                                 : selectedMeeting && (playbackUrls[selectedMeeting.id] || selectedMeeting.recording_url)
                                     ? 'Playback the selected saved meeting.'
                                     : 'Start a live meeting or select a saved recording below.'}
@@ -2242,6 +2610,12 @@ export default function BoardMeetingsStudio() {
                     muted={Boolean(liveMeetingId)}
                     playsInline
                     preload="metadata"
+                    onCanPlay={() => {
+                        if (playRequestedRef.current) {
+                            playRequestedRef.current = false;
+                            void videoRef.current?.play().catch(() => undefined);
+                        }
+                    }}
                     onError={() => {
                         if (!liveMeetingId && selectedMeeting && selectedPlaybackUrl) {
                             setPlaybackError('This recording did not play. Refresh its link or migrate the legacy recording; some older video formats may need conversion.');
@@ -2262,6 +2636,22 @@ export default function BoardMeetingsStudio() {
 
                 {playbackError && !liveMeetingId && (
                     <div role="alert" style={{ color: '#fca5a5', lineHeight: 1.5 }}>{playbackError}</div>
+                )}
+
+                {selectedMeeting && !selectedHasRecording && !liveMeetingId && (
+                    <label className="soft-button" style={{ width: 'fit-content', borderColor: '#38bdf8', color: '#bfdbfe', cursor: isUploadingRecording ? 'wait' : 'pointer' }}>
+                        {isUploadingRecording ? 'Uploading video...' : 'Upload recovered MP4/WebM'}
+                        <input
+                            type="file"
+                            accept="video/mp4,video/webm,.mp4,.webm"
+                            disabled={isUploadingRecording}
+                            onChange={event => {
+                                void uploadRecoveredRecording(event.currentTarget.files?.[0] || null);
+                                event.currentTarget.value = '';
+                            }}
+                            style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                        />
+                    </label>
                 )}
 
                 {selectedMeeting && selectedHasRecording && !liveMeetingId && (
@@ -2308,6 +2698,8 @@ export default function BoardMeetingsStudio() {
                 )}
 
                 <div className="meetings-notes-compose" style={{ display: 'grid', gap: '0.5rem' }}>
+                    <details>
+                        <summary style={{ cursor: 'pointer', padding: '0.35rem 0' }}>Add timestamp note</summary>
                     <label style={{ display: 'grid', gap: '0.35rem' }}>
                         <span style={{ fontWeight: 600 }}>Add a timestamp note</span>
                         <textarea
@@ -2326,30 +2718,26 @@ export default function BoardMeetingsStudio() {
                             Notes attach to {liveMeetingId ? 'the live meeting' : selectedMeeting?.title || 'the selected meeting'}.
                         </div>
                     </div>
+                    </details>
                 </div>
             </section>
 
-            <section className="panel panel-pad meetings-list" style={{ display: 'grid', gap: '0.85rem' }}>
+            <section id="saved-recordings" className="panel panel-pad meetings-list" style={{ display: 'grid', gap: '0.85rem', scrollMarginTop: '1rem' }}>
                 <div className="meetings-list-head" style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <div>
-                        <div style={{ fontWeight: 700 }}>Saved meetings</div>
-                        <div style={{ opacity: 0.75, fontSize: '0.92rem' }}>Pick a meeting to replay it and review notes.</div>
+                        <div style={{ fontWeight: 700 }}>Saved recordings</div>
+                        <div style={{ opacity: 0.75, fontSize: '0.92rem' }}>Choose a video to replay it or add a timestamp note.</div>
                     </div>
-                    <div style={{ opacity: 0.72, fontSize: '0.9rem' }}>{meetings.length} meetings saved</div>
+                    <div style={{ opacity: 0.72, fontSize: '0.9rem' }}>{meetingsWithRecordings.length} recordings</div>
                 </div>
 
                 <div className="meetings-cards" style={{ display: 'grid', gap: '0.65rem' }}>
-                    {meetings.length === 0 && (
-                        <div style={{ opacity: 0.7 }}>No saved meetings yet.</div>
+                    {meetingsWithRecordings.length === 0 && (
+                        <div style={{ opacity: 0.7 }}>No replayable recordings yet. If you have a recovered MP4/WebM, select its meeting and upload it above.</div>
                     )}
-                    {meetings.map(meeting => {
+                    {meetingsWithRecordings.map(meeting => {
                         const meetingNotes = notesByMeeting[meeting.id] || [];
                         const isSelected = meeting.id === selectedMeetingId;
-                        const hasRecording = Boolean(meeting.recording_path || meeting.recording_url || meeting.provider_recording_id || playbackUrls[meeting.id]);
-                        const statusLabel = hasRecording
-                            ? meeting.status
-                            : meeting.status === 'live' ? 'No recording saved' : 'No recording file';
-
                         return (
                             <div
                                 key={meeting.id}
@@ -2384,16 +2772,14 @@ export default function BoardMeetingsStudio() {
                                     >
                                         {isSelected ? 'Selected' : 'Select meeting'}
                                     </button>
-                                    {hasRecording && (
-                                        <button
-                                            type="button"
-                                            onClick={() => { void playMeetingRecording(meeting); }}
-                                            className="soft-button"
-                                            style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
-                                        >
-                                            Replay
-                                        </button>
-                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => { void playMeetingRecording(meeting); }}
+                                        className="soft-button"
+                                        style={{ borderColor: '#22c55e', color: '#bbf7d0' }}
+                                    >
+                                        Replay
+                                    </button>
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -2414,24 +2800,47 @@ export default function BoardMeetingsStudio() {
                                         </div>
                                     </div>
                                     <div style={{ textAlign: 'right', fontSize: '0.88rem', opacity: 0.78 }}>
-                                        <div>{statusLabel}</div>
+                                        <div>{meeting.status}</div>
                                         <div>{formatDate(meeting.started_at)}</div>
                                         <div>{formatSeconds(meeting.duration_seconds)}</div>
                                     </div>
                                 </div>
                                 <div style={{ marginTop: '0.55rem', fontSize: '0.88rem', opacity: 0.8 }}>
-                                    {hasRecording
-                                        ? 'Recording available for replay.'
-                                        : 'No video file was uploaded. Replay is unavailable.'}{' '}
-                                    {meetingNotes.length} notes.
+                                    Recording available for replay. {meetingNotes.length} notes.
                                 </div>
                             </div>
                         );
                     })}
                 </div>
+                {meetingsWithoutRecordings.length > 0 && (
+                    <details>
+                        <summary style={{ cursor: 'pointer', padding: '0.4rem 0', color: '#a5b4c8' }}>
+                            Meetings without video ({meetingsWithoutRecordings.length})
+                        </summary>
+                        <div style={{ display: 'grid', gap: '0.45rem', marginTop: '0.5rem' }}>
+                            {meetingsWithoutRecordings.map(meeting => (
+                                <div key={meeting.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', padding: '0.55rem 0', borderTop: '1px solid #334155' }}>
+                                    <div style={{ display: 'grid', gap: '0.2rem' }}>
+                                        <strong>{meeting.title}</strong>
+                                        <span style={{ opacity: 0.75, fontSize: '0.9rem' }}>No video file · {formatDate(meeting.started_at)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                        <button type="button" className="soft-button" onClick={() => {
+                                            setSelectedMeetingId(meeting.id);
+                                            setPlaybackError(null);
+                                        }}>Select to upload</button>
+                                        <button type="button" className="soft-button" onClick={() => { void deleteMeeting(meeting); }} style={{ borderColor: '#ef4444', color: '#fecaca' }}>Delete</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </details>
+                )}
             </section>
 
-            <section className="panel panel-pad meetings-notes" style={{ display: 'grid', gap: '0.75rem' }}>
+            <details className="panel panel-pad meetings-notes">
+                <summary style={{ cursor: 'pointer', fontWeight: 700, padding: '0.2rem 0' }}>Notes for current meeting ({currentNotes.length})</summary>
+                <div style={{ display: 'grid', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <div className="meetings-notes-head" style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <div>
                         <div style={{ fontWeight: 700 }}>Notes for current meeting</div>
@@ -2469,7 +2878,8 @@ export default function BoardMeetingsStudio() {
                         </button>
                     ))}
                 </div>
-            </section>
+                </div>
+            </details>
         </div>
     );
 }

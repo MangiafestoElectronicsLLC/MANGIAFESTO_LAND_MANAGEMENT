@@ -57,7 +57,8 @@ export async function POST(request: Request) {
     } catch {
         dailyHost = '';
     }
-    const isJitsiRoom = roomUrl.hostname === 'meet.jit.si' && /^\/family-land-board-[a-zA-Z0-9-]{1,48}$/.test(roomUrl.pathname);
+    const configuredJitsiDomain = String(process.env.NEXT_PUBLIC_JITSI_DOMAIN || 'meet.jit.si').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    const isJitsiRoom = roomUrl.hostname === configuredJitsiDomain && /^\/family-land-board-[a-zA-Z0-9-]{1,48}$/.test(roomUrl.pathname);
     const isDailyRoom = Boolean(dailyHost) && roomUrl.hostname === dailyHost && /^\/flb-[a-f0-9]{32}$/i.test(roomUrl.pathname);
 
     if (roomUrl.protocol !== 'https:' || (!isJitsiRoom && !isDailyRoom)) {
