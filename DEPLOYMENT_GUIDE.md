@@ -65,6 +65,31 @@ Replace `YOUR_USERNAME` with your actual GitHub username.
    |------|-------|
    | `ONX_SHARED_GPX_DIR` | Absolute folder path where ONX GPX files are dropped |
 
+   Optional for sending board meeting invitations directly from the app:
+
+   | Name | Value |
+   |------|-------|
+   | `RESEND_API_KEY` | Resend API key for outbound email |
+   | `RESEND_FROM_EMAIL` | Verified sender address in Resend, for example `Family Land Board <meetings@example.com>` |
+   | `TWILIO_ACCOUNT_SID` | Twilio account SID |
+   | `TWILIO_AUTH_TOKEN` | Twilio auth token |
+   | `TWILIO_PHONE_NUMBER` | SMS-capable Twilio number in international format |
+
+   Add these only in the server/Vercel environment, never as `NEXT_PUBLIC_*` variables. Email requires a verified Resend sender domain; Twilio trial accounts can text only verified recipients.
+
+   Required to keep board-call recordings running after the starter leaves the app, add Daily cloud-recording settings:
+
+   | Name | Value |
+   |------|-------|
+   | `DAILY_API_KEY` | Daily API key with cloud recording enabled |
+   | `DAILY_DOMAIN` | Your Daily room domain, such as `family.daily.co` |
+   | `DAILY_WEBHOOK_SECRET` | Base64 HMAC secret configured on the Daily webhook |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key for the signed Daily webhook only |
+
+   Cloud recording is a paid Daily feature. Run `supabase/board_meetings_cloud_recording.sql` in Supabase SQL Editor. Then create a Daily webhook pointing to `https://YOUR_SITE/api/board-meetings/daily-webhook` for `meeting.ended`, `recording.ready-to-download`, and `recording.error`; set the webhook HMAC secret to `DAILY_WEBHOOK_SECRET`. Keep the service-role key server-only; never prefix it with `NEXT_PUBLIC_`.
+
+   Run `supabase/board_meeting_invitees.sql` in Supabase SQL Editor to sync the main invite list across family devices. The page seeds Dad, Sam, and Jeff when the shared table is empty; without this table, contact edits stay in the current browser only.
+
    *Find these in Supabase: Project Settings → API*
 
 3. Click **Deploy**

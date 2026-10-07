@@ -20,6 +20,7 @@ const REQUIRED_TABLES = [
     'ticket_history',
     'board_meetings',
     'board_meeting_notes',
+    'board_meeting_invitees',
     'property_maps',
     'property_map_features',
     'property_map_access_requests',
@@ -251,7 +252,7 @@ export default function SystemCheckPanel() {
                     <div>1. Open Supabase SQL Editor for your active project.</div>
                     <div>2. Run SQL from SUPABASE_SETUP.md.</div>
                     <div>3. Run SQL from supabase/profiles_directory_policy.sql and supabase/ticket_numbers.sql.</div>
-                    <div>4. Run SQL from supabase/board_meetings.sql and supabase/property_maps.sql.</div>
+                    <div>4. Run SQL from supabase/board_meetings.sql, supabase/board_meeting_invitees.sql, supabase/board_meetings_cloud_recording.sql, and supabase/property_maps.sql.</div>
                     <div>5. Run SQL from supabase/storage_ticket_images.sql, supabase/storage_board_meetings.sql, and supabase/storage_property_maps.sql.</div>
                     <div>6. Back here, click Run check again.</div>
                 </div>

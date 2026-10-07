@@ -294,6 +294,8 @@ CREATE POLICY "Authenticated users can delete property map features"
   - `supabase/profiles_directory_policy.sql`
   - `supabase/ticket_numbers.sql`
   - `supabase/board_meetings.sql`
+  - `supabase/board_meeting_invitees.sql`
+  - `supabase/board_meetings_cloud_recording.sql`
   - `supabase/property_maps.sql`
   - `supabase/storage_ticket_images.sql`
   - `supabase/storage_board_meetings.sql`
