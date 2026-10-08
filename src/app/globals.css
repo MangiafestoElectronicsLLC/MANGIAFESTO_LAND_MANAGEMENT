@@ -162,8 +162,15 @@ canvas {
 .app-nav {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.5rem;
+    justify-content: flex-start;
+    gap: 0.4rem;
+    width: 100%;
+}
+
+.app-nav a {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
 }
 
 .app-nav a,
@@ -181,6 +188,13 @@ canvas {
     font-weight: 600;
     border-radius: 999px;
     cursor: pointer;
+}
+
+.app-nav a.active {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    border-color: #93c5fd;
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
 }
 
 .app-nav a:hover,
@@ -653,16 +667,35 @@ canvas {
     }
 
     .app-brand-row {
-        align-items: flex-start;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    .app-brand-row img {
+        width: 96px;
+        height: auto;
+    }
+
+    .app-brand p {
+        font-size: 0.8rem;
     }
 
     .app-nav {
-        width: 100%;
-        justify-content: flex-start;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 0.25rem;
     }
 
-    .app-nav a,
-    .app-nav button,
+    .app-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .app-nav a {
+        flex: 0 0 auto;
+    }
+
     .soft-button {
         width: 100%;
     }

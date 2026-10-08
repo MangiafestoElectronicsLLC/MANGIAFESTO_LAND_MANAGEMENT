@@ -171,15 +171,6 @@ export default function RoleDashboardPage() {
                 </div>
 
                 <div className="toolbar">
-                    <Link href="/dashboard" className="chip-link">
-                        Main Dashboard
-                    </Link>
-                    <Link href="/dashboard/roles" className="chip-link">
-                        Role Directory
-                    </Link>
-                    <Link href="/dashboard/system" className="chip-link">
-                        System Check
-                    </Link>
                     <button onClick={handleSignOut} className="button-danger">
                         Sign out
                     </button>

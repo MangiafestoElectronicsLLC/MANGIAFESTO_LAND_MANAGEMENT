@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 
 type CamStatus = 'active' | 'offline' | 'maintenance';
 
@@ -184,15 +183,6 @@ export default function TrailCamsPage() {
     return (
         <div className="trail-cams-page" style={{ display: 'grid', gap: '1rem' }}>
             <div className="trail-cams-top-links" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link href="/dashboard" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Main Dashboard
-                </Link>
-                <Link href="/dashboard/property-map" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Property Map
-                </Link>
-                <Link href="/dashboard/system" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    System Check
-                </Link>
                 <a
                     href={DEFAULT_PORTAL_URL}
                     target="_blank"

@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 
 type ActivityType = 'hunting' | 'fishing';
 
@@ -168,18 +167,6 @@ export default function CalendarPage() {
 
     return (
         <div className="page-stack">
-            <div className="toolbar">
-                <Link href="/dashboard" className="chip-link">
-                    Main Dashboard
-                </Link>
-                <Link href="/dashboard/tickets" className="chip-link">
-                    Tickets
-                </Link>
-                <Link href="/dashboard/meetings" className="chip-link">
-                    Board Meetings
-                </Link>
-            </div>
-
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.9rem' }}>
                 <div style={{ display: 'grid', gap: '0.3rem' }}>
                     <div style={{ opacity: 0.85, fontSize: '0.85rem' }}>Brockport Hunting / Fishing Calendar</div>

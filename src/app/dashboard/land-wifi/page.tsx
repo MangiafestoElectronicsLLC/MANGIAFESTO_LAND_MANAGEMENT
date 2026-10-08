@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
@@ -275,18 +274,6 @@ export default function LandWifiPage() {
 
     return (
         <div className="land-wifi-page" style={{ display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link href="/dashboard" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Main Dashboard
-                </Link>
-                <Link href="/dashboard/property-map" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Property Map
-                </Link>
-                <Link href="/dashboard/system" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    System Check
-                </Link>
-            </div>
-
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.75rem' }}>
                 <div style={{ display: 'grid', gap: '0.25rem' }}>
                     <div style={{ opacity: 0.8, fontSize: '0.85rem' }}>Connectivity</div>

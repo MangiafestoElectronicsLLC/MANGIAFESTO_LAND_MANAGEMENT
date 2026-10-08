@@ -3,7 +3,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import { getSupabaseErrorMessage, isMissingTableSetupError } from '@/lib/supabaseErrors';
@@ -1072,13 +1071,6 @@ export default function PropertyMapWorkspace() {
 
     return (
         <div className={styles.pageStack}>
-            <div className={styles.breadcrumbRow}>
-                <Link href="/dashboard" className="chip-link">Main Dashboard</Link>
-                <Link href="/dashboard/tickets" className="chip-link">Tickets</Link>
-                <Link href="/dashboard/treestands" className="chip-link">Treestands / Range</Link>
-                <Link href="/dashboard/system" className="chip-link">System Check</Link>
-            </div>
-
             <section className={`panel ${styles.hero}`}>
                 <div className={styles.heroText}>
                     <div className="section-eyebrow">Property Planner</div>

@@ -20,15 +20,17 @@ const nextConfig = {
             }
         ]
     },
-    webpack(config) {
+    webpack(config, { isServer }) {
         // @meshtastic/js@2.6.0-0 ships a broken "exports" map pointing at its
         // uncompiled .ts source; alias it to the real compiled dist/index.js.
         config.resolve.alias['@meshtastic/js'] = path.resolve(__dirname, 'node_modules/@meshtastic/js/dist/index.js');
+        if (isServer) config.externals.push('serialport');
         return config;
     },
     async headers() {
         const isDev = process.env.NODE_ENV !== 'production';
         const jitsiHost = String(process.env.NEXT_PUBLIC_JITSI_DOMAIN || 'meet.jit.si').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+        const nodeConnectSrc = isDev || process.env.MESH_ALLOW_HTTP_NODES === '1' ? ' http:' : '';
         const scriptSrc = isDev
             ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://${jitsiHost} https://*.daily.co https://unpkg.com`
             : `script-src 'self' 'unsafe-inline' https://${jitsiHost} https://*.daily.co https://unpkg.com`;
@@ -56,7 +58,7 @@ const nextConfig = {
                     {
                         key: 'Content-Security-Policy',
                         value:
-                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline' https://*.daily.co; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net https://*.daily.co https://*.amazonaws.com; connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net wss://*.supabase.co wss://*.supabase.in wss://*.supabase.com wss://*.supabase.net https://*.daily.co wss://*.daily.co; frame-src 'self' https://me-cam.replit.app https://${jitsiHost} https://*.daily.co; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
+                            `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline' https://*.daily.co; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net https://*.daily.co https://*.amazonaws.com; connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.supabase.com https://*.supabase.net wss://*.supabase.co wss://*.supabase.in wss://*.supabase.com wss://*.supabase.net https://*.daily.co wss://*.daily.co${nodeConnectSrc}; frame-src 'self' https://me-cam.replit.app https://${jitsiHost} https://*.daily.co; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`
                     }
                 ]
             }

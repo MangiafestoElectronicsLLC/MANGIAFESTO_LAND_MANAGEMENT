@@ -1,8 +1,8 @@
 import './globals.css';
 import type { ReactNode } from 'react';
 import type { Metadata, Viewport } from 'next';
-import Link from 'next/link';
 import Image from 'next/image';
+import PrimaryNav from '@/components/PrimaryNav';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://mangiafesto-land-management.vercel.app';
 
@@ -56,19 +56,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                                 <p>Tickets, roles, meetings, and notes in one place.</p>
                             </div>
                         </div>
-                        <nav className="app-nav" aria-label="Primary">
-                            <Link href="/dashboard">Dashboard</Link>
-                            <Link href="/dashboard/tickets">Tickets</Link>
-                            <Link href="/dashboard/trail-cams">Trail Cams</Link>
-                            <Link href="/dashboard/land-wifi">Land Wifi</Link>
-                            <Link href="/dashboard/satcom">SatCom / Off-Grid Comms</Link>
-                            <Link href="/dashboard/property-map">Property Map</Link>
-                            <Link href="/dashboard/treestands">Treestands / Range</Link>
-                            <Link href="/dashboard/calendar">Hunting / Fishing Calendar</Link>
-                            <Link href="/dashboard/roles">Roles</Link>
-                            <Link href="/dashboard/meetings">Board Meetings</Link>
-                            <Link href="/dashboard/system">System Check</Link>
-                        </nav>
+                        <PrimaryNav />
                     </header>
                     <main>{children}</main>
                 </div>

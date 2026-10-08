@@ -11,7 +11,7 @@ import {
     saveMessage
 } from '@/lib/meshMessageStore';
 import { type LiveConnectionStatus, type LiveIncomingMessage, type MeshtasticConnection } from '@/lib/useMeshtasticConnection';
-import { createQuickMessage, loadQuickMessages, saveQuickMessages, type QuickMessage } from '@/lib/quickMessages';
+import { createQuickMessage, loadQuickMessages, rememberRemovedDefault, saveQuickMessages, type QuickMessage } from '@/lib/quickMessages';
 import { batteryHealth, BATTERY_HEALTH_COLOR } from '@/lib/meshDeviceRegistry';
 
 type MessageConsoleProps = {
@@ -41,6 +41,12 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
     const [error, setError] = useState<string | null>(null);
     const [status, setStatus] = useState<string | null>(null);
     const seenIds = useRef<Set<string>>(new Set());
+    const chatScrollRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const el = chatScrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+    }, [messages]);
 
     const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
     const [newQuickLabel, setNewQuickLabel] = useState('');
@@ -257,6 +263,7 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
         const next = quickMessages.filter(q => q.id !== id);
         setQuickMessages(next);
         saveQuickMessages(next);
+        rememberRemovedDefault(id);
     };
 
     return (
@@ -275,7 +282,7 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
                         fontSize: '0.78rem'
                     }}
                 >
-                    {online ? 'Connected' : 'Offline (queuing locally)'}
+                    {online ? 'Internet online' : 'Offline (queuing locally)'}
                 </span>
             </div>
 
@@ -303,27 +310,29 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
                     <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
                         {live.status === 'connected'
                             ? 'Messages send and receive for real over your paired Meshtastic node.'
-                            : 'Tap connect and pick the node you already paired in the Meshtastic app.'}
+                            : 'Connect your node by USB or Bluetooth above to send over the mesh.'}
                     </span>
                 </div>
-                {live.status === 'connected' ? (
+                {live.status === 'connected' || live.status === 'connecting' ? (
                     <button className="soft-button" onClick={live.disconnect}>
-                        Disconnect
+                        {live.status === 'connected' ? 'Disconnect' : 'Cancel'}
                     </button>
                 ) : (
                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                        <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
-                            {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node (Bluetooth)'}
+                        <button className="soft-button" onClick={() => void live.connectBridge()}>
+                            Connect via USB (any browser)
                         </button>
-                        {live.status === 'error' && (
-                            <button
-                                className="soft-button"
-                                onClick={() => void live.connectBluetooth(undefined, { forcePicker: true })}
-                                title="Open the Bluetooth device picker instead of auto-reconnecting"
-                            >
-                                Choose device...
-                            </button>
-                        )}
+                        <button
+                            className="soft-button"
+                            onClick={() =>
+                                void live.connectBluetooth(undefined, {
+                                    forcePicker: true,
+                                    deviceId: window.localStorage.getItem('family-land-satcom-device-id') ?? '9148'
+                                })
+                            }
+                        >
+                            Connect via Bluetooth
+                        </button>
                     </div>
                 )}
             </div>
@@ -391,68 +400,90 @@ export default function MessageConsole({ senderName, live, registerIncomingHandl
             </div>
 
             <div
+                ref={chatScrollRef}
                 style={{
                     display: 'grid',
-                    gap: '0.4rem',
-                    maxHeight: 340,
+                    gap: '0.45rem',
+                    alignContent: 'start',
+                    height: live.status === 'connected' ? 420 : 300,
                     overflowY: 'auto',
                     border: '1px solid #334155',
-                    borderRadius: 10,
-                    padding: '0.6rem'
+                    borderRadius: 14,
+                    padding: '0.75rem',
+                    background: 'rgba(2,6,23,0.45)'
                 }}
             >
                 {messages.length === 0 ? (
-                    <div style={{ opacity: 0.7 }}>No messages yet. Send the first broadcast below.</div>
+                    <div style={{ opacity: 0.7, textAlign: 'center', padding: '1rem' }}>
+                        {live.status === 'connected'
+                            ? 'Connected. Say hi to the family or tap a quick message below.'
+                            : 'No messages yet. Connect your node, then send the first message.'}
+                    </div>
                 ) : (
-                    messages.map(message => (
-                        <div
-                            key={message.id}
-                            style={{
-                                border: message.emergency ? '1px solid #7f1d1d' : '1px solid #334155',
-                                background: message.emergency ? 'rgba(127,29,29,0.18)' : 'rgba(15,23,42,0.6)',
-                                borderRadius: 8,
-                                padding: '0.45rem 0.6rem',
-                                fontSize: '0.86rem'
-                            }}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem', opacity: 0.75, fontSize: '0.78rem' }}>
-                                <span>
-                                    {message.emergency ? 'EMERGENCY · ' : ''}
-                                    {message.sender}
-                                </span>
-                                <span>{new Date(message.created_at).toLocaleTimeString()}</span>
+                    messages.map(message => {
+                        const mine = message.direction === 'outgoing';
+                        return (
+                            <div
+                                key={message.id}
+                                style={{
+                                    justifySelf: mine ? 'end' : 'start',
+                                    maxWidth: '82%',
+                                    border: message.emergency ? '1px solid #7f1d1d' : '1px solid transparent',
+                                    background: message.emergency
+                                        ? 'rgba(127,29,29,0.3)'
+                                        : mine
+                                          ? 'rgba(22,101,52,0.55)'
+                                          : 'rgba(30,41,59,0.9)',
+                                    borderRadius: mine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                                    padding: '0.45rem 0.7rem',
+                                    fontSize: '0.9rem',
+                                    wordBreak: 'break-word'
+                                }}
+                            >
+                                {!mine && (
+                                    <div style={{ fontWeight: 700, fontSize: '0.76rem', opacity: 0.85 }}>
+                                        {message.emergency ? '⚠ ' : ''}
+                                        {message.sender}
+                                    </div>
+                                )}
+                                <div>{message.text}</div>
+                                <div style={{ opacity: 0.6, fontSize: '0.7rem', textAlign: 'right' }}>
+                                    {new Date(message.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                                    {mine && (message.synced ? ' · ✓ sent' : ' · ⏳ queued')}
+                                </div>
                             </div>
-                            <div>{message.text}</div>
-                            <div style={{ opacity: 0.65, fontSize: '0.76rem' }}>
-                                {message.synced ? `Relayed by ${message.relayed_by || 'mesh'}` : 'Pending — not synced yet'}
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
             </div>
 
             {error && <div style={{ color: '#fecaca', fontSize: '0.85rem' }}>{error}</div>}
             {status && <div style={{ color: '#bbf7d0', fontSize: '0.85rem' }}>{status}</div>}
 
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
                 <textarea
                     value={draft}
                     onChange={e => setDraft(e.target.value)}
-                    placeholder="Type a message to broadcast to the mesh..."
+                    onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey && !sending) {
+                            e.preventDefault();
+                            void sendMessage();
+                        }
+                    }}
+                    placeholder="Message the family... (Enter to send)"
                     maxLength={200}
-                    rows={3}
-                    style={{ width: '100%', resize: 'vertical', borderRadius: 8, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.5rem' }}
+                    rows={2}
+                    style={{ flex: 1, resize: 'none', borderRadius: 18, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.55rem 0.8rem' }}
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                        <input type="checkbox" checked={emergency} onChange={e => setEmergency(e.target.checked)} />
-                        Mark as emergency broadcast
-                    </label>
-                    <button className="soft-button" onClick={() => void sendMessage()} disabled={sending}>
-                        {sending ? 'Sending...' : 'Send to mesh'}
-                    </button>
-                </div>
+                <button className="soft-button" onClick={() => void sendMessage()} disabled={sending || !draft.trim()}>
+                    {sending ? '...' : 'Send ➤'}
+                </button>
             </div>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', opacity: 0.85 }}>
+                <input type="checkbox" checked={emergency} onChange={e => setEmergency(e.target.checked)} />
+                Mark as emergency
+                <span style={{ marginLeft: 'auto', opacity: 0.6 }}>{draft.length}/200</span>
+            </label>
         </section>
     );
 }

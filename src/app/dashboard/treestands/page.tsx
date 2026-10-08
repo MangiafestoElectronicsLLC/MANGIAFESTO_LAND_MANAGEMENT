@@ -490,21 +490,6 @@ export default function TreestandsPage() {
 
     return (
         <div style={{ display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link href="/dashboard" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Main Dashboard
-                </Link>
-                <Link href="/dashboard/property-map" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Property Map
-                </Link>
-                <Link href="/dashboard/treestands" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    Treestands / Range
-                </Link>
-                <Link href="/dashboard/system" style={{ padding: '0.35rem 0.65rem', borderRadius: 6, border: '1px solid #334155', color: '#cbd5e1', textDecoration: 'none' }}>
-                    System Check
-                </Link>
-            </div>
-
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.85rem' }}>
                 <div style={{ display: 'grid', gap: '0.25rem' }}>
                     <div style={{ fontSize: '0.84rem', opacity: 0.82 }}>Family Access Board</div>

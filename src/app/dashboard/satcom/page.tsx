@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabaseClient';
 import MeshOverview from '@/components/satcom/MeshOverview';
@@ -9,6 +8,7 @@ import NodeList from '@/components/satcom/NodeList';
 import MessageConsole from '@/components/satcom/MessageConsole';
 import DeviceOnboarding from '@/components/satcom/DeviceOnboarding';
 import HowToUse from '@/components/satcom/HowToUse';
+import HeltecGuide from '@/components/satcom/HeltecGuide';
 import EmergencyGuide from '@/components/satcom/EmergencyGuide';
 import type { MeshMetrics, MeshNode } from '@/lib/meshTypes';
 import { useMeshtasticConnection, type LiveIncomingMessage, type MeshtasticConnection } from '@/lib/useMeshtasticConnection';
@@ -21,12 +21,32 @@ const STATUS_POLL_MS = 15000;
 function ConnectionHero({ live }: { live: MeshtasticConnection }) {
     const connected = live.status === 'connected';
     const health = batteryHealth(live.ownBattery?.pct ?? null);
+    const [deviceId, setDeviceId] = useState('9148');
+    const [wifiAddress, setWifiAddress] = useState('');
+    const [caps, setCaps] = useState({ serial: false, bluetooth: false });
+
+    useEffect(() => {
+        const saved = window.localStorage.getItem('family-land-satcom-device-id');
+        if (saved !== null) setDeviceId(saved);
+        setWifiAddress(window.localStorage.getItem('family-land-satcom-wifi-address') ?? '');
+        setCaps({ serial: 'serial' in navigator, bluetooth: 'bluetooth' in navigator });
+    }, []);
+
+    const updateWifiAddress = (value: string) => {
+        setWifiAddress(value);
+        window.localStorage.setItem('family-land-satcom-wifi-address', value);
+    };
+
+    const updateDeviceId = (value: string) => {
+        setDeviceId(value);
+        window.localStorage.setItem('family-land-satcom-device-id', value);
+    };
 
     const statusText: Record<typeof live.status, string> = {
         disconnected: 'Not connected',
         connecting: 'Connecting...',
         connected: `Connected: ${live.deviceName || 'Your node'}`,
-        unsupported: 'Bluetooth not supported on this browser',
+        unsupported: 'Not supported here: try WiFi/VPN below',
         error: 'Connection error'
     };
 
@@ -71,18 +91,66 @@ function ConnectionHero({ live }: { live: MeshtasticConnection }) {
                 <span style={{ opacity: 0.75, fontSize: '0.85rem' }}>
                     {connected
                         ? 'Send messages and see live mesh status below.'
-                        : 'Tap connect and pick the node you already paired in the Meshtastic app.'}
+                        : 'Plug the node in by USB and tap Connect via USB, or use Bluetooth if it is already paired.'}
                 </span>
                 {live.error && <span style={{ color: '#fecaca', fontSize: '0.82rem' }}>{live.error}</span>}
             </div>
-            {connected ? (
+            {connected || live.status === 'connecting' ? (
                 <button className="soft-button" onClick={live.disconnect}>
-                    Disconnect
+                    {connected ? 'Disconnect' : 'Cancel'}
                 </button>
             ) : (
-                <button className="soft-button" onClick={() => void live.connectBluetooth()} disabled={live.status === 'connecting'}>
-                    {live.status === 'connecting' ? 'Connecting...' : 'Connect My Node'}
-                </button>
+                <div style={{ display: 'grid', gap: '0.4rem', justifyItems: 'end' }}>
+                    <input
+                        value={deviceId}
+                        onChange={e => updateDeviceId(e.target.value)}
+                        placeholder="Device ID (e.g. 9148)"
+                        inputMode="text"
+                        maxLength={16}
+                        aria-label="Meshtastic device ID"
+                        title="The ID in your node's Bluetooth name, like Meshtastic_9148"
+                        style={{ borderRadius: 8, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.4rem 0.55rem', width: 170 }}
+                    />
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button className="soft-button" onClick={() => void live.connectBridge()} title="Works in any browser, including the VS Code preview. The node must be plugged into the computer running this app.">
+                            Connect via USB (any browser)
+                        </button>
+                        {caps.serial && (
+                            <button className="soft-button" onClick={() => void live.connectUsb()} title="Direct Web Serial from this browser">
+                                USB (browser direct)
+                            </button>
+                        )}
+                        <button
+                            className="soft-button"
+                            onClick={() => void live.connectBluetooth(undefined, { forcePicker: true, deviceId })}
+                        >
+                            Connect via Bluetooth
+                        </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <input
+                            value={wifiAddress}
+                            onChange={e => updateWifiAddress(e.target.value)}
+                            placeholder="Optional: node IP (leave blank to auto-find)"
+                            aria-label="Node WiFi or VPN address (optional)"
+                            style={{ borderRadius: 8, border: '1px solid #334155', background: 'rgba(2,6,23,0.6)', color: 'inherit', padding: '0.4rem 0.55rem', width: 260 }}
+                        />
+                        <button
+                            className="soft-button"
+                            title="Finds your node on WiFi or VPN automatically. Only type an address if auto-find fails."
+                            onClick={async () => {
+                                const used = await live.connectWifi(wifiAddress);
+                                if (used && !wifiAddress.trim()) updateWifiAddress(used);
+                            }}
+                        >
+                            Auto-connect (WiFi / VPN)
+                        </button>
+                    </div>
+                    <div style={{ fontSize: '0.74rem', opacity: 0.65, maxWidth: 420, textAlign: 'right' }}>
+                        {caps.serial ? 'USB ✔ ' : 'USB direct ✖ '}·{' '}
+                        {caps.bluetooth ? 'Bluetooth ✔ ' : 'Bluetooth ✖ (Chrome/Edge/Android) '}· WiFi/VPN ✔ works in any browser
+                    </div>
+                </div>
             )}
         </section>
     );
@@ -188,21 +256,6 @@ export default function SatcomPage() {
 
     return (
         <div className="page-stack">
-            <div className="toolbar">
-                <Link href="/dashboard" className="chip-link">
-                    Main Dashboard
-                </Link>
-                <Link href="/dashboard/land-wifi" className="chip-link">
-                    Land Wifi
-                </Link>
-                <Link href="/dashboard/property-map" className="chip-link">
-                    Property Map
-                </Link>
-                <Link href="/dashboard/system" className="chip-link">
-                    System Check
-                </Link>
-            </div>
-
             <section className="panel panel-pad" style={{ display: 'grid', gap: '0.35rem' }}>
                 <div style={{ opacity: 0.8, fontSize: '0.85rem' }}>Off-Grid Communications</div>
                 <h1 style={{ margin: 0 }}>SatCom / Off-Grid Comms</h1>
@@ -216,6 +269,7 @@ export default function SatcomPage() {
             <div style={{ display: 'grid', gap: '1rem' }}>
                 <MessageConsole senderName={senderName} live={live} registerIncomingHandler={registerIncomingHandler} />
                 <DeviceOnboarding live={live} ownerName={senderName} />
+                <HeltecGuide />
                 <EmergencyGuide />
 
                 <details className="panel panel-pad">
