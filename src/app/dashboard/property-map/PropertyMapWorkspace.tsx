@@ -217,6 +217,7 @@ export default function PropertyMapWorkspace() {
     const syncInFlightRef = useRef(false);
     const dirtyRef = useRef(false);
     const snapshotRef = useRef(snapshot);
+    const syncAppliedSnapshotRef = useRef<PropertyMapSnapshot | null>(null);
     const profileIdRef = useRef<string | null>(profileId);
     snapshotRef.current = snapshot;
     profileIdRef.current = profileId;
@@ -236,6 +237,7 @@ export default function PropertyMapWorkspace() {
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
             enqueueSnapshotSync(currentSnapshot.mapId || OFFLINE_MAP_ID, currentSnapshot);
             setSyncState('offline');
+            dirtyRef.current = false;
             return;
         }
 
@@ -253,29 +255,53 @@ export default function PropertyMapWorkspace() {
                 ...currentSnapshot,
                 mapId: activeMapId
             });
-            setSnapshot(synced);
-            saveCachedSnapshot(synced);
-            dirtyRef.current = false;
+            if (snapshotRef.current === currentSnapshot) {
+                syncAppliedSnapshotRef.current = synced;
+                setSnapshot(synced);
+                saveCachedSnapshot(synced);
+                dirtyRef.current = false;
+            } else {
+                dirtyRef.current = true;
+            }
+            setError(null);
             setSyncState('idle');
             setStatus(`Synced to family shared map at ${new Date().toLocaleTimeString()}.`);
-        } catch {
-            enqueueSnapshotSync(currentSnapshot.mapId || OFFLINE_MAP_ID, currentSnapshot);
+        } catch (err: any) {
+            const latestSnapshot = snapshotRef.current;
+            enqueueSnapshotSync(latestSnapshot.mapId || OFFLINE_MAP_ID, latestSnapshot);
+            saveCachedSnapshot(latestSnapshot);
+            dirtyRef.current = false;
             setSyncState('queued');
+            setStatus('Map changes were saved locally and queued for sync.');
+            setError(getSupabaseErrorMessage(err, 'Could not sync map changes right now; they are saved locally and queued for retry.'));
         } finally {
             syncInFlightRef.current = false;
+            if (dirtyRef.current) {
+                window.setTimeout(() => void runSync(), 0);
+            }
         }
     }, [supabase]);
 
     // Explicit save actions (e.g. Save Boundary) must not depend on the passive debounce timer below,
     // which gets cancelled (and the sync silently dropped) if the user navigates away within the delay.
     const persistSnapshotNow = useCallback(
-        async (nextSnapshot: PropertyMapSnapshot) => {
+        async (nextSnapshot: PropertyMapSnapshot, savedItem: 'Pinpoint' | 'Treestand' | 'Boundary') => {
             const currentProfileId = profileIdRef.current;
             if (!currentProfileId) return;
 
+            snapshotRef.current = nextSnapshot;
+            if (syncInFlightRef.current) {
+                dirtyRef.current = true;
+                setStatus(`${savedItem} saved locally. Sync in progress; the latest changes will sync next.`);
+                return;
+            }
+
             if (typeof navigator !== 'undefined' && !navigator.onLine) {
                 enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+                saveCachedSnapshot(nextSnapshot);
                 setSyncState('offline');
+                setStatus(`${savedItem} saved on this device. It will sync when you are back online.`);
+                dirtyRef.current = false;
                 return;
             }
 
@@ -293,21 +319,33 @@ export default function PropertyMapWorkspace() {
                     ...nextSnapshot,
                     mapId: activeMapId
                 });
-                setSnapshot(synced);
-                saveCachedSnapshot(synced);
-                dirtyRef.current = false;
+                if (snapshotRef.current === nextSnapshot) {
+                    syncAppliedSnapshotRef.current = synced;
+                    setSnapshot(synced);
+                    saveCachedSnapshot(synced);
+                    dirtyRef.current = false;
+                } else {
+                    dirtyRef.current = true;
+                }
+                setError(null);
                 setSyncState('idle');
-                setStatus(`Boundary saved and synced to family shared map at ${new Date().toLocaleTimeString()}.`);
+                setStatus(`${savedItem} saved and synced to family shared map at ${new Date().toLocaleTimeString()}.`);
             } catch (err: any) {
-                enqueueSnapshotSync(nextSnapshot.mapId || OFFLINE_MAP_ID, nextSnapshot);
+                const latestSnapshot = snapshotRef.current;
+                enqueueSnapshotSync(latestSnapshot.mapId || OFFLINE_MAP_ID, latestSnapshot);
+                saveCachedSnapshot(latestSnapshot);
+                dirtyRef.current = false;
                 setSyncState('queued');
-                setStatus('Boundary saved locally. Will sync to shared map once connection is available.');
-                setError(getSupabaseErrorMessage(err, 'Could not sync boundary to Supabase right now; it is queued and will retry automatically.'));
+                setStatus(`${savedItem} saved locally. Will sync to shared map once the issue is resolved.`);
+                setError(getSupabaseErrorMessage(err, `Could not sync ${savedItem.toLowerCase()} to Supabase right now; it is saved locally and queued for retry.`));
             } finally {
                 syncInFlightRef.current = false;
+                if (dirtyRef.current) {
+                    window.setTimeout(() => void runSync(), 0);
+                }
             }
         },
-        [supabase]
+        [runSync, supabase]
     );
 
     const flushQueue = useCallback(async () => {
@@ -453,6 +491,11 @@ export default function PropertyMapWorkspace() {
     useEffect(() => {
         if (loading) return;
         saveCachedSnapshot(snapshot);
+
+        if (syncAppliedSnapshotRef.current === snapshot) {
+            syncAppliedSnapshotRef.current = null;
+            return;
+        }
 
         if (!snapshot.mapId) {
             return;
@@ -794,7 +837,7 @@ export default function PropertyMapWorkspace() {
         setStatus('Boundary polygon saved. Syncing to shared map now...');
         // Sync immediately instead of waiting on the passive debounce timer, which gets
         // cancelled (losing the edit) if the user navigates away right after saving.
-        void persistSnapshotNow(nextSnapshot);
+        void persistSnapshotNow(nextSnapshot, 'Boundary');
         window.setTimeout(() => {
             mapActionsRef.current?.fitBoundary();
             mapActionsRef.current?.refresh();
@@ -1054,6 +1097,7 @@ export default function PropertyMapWorkspace() {
     };
 
     const selectedTrail = useMemo(() => trails.find(trail => trail.id === selectedTrailId) || trails[0] || null, [selectedTrailId, trails]);
+    const selectedPin = useMemo(() => pinpoints.find(pin => pin.id === selectedPinId) || null, [pinpoints, selectedPinId]);
     const selectedTrailSplits = useMemo(() => (selectedTrail ? buildTrailSplits(selectedTrail.points) : []), [selectedTrail]);
     const selectedTrailElevation = useMemo(() => (selectedTrail ? buildElevationSeries(selectedTrail.points) : []), [selectedTrail]);
     const currentDraftPace = useMemo(() => formatPace(paceFromLiveDraft(walkedTrailDraft)), [walkedTrailDraft]);
@@ -1200,6 +1244,15 @@ export default function PropertyMapWorkspace() {
                     <button type="button" className="soft-button" onClick={saveActiveTrail} disabled={plannedTrailDraft.length < 2 && walkedTrailDraft.length < 2}>
                         {plannedTrailDraft.length >= 2 ? `Save Manual Trail (${plannedTrailDraft.length})` : 'Save Walked Trail'}
                     </button>
+                    {selectedPin && (
+                        <button
+                            type="button"
+                            className="soft-button"
+                            onClick={() => void persistSnapshotNow(snapshot, selectedPin.pinType === 'treestand' ? 'Treestand' : 'Pinpoint')}
+                        >
+                            Save {selectedPin.pinType === 'treestand' ? 'Treestand' : 'Pinpoint'}
+                        </button>
+                    )}
                     <button type="button" className="soft-button" onClick={() => mapActionsRef.current?.fitBoundary()} disabled={!mapReady}>
                         Fit Full Property
                     </button>
@@ -1562,4 +1615,3 @@ export default function PropertyMapWorkspace() {
         </div>
     );
 }
-
