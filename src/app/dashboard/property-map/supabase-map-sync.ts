@@ -412,7 +412,8 @@ export const syncSnapshotToSupabase = async (
                 id: pin.sourceFeatureId,
                 map_id: snapshot.mapId,
                 label: pin.title,
-                feature_type: pin.pinType === 'treestand' || pin.pinType === 'range' ? pin.pinType : 'note',
+                // The real pin type lives in the meta JSON; 'note' is accepted by every version of the DB check constraint.
+                feature_type: 'note',
                 status: 'active',
                 description: `${MAP_V2_META_PREFIX}${JSON.stringify(pinMeta)}`,
                 x_percent: positionPercent.xPercent,
