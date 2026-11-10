@@ -23,9 +23,17 @@ export async function POST(request: Request) {
 
     const { data, error } = await service.auth.admin.createUser({ email, password, email_confirm: true });
     if (error || !data.user) {
-        const exists = /already|registered|exists/i.test(error?.message || '');
+        const message = error?.message || '';
+        const exists = /already|registered|exists/i.test(message);
+        const badKey = /invalid api key|jwt|unauthorized|not allowed/i.test(message);
         return NextResponse.json(
-            { error: exists ? 'That email already has an account. Sign in or reset your password.' : error?.message || 'Could not create account.' },
+            {
+                error: exists
+                    ? 'That email already has an account. Sign in, or ask an admin to set your password.'
+                    : badKey
+                      ? 'SUPABASE_SERVICE_ROLE_KEY on the server is wrong. Paste the service_role secret key from Supabase, then redeploy.'
+                      : message || 'Could not create account.'
+            },
             { status: exists ? 409 : 400 }
         );
     }

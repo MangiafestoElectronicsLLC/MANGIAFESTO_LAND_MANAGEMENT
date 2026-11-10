@@ -15,6 +15,11 @@ export default function AdminPage() {
     const call = useCallback(async (path: string, init?: RequestInit) => {
         const { data } = await supabaseClient().auth.getSession();
         const token = data.session?.access_token;
+        if (!token) {
+            return new Response(JSON.stringify({ error: 'You are not signed in. Go to the home page, create an account or sign in, then return here.' }), {
+                status: 401
+            });
+        }
         return fetch(path, {
             ...init,
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
