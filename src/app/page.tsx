@@ -61,8 +61,11 @@ function AuthPageContent() {
         if (lower.includes('invalid supabase')) {
             return 'This deployment is missing Supabase environment variables. Add the URL and anon key, then redeploy.';
         }
-        if (lower.includes('email rate limit exceeded')) {
-            return 'Too many emails were sent recently. Wait a few minutes, then try again.';
+        if (lower.includes('rate limit') || lower.includes('security purposes')) {
+            return 'Too many emails were requested recently. Wait a few minutes, then try again.';
+        }
+        if (lower.includes('error sending') || lower.includes('smtp')) {
+            return 'The server could not send the email. The Supabase email (SMTP) settings need to be fixed by the site owner.';
         }
         if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('fetch')) {
             return 'Could not reach the Supabase service. Check the project URL, anon key, and network connection.';
@@ -203,7 +206,8 @@ function AuthPageContent() {
             const supabase = supabaseClient();
             const { error: resendError } = await supabase.auth.resend({
                 type: 'signup',
-                email: email.trim()
+                email: email.trim().toLowerCase(),
+                options: { emailRedirectTo: redirectTo }
             });
 
             if (resendError) {
@@ -228,24 +232,47 @@ function AuthPageContent() {
             const supabase = supabaseClient();
 
             if (mode === 'signup') {
+                if (password.length < 6) {
+                    setError('Password must be at least 6 characters.');
+                    return;
+                }
+
+                // Preferred path: server creates a pre-confirmed account, so no email is needed.
+                const res = await fetch('/api/auth/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: nextEmail, password })
+                });
+                if (res.ok) {
+                    const { error: signInError } = await supabase.auth.signInWithPassword({ email: nextEmail, password });
+                    if (signInError) throw signInError;
+                    router.replace('/dashboard');
+                    return;
+                }
+                if (res.status !== 503) {
+                    const payload = await res.json().catch(() => ({}));
+                    if (res.status === 409) setMode('signin');
+                    throw new Error(payload.error || 'Could not create account.');
+                }
+
+                // Fallback when the server has no service key: regular email-confirmation sign-up.
                 const { data, error } = await supabase.auth.signUp({
                     email: nextEmail,
-                    password
+                    password,
+                    options: { emailRedirectTo: redirectTo }
                 });
                 if (error) throw error;
 
-                // Create profile row
-                if (data.user) {
-                    await supabase.from('profiles').insert({
-                        id: data.user.id,
-                        full_name: email,
-                        role_id: null
-                    });
+                // Supabase returns an empty identities list (not an error) for an email that is already registered.
+                if (data.user && data.user.identities && data.user.identities.length === 0) {
+                    setInfo('That email already has an account. Sign in, or use "Reset my password" under "Need help signing in?".');
+                    setMode('signin');
+                    return;
                 }
 
-                // If email confirmation is enabled, session is usually null after signup.
+                // If email confirmation is enabled, session is null after signup.
                 if (!data.session) {
-                    setInfo('Account created. Check your email to confirm your account, then sign in.');
+                    setInfo('Account created. Check your inbox and spam folder for the confirmation email. If it does not arrive, use "Resend confirmation email" under "Need help signing in?".');
                     setMode('signin');
                     return;
                 }
@@ -255,6 +282,19 @@ function AuthPageContent() {
                     password
                 });
                 if (error) throw error;
+            }
+
+            // The profile is created by a database trigger; this is a safe fallback for older accounts.
+            const {
+                data: { user: currentUser }
+            } = await supabase.auth.getUser();
+            if (currentUser) {
+                await supabase
+                    .from('profiles')
+                    .upsert(
+                        { id: currentUser.id, full_name: currentUser.email ?? nextEmail },
+                        { onConflict: 'id', ignoreDuplicates: true }
+                    );
             }
 
             router.replace('/dashboard');

@@ -14,7 +14,8 @@ const links = [
     { href: '/dashboard/calendar', label: 'Hunting / Fishing Calendar' },
     { href: '/dashboard/roles', label: 'Roles' },
     { href: '/dashboard/meetings', label: 'Board Meetings' },
-    { href: '/dashboard/system', label: 'System Check' }
+    { href: '/dashboard/system', label: 'System Check' },
+    { href: '/dashboard/admin', label: 'Admin' }
 ];
 
 export default function PrimaryNav() {
