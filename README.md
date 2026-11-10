@@ -13,6 +13,85 @@ A simple, user-friendly web app for managing family land tasks and tickets. Buil
 - **Basic Dashboard** - View all tickets and filter by status
 - **Mobile Friendly** - Works on phones, tablets, and computers
 
+## Off-Grid Comms (Meshtastic)
+
+Meshtastic does not use a central account to connect radios. Sign in to Family
+Land Board while online and open Off-Grid Comms to use the built-in radio interface.
+The optional **Use official client** button opens the official Meshtastic web
+client. If the embed or device picker does not work, use its link to open the
+official client in Chrome or Edge. It requires its own direct radio connection
+and cannot use a connection held by the phone app. The hosted client needs
+internet to load; test offline operation in advance.
+The official and built-in clients do not share connections, message history, or
+waiting messages. Disconnect the official client before connecting the same
+radio to the built-in chat. Waiting built-in messages send only when requested.
+Connect a powered Meshtastic radio using Bluetooth or USB. Each family member needs a radio within mesh
+range, configured for the correct region and compatible modem and primary
+channel settings. Use a private channel key for family conversations; the
+default public channel is not private.
+
+Chrome or Edge with a secure context (HTTPS or localhost) is recommended for
+Bluetooth and Web Serial USB. Disconnect the radio from the Meshtastic phone
+app before connecting over Bluetooth. USB connects to the computer running the
+browser; the optional server USB bridge instead requires a radio on the app
+server and is disabled in production unless `MESH_BRIDGE_ENABLED=1`. The bridge
+is intended for a trusted local server, not a hosted deployment.
+
+The built-in chat sends to the primary channel or directly to a selected node;
+it does not support other channels. Verify node IDs with family before sending.
+Direct-message privacy depends on firmware, keys and radio configuration; do
+not assume it is private simply because a recipient is selected. History and waiting messages stay in that browser,
+not the user's account. Waiting messages send when you choose **Send waiting
+messages**: group messages use the connected radio's primary channel, while
+direct messages require their original sending radio. A sent message does not prove that anyone
+received it; request a reply and test radio coverage in advance.
+
+The node list includes radios your node has heard, potentially through relays
+or MQTT. A name or appearance in the list does not identify its owner, imply
+membership in your group, or confirm current reachability. The public default
+primary channel key does not provide private group conversations.
+In the built-in chat, use **Family radios** to select verified full node IDs.
+Locally selected nodes and shared account assignments appear as direct-message
+recipients. Waiting direct messages require the recipient to remain approved;
+those addressed to an assigned account require that account to still have the
+same radio. This browser-local list does not filter the official client or
+prevent other radios from hearing broadcasts.
+
+To share account-to-radio assignments, run
+[`supabase/meshtastic_radio_assignments.sql`](supabase/meshtastic_radio_assignments.sql)
+in the Supabase SQL Editor. The server also needs `ADMIN_EMAILS` and
+`SUPABASE_SERVICE_ROLE_KEY` configured for an admin to make changes.
+Under **Radios assigned to accounts**, select an account and enter the radio's
+complete eight-digit node ID, verified on the device or in Meshtastic. Each
+account and radio may have one assignment. Signed-in users can see assignments
+and select an assigned person as a direct-message recipient; an assignment is
+only a label, not a radio connection or a security control. If a different
+radio is connected, replies go to that radio, not automatically to the one
+assigned to the account. A radio can still be used with the Meshtastic app
+after disconnecting it from this website.
+
+Assignments do not create an account inbox or synchronize messages with other
+browsers or the Meshtastic app. The website receives radio messages only while
+its radio connection and page are active; an always-on gateway and a separate
+account inbox would be needed to deliver messages to accounts when the page is
+closed. Shared assignments load while online and remain available for the
+current open page if internet connectivity is lost. Reload the page when
+assignments change, and verify them before sending; an offline page cannot
+learn about subsequent changes.
+
+Radio communication does not need cellular service or internet, but the app
+and its sign-in normally do. Open and sign in to the page before going offline
+and keep it open; reopening the app or signing in while offline is not
+guaranteed. The computer and any local server/bridge must remain powered.
+Do not depend on this page as the only means of emergency communication.
+
+For Wi-Fi radios, the browser must be able to reach the radio and the app server
+must allow network connections to it. Development allows these connections;
+production requires `MESH_ALLOW_HTTP_NODES=1`, which broadens the app's
+Content Security Policy to allow HTTP and HTTPS connections. Browsers block
+HTTP radios from HTTPS pages; use an HTTPS radio address and first trust its
+certificate in the browser. Browser CORS and network restrictions still apply.
+
 ## Quick Start (5 minutes)
 
 ### 1. Clone or Download This Repository

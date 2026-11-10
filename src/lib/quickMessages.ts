@@ -16,6 +16,7 @@ const STORAGE_KEY = 'family-land-satcom-quick-messages-v1';
 export const DEFAULT_QUICK_MESSAGES: QuickMessage[] = [
     { id: 'qm-going-on-land', label: '🌲 Going on the land', text: 'Heading onto the land now. Will check in.', emergency: false },
     { id: 'qm-going-hunting', label: '🦌 Going hunting', text: 'Going hunting. Will check in when done.', emergency: false },
+    { id: 'qm-going-to-stand', label: 'Going to my stand', text: 'Going to my stand now. Will check in when I arrive.', emergency: false },
     { id: 'qm-in-stand', label: 'In my stand', text: 'In my stand/blind now. Staying quiet.', emergency: false },
     { id: 'qm-moving', label: 'Moving locations', text: 'Moving to a new spot, will update.', emergency: false },
     { id: 'qm-leaving-land', label: '🚗 Leaving the land', text: 'Leaving the land now. Gate is closed.', emergency: false },

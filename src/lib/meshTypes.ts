@@ -39,6 +39,7 @@ export type MeshMessage = {
     emergency: boolean;
     created_at: string;
     synced: boolean;
+    target?: MessageTarget;
 };
 
 export type MeshSendRequest = {
@@ -51,3 +52,4 @@ export type MeshSendResponse = {
     message: MeshMessage;
     simulated: boolean;
 };
+import type { MessageTarget } from './meshMessageRouting';

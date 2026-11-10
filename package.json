@@ -9,6 +9,7 @@
         "lint": "next lint"
     },
     "dependencies": {
+        "@bufbuild/protobuf": "^2.14.0",
         "@daily-co/daily-js": "^0.93.0",
         "@meshtastic/js": "^2.6.0-0",
         "@supabase/auth-helpers-nextjs": "^0.10.0",

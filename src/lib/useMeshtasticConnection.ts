@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { fromBinary } from '@bufbuild/protobuf';
+import { Protobuf, ServiceUuid } from '@meshtastic/js';
 import type { MeshNode } from './meshTypes';
 
 // Real integration with devices already paired in the Meshtastic app, via the
@@ -13,6 +15,9 @@ export type LiveConnectionStatus = 'disconnected' | 'connecting' | 'connected' |
 export type LiveIncomingMessage = {
     text: string;
     fromNodeName: string;
+    fromNodeNum: number;
+    ownNodeNum: number | null;
+    direct: boolean;
     emergency: boolean;
 };
 
@@ -50,9 +55,9 @@ const CONNECT_TIMEOUT_MS = 15000;
 const PICKER_TIMEOUT_MS = 60000;
 const RADIO_REPLY_TIMEOUT_MS = 20000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage = 'TIMEOUT'): Promise<T> {
     return new Promise((resolve, reject) => {
-        const timer = window.setTimeout(() => reject(new Error('TIMEOUT')), ms);
+        const timer = window.setTimeout(() => reject(new Error(timeoutMessage)), ms);
         promise.then(
             value => {
                 window.clearTimeout(timer);
@@ -89,8 +94,11 @@ function describeUsbError(err: any): string {
     if (err?.message === 'PORT_NOT_OPEN') {
         return 'Could not open the USB port. Another app or tab probably has it open. Close the Meshtastic web client, Arduino serial monitor, and other tabs, then retry.';
     }
-    if (err?.message === 'TIMEOUT') {
-        return 'The USB port picker never appeared or finished. This happens in VS Code\'s embedded browser. Open http://localhost:3000/dashboard/satcom in regular Chrome or Edge, click Connect via USB, and choose the COM port from the popup.';
+    if (err?.message === 'USB_PICKER_TIMEOUT') {
+        return 'No USB port was selected within 60 seconds. If the picker did not appear, open this same address in Chrome or Edge outside VS Code and sign in. If the radio is missing, check its USB data cable, driver, and Windows Device Manager.';
+    }
+    if (err?.message === 'USB_OPEN_TIMEOUT') {
+        return 'The selected USB port did not open in time. Close other apps using the port, reconnect the radio, and try again.';
     }
     if (err?.name === 'InvalidStateError' || /already open|in use|busy/i.test(err?.message || '')) {
         return 'The USB port is busy. Close other tabs/apps using it (Meshtastic web client, Arduino serial monitor), then retry.';
@@ -107,6 +115,7 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
     const [nodes, setNodes] = useState<MeshNode[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [ownBattery, setOwnBattery] = useState<LiveBattery | null>(null);
+    const [ownNodeNum, setOwnNodeNum] = useState<number | null>(null);
 
     const connectionRef = useRef<any>(null);
     const nodeNamesRef = useRef<Map<number, string>>(new Map());
@@ -159,13 +168,23 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                       ? client.createHttpConnection()
                       : client.createBleConnection();
 
+            // The client waits for an ACK to its config request, but the radio
+            // confirms it with configCompleteId instead of a routing ACK.
+            connection.events.onFromRadio.subscribe((message: any) => {
+                if (message.payloadVariant?.case !== 'configCompleteId' || message.payloadVariant.value !== connection.configId) return;
+                for (const item of connection.queue.getState()) {
+                    const request = fromBinary(Protobuf.Mesh.ToRadioSchema, item.data);
+                    if (request.payloadVariant.case === 'wantConfigId' && request.payloadVariant.value === connection.configId) {
+                        connection.queue.processAck(item.id);
+                    }
+                }
+            });
+
             connection.events.onDeviceStatus.subscribe((deviceStatus: number) => {
-                if (deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceConnected) {
-                    // Serial reports "connected" as soon as the port opens; connectUsb confirms the radio replies first.
-                    if (kind === 'ble') setStatus('connected');
-                } else if (
-                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceDisconnected ||
-                    deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceRestarting
+                if (
+                    connectionRef.current === connection &&
+                    (deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceDisconnected ||
+                        deviceStatus === meshtastic.Types.DeviceStatusEnum.DeviceRestarting)
                 ) {
                     setStatus('disconnected');
                 }
@@ -189,7 +208,10 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             // MyNodeInfo tells us which node number IS this browser's connected
             // node, so we can tell its battery telemetry apart from other mesh nodes.
             connection.events.onMyNodeInfo.subscribe((info: any) => {
-                if (typeof info?.myNodeNum === 'number') myNodeNumRef.current = info.myNodeNum;
+                if (typeof info?.myNodeNum === 'number') {
+                    myNodeNumRef.current = info.myNodeNum;
+                    setOwnNodeNum(info.myNodeNum);
+                }
             });
 
             // Telemetry packets arrive far more often than full NodeInfo rebroadcasts,
@@ -213,10 +235,21 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                 );
             });
 
+            const seenPacketIds = new Set<string>();
             connection.events.onMessagePacket.subscribe((packet: any) => {
+                if (packet.from === myNodeNumRef.current) return;
+                if (packet.channel !== 0 || typeof packet.from !== 'number') return;
+                const direct = packet.to !== meshtastic.broadcastNum;
+                if (direct && (myNodeNumRef.current == null || packet.to !== myNodeNumRef.current)) return;
+                if (typeof packet.id === 'number' && packet.id !== 0) {
+                    const key = `${packet.from}:${packet.id}`;
+                    if (seenPacketIds.has(key)) return;
+                    seenPacketIds.add(key);
+                    if (seenPacketIds.size > 500) seenPacketIds.delete(seenPacketIds.values().next().value!);
+                }
                 const fromName = nodeNamesRef.current.get(packet.from) || `Node ${packet.from}`;
                 const text = typeof packet.data === 'string' ? packet.data : String(packet.data ?? '');
-                if (text) onIncomingMessage({ text, fromNodeName: fromName, emergency: false });
+                if (text) onIncomingMessage({ text, fromNodeName: fromName, fromNodeNum: packet.from, ownNodeNum: myNodeNumRef.current, direct, emergency: text.startsWith('EMERGENCY: ') });
             });
 
             return connection;
@@ -252,10 +285,15 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             return;
         }
 
+        const attempt = ++connectAttemptRef.current;
+        const cancelled = () => attempt !== connectAttemptRef.current;
+        myNodeNumRef.current = null;
+        setOwnNodeNum(null);
+        nodeNamesRef.current.clear();
+        setNodes([]);
         setStatus('connecting');
 
         try {
-            const meshtastic = await import('@meshtastic/js');
             // A device ID (e.g. 9148, the suffix on the node's Bluetooth name) narrows the picker to that node.
             const id = opts?.deviceId?.trim();
             const filterOptions = {
@@ -266,47 +304,89 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                           { namePrefix: id },
                           { namePrefix: `Heltec_${id}` }
                       ]
-                    : [{ services: [meshtastic.ServiceUuid] }],
-                optionalServices: [meshtastic.ServiceUuid]
+                    : [{ services: [ServiceUuid] }],
+                optionalServices: [ServiceUuid]
             };
 
+            // Browser permission pickers must start directly from the user's click,
+            // before a dynamic import or a remembered-device lookup yields.
+            const picker = opts?.forcePicker || !preferDeviceName
+                ? (navigator as any).bluetooth.requestDevice(filterOptions)
+                : null;
             const remembered = opts?.forcePicker ? null : await findPreviouslyAllowedDevice(preferDeviceName);
+            const device = picker ? await picker : remembered;
+            if (cancelled()) return;
+            if (!device) {
+                setStatus('error');
+                setError('This browser does not have permission for that radio. Choose “Choose device...” to select it.');
+                return;
+            }
+            const meshtastic = await import('@meshtastic/js');
 
             if (remembered) {
-                // Try the remembered device first, but don't let a stale/out-of-range
-                // device hang the UI forever — fall back to the picker below instead.
                 const connection = buildConnection(meshtastic);
                 try {
                     await withTimeout(connection.connect({ device: remembered }), CONNECT_TIMEOUT_MS);
+                    if (cancelled()) {
+                        connection.disconnect();
+                        return;
+                    }
                     setDeviceName(remembered.name || 'Meshtastic node');
                     connectionRef.current = connection;
+                    const deadline = Date.now() + RADIO_REPLY_TIMEOUT_MS;
+                    while ((myNodeNumRef.current == null || !connection.isConfigured) && Date.now() < deadline && !cancelled()) {
+                        await new Promise(resolve => window.setTimeout(resolve, 250));
+                    }
+                    if (cancelled()) return;
+                    if (myNodeNumRef.current == null || !connection.isConfigured) throw new Error('NO_RADIO_REPLY');
                     setStatus('connected');
                     return;
-                } catch {
+                } catch (err) {
                     try {
                         connection.disconnect();
                     } catch {
-                        // best-effort cleanup before falling back to the picker
+                        // best-effort cleanup
                     }
+                    if (cancelled()) return;
+                    connectionRef.current = null;
+                    setStatus('error');
+                    setError(`${describeConnectError(err)} To pick a radio again, use “Choose device...”.`);
+                    return;
                 }
             }
 
             const connection = buildConnection(meshtastic);
-            const device = await connection.getDevice(filterOptions);
             setDeviceName(device.name || 'Meshtastic node');
             connectionRef.current = connection;
             await withTimeout(connection.connect({ device }), CONNECT_TIMEOUT_MS);
-
+            if (cancelled()) {
+                connection.disconnect();
+                return;
+            }
+            const deadline = Date.now() + RADIO_REPLY_TIMEOUT_MS;
+            while ((myNodeNumRef.current == null || !connection.isConfigured) && Date.now() < deadline && !cancelled()) {
+                await new Promise(resolve => window.setTimeout(resolve, 250));
+            }
+            if (cancelled()) return;
+            if (myNodeNumRef.current == null || !connection.isConfigured) throw new Error('NO_RADIO_REPLY');
             setStatus('connected');
         } catch (err: any) {
+            if (cancelled()) return;
+            try {
+                connectionRef.current?.disconnect();
+            } catch {
+                // best-effort cleanup after a failed attempt
+            }
             connectionRef.current = null;
             if (err?.name === 'NotFoundError') {
                 setStatus('disconnected');
-                setError(null); // user cancelled the device picker
+                setError('No radio was selected. If it is missing, turn it on, disconnect it from the phone app, and try again nearby.');
                 return;
             }
             setStatus('error');
-            setError(describeConnectError(err));
+            setError(err?.message === 'NO_RADIO_REPLY'
+                ? 'The radio did not respond. Make sure it is on, nearby, and disconnected from the phone app, then try again.'
+                : describeConnectError(err));
         }
     }, [buildConnection, status]);
 
@@ -337,19 +417,19 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
         const cancelled = () => attempt !== connectAttemptRef.current;
         setStatus('connecting');
         myNodeNumRef.current = null;
+        setOwnNodeNum(null);
+        nodeNamesRef.current.clear();
+        setNodes([]);
 
         try {
-            const meshtastic = await import('@meshtastic/js');
-            const connection = buildConnection(meshtastic, 'serial');
-
-            // Without a timeout a blocked/hidden port picker leaves the UI "connecting" forever.
-            // Reuse a port the user already granted; otherwise show the picker.
-            const granted: any[] = await serial.getPorts().catch(() => []);
-            const port = granted.length === 1 ? granted[0] : await withTimeout<any>(serial.requestPort({}), PICKER_TIMEOUT_MS);
+            const port = await withTimeout<any>(serial.requestPort({}), PICKER_TIMEOUT_MS, 'USB_PICKER_TIMEOUT');
             if (cancelled()) return;
+            const meshtastic = await import('@meshtastic/js');
+            if (cancelled()) return;
+            const connection = buildConnection(meshtastic, 'serial');
             connectionRef.current = connection;
 
-            await withTimeout(connection.connect({ port, concurrentLogOutput: false }), CONNECT_TIMEOUT_MS);
+            await withTimeout(connection.connect({ port, concurrentLogOutput: false }), CONNECT_TIMEOUT_MS, 'USB_OPEN_TIMEOUT');
             if (cancelled()) return;
 
             // The library swallows open() failures, so confirm the port really opened.
@@ -357,13 +437,13 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                 throw Object.assign(new Error('PORT_NOT_OPEN'), { name: 'InvalidStateError' });
             }
 
-            // Only report connected once the radio answers with its node info.
+            // Only report connected after the radio answers and finishes its configuration download.
             const deadline = Date.now() + RADIO_REPLY_TIMEOUT_MS;
-            while (myNodeNumRef.current == null && Date.now() < deadline && !cancelled()) {
+            while ((myNodeNumRef.current == null || !connection.isConfigured) && Date.now() < deadline && !cancelled()) {
                 await new Promise(resolve => window.setTimeout(resolve, 250));
             }
             if (cancelled()) return;
-            if (myNodeNumRef.current == null) throw new Error('NO_RADIO_REPLY');
+            if (myNodeNumRef.current == null || !connection.isConfigured) throw new Error('NO_RADIO_REPLY');
 
             setDeviceName(nodeNamesRef.current.get(myNodeNumRef.current) || 'USB node');
             setStatus('connected');
@@ -377,7 +457,8 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             connectionRef.current = null;
             if (err?.name === 'NotFoundError') {
                 setStatus('disconnected');
-                return; // user cancelled the port picker
+                setError('No USB port was selected. If the radio is missing, check its data cable and USB driver, then try again.');
+                return;
             }
             setStatus('error');
             setError(describeUsbError(err));
@@ -391,6 +472,9 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             const cancelled = () => attempt !== connectAttemptRef.current;
             setStatus('connecting');
             myNodeNumRef.current = null;
+            setOwnNodeNum(null);
+            nodeNamesRef.current.clear();
+            setNodes([]);
 
             try {
                 const meshtastic = await import('@meshtastic/js');
@@ -399,11 +483,11 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                 await withTimeout(connection.connect({ address, tls,                 fetchInterval: opts.fetchInterval }), opts.timeoutMs ?? CONNECT_TIMEOUT_MS);
 
                                 const deadline = Date.now() + (opts.timeoutMs ?? RADIO_REPLY_TIMEOUT_MS);
-                while (myNodeNumRef.current == null && Date.now() < deadline && !cancelled()) {
+                while ((myNodeNumRef.current == null || !connection.isConfigured) && Date.now() < deadline && !cancelled()) {
                     await new Promise(resolve => window.setTimeout(resolve, 250));
                 }
                 if (cancelled()) return false;
-                if (myNodeNumRef.current == null) throw new Error('NO_RADIO_REPLY');
+                if (myNodeNumRef.current == null || !connection.isConfigured) throw new Error('NO_RADIO_REPLY');
 
                 setDeviceName(nodeNamesRef.current.get(myNodeNumRef.current) || address);
                 setStatus('connected');
@@ -491,6 +575,8 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             if (status === 'connecting') return;
             releaseExistingConnection();
             usingBridgeRef.current = false;
+            const attempt = ++connectAttemptRef.current;
+            const cancelled = () => attempt !== connectAttemptRef.current;
             setStatus('connecting');
 
             const fail = (message: string) => {
@@ -501,6 +587,7 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             let path = portPath;
             try {
                 const listResponse = await withTimeout(fetch('/api/bridge/ports', { cache: 'no-store' }), 8000);
+                if (cancelled()) return;
                 if (listResponse.status === 403) {
                     const body = await listResponse.json().catch(() => null);
                     return fail(body?.error || 'The USB bridge is disabled on this server.');
@@ -512,21 +599,29 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
                         'No USB serial ports found on the app server. Plug the node into the computer running this app with a data-capable USB-C cable, and install the CP210x/CH340 driver if Device Manager shows no port.'
                     );
                 }
-                path = path || (ports.find(p => p.likelyMeshtastic) ?? ports[0]).path;
+                if (!path && ports.length > 1) {
+                    return fail('More than one USB port was found. Disconnect the other USB radios or use “USB in this browser” to choose one.');
+                }
+                path = path || ports[0].path;
 
                 const openResponse = await withTimeout(fetch(`/api/bridge/open?path=${encodeURIComponent(path)}`, { method: 'POST' }), 10000);
+                if (cancelled()) {
+                    if (openResponse.ok) void fetch('/api/bridge/close', { method: 'POST' }).catch(() => undefined);
+                    return;
+                }
                 if (!openResponse.ok) {
                     const body = await openResponse.json().catch(() => null);
                     return fail(body?.error || `Could not open ${path}.`);
                 }
             } catch {
+                if (cancelled()) return;
                 return fail('Could not reach the USB bridge on the app server.');
             }
 
             usingBridgeRef.current = true;
             const ok = await connectHttp(window.location.host + '/api/bridge', window.location.protocol === 'https:', {
                 fetchInterval: 1000,
-                failMessage: `Opened ${path} but the node did not answer. Make sure it runs Meshtastic firmware (flash at flasher.meshtastic.org), wait ~5 seconds after plugging in, then try again.`
+                failMessage: `Opened ${path} but could not finish connecting to the radio. Close other Meshtastic connections, check the USB cable, and try again. Do not reflash a working radio.`
             });
             if (!ok) {
                 usingBridgeRef.current = false;
@@ -561,19 +656,25 @@ export function useMeshtasticConnection({ onIncomingMessage }: UseMeshtasticConn
             void fetch('/api/bridge/close', { method: 'POST' }).catch(() => undefined);
         }
         myNodeNumRef.current = null;
+        setOwnNodeNum(null);
         setStatus('disconnected');
         setDeviceName(null);
         setNodes([]);
         setOwnBattery(null);
     }, []);
 
-    const sendText = useCallback(async (text: string): Promise<boolean> => {
+    const sendText = useCallback(async (text: string, destination: 'broadcast' | number = 'broadcast', fromNodeNum?: number): Promise<boolean> => {
         if (status !== 'connected' || !connectionRef.current) return false;
-        await connectionRef.current.sendText(text);
-        return true;
+        if (typeof destination === 'number' && (fromNodeNum == null || myNodeNumRef.current !== fromNodeNum)) return false;
+        try {
+            await connectionRef.current.sendText(text, destination, true, 0);
+            return true;
+        } catch {
+            return false;
+        }
     }, [status]);
 
-    return { status, deviceName, nodes, error, ownBattery, connectBluetooth, connectUsb, connectBridge, connectWifi, disconnect, sendText };
+    return { status, deviceName, nodes, error, ownBattery, ownNodeNum, connectBluetooth, connectUsb, connectBridge, connectWifi, disconnect, sendText };
 }
 
 export type MeshtasticConnection = ReturnType<typeof useMeshtasticConnection>;

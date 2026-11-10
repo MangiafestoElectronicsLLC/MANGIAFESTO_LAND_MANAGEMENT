@@ -41,9 +41,14 @@ const runStore = async <T>(
         const tx = db.transaction(storeName, mode);
         const store = tx.objectStore(storeName);
         const req = action(store);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-        tx.oncomplete = () => db.close();
+        tx.oncomplete = () => {
+            db.close();
+            resolve(req.result);
+        };
+        tx.onabort = () => {
+            db.close();
+            reject(tx.error || req.error || new Error('Message storage transaction failed.'));
+        };
     });
 };
 
@@ -52,28 +57,71 @@ export const saveMessage = async (message: MeshMessage): Promise<void> => {
 };
 
 export const loadMessages = async (): Promise<MeshMessage[]> => {
-    try {
-        const all = await runStore<MeshMessage[]>(MESSAGES_STORE, 'readonly', store => store.getAll());
-        return all.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    } catch {
-        return [];
-    }
+    const all = await runStore<MeshMessage[]>(MESSAGES_STORE, 'readonly', store => store.getAll());
+    return all.sort((a, b) => a.created_at.localeCompare(b.created_at));
 };
 
 export const queueOutgoingMessage = async (message: MeshMessage): Promise<void> => {
     await runStore(QUEUE_STORE, 'readwrite', store => store.put(message));
 };
 
+export const saveQueuedMessage = async (message: MeshMessage): Promise<void> => {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([MESSAGES_STORE, QUEUE_STORE], 'readwrite');
+        tx.objectStore(MESSAGES_STORE).put(message);
+        tx.objectStore(QUEUE_STORE).put(message);
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onabort = () => {
+            db.close();
+            reject(tx.error || new Error('Could not save the waiting message.'));
+        };
+    });
+};
+
+export const deleteQueuedMessage = async (id: string): Promise<void> => {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([MESSAGES_STORE, QUEUE_STORE], 'readwrite');
+        tx.objectStore(MESSAGES_STORE).delete(id);
+        tx.objectStore(QUEUE_STORE).delete(id);
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onabort = () => {
+            db.close();
+            reject(tx.error || new Error('Could not remove the waiting message.'));
+        };
+    });
+};
+
 export const loadQueuedMessages = async (): Promise<MeshMessage[]> => {
-    try {
-        return await runStore<MeshMessage[]>(QUEUE_STORE, 'readonly', store => store.getAll());
-    } catch {
-        return [];
-    }
+    return runStore<MeshMessage[]>(QUEUE_STORE, 'readonly', store => store.getAll());
 };
 
 export const removeQueuedMessage = async (id: string): Promise<void> => {
     await runStore(QUEUE_STORE, 'readwrite', store => store.delete(id));
+};
+
+export const markQueuedMessageSent = async (message: MeshMessage): Promise<void> => {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([MESSAGES_STORE, QUEUE_STORE], 'readwrite');
+        tx.objectStore(MESSAGES_STORE).put(message);
+        tx.objectStore(QUEUE_STORE).delete(message.id);
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onabort = () => {
+            db.close();
+            reject(tx.error || new Error('Could not update the sent message.'));
+        };
+    });
 };
 
 export const makeMessageId = () =>

@@ -23,11 +23,11 @@ type DeviceOnboardingProps = {
 };
 
 const PREP_CHECKS = [
-    { id: 'powered', label: 'Node is powered on (hold the side button ~1 second) and charged over USB-C.' },
-    { id: 'antenna', label: '915MHz antenna is screwed on before powering up — never transmit without it.' },
-    { id: 'app', label: 'Node was paired once in the official Meshtastic phone app.' },
-    { id: 'region', label: 'Region is set to US_915 in the Meshtastic app.' },
-    { id: 'channel', label: 'Node joined the family private channel (same QR / channel key as the other nodes).' }
+    { id: 'powered', label: 'Radio is powered on and charged.' },
+    { id: 'antenna', label: 'The correct antenna is attached before powering on.' },
+    { id: 'app', label: 'Meshtastic firmware is installed on the radio.' },
+    { id: 'region', label: 'The correct region for your location is set in the Meshtastic app.' },
+    { id: 'channel', label: 'The primary channel and modem settings match the other radios.' }
 ];
 
 const inputStyle: React.CSSProperties = {
@@ -117,10 +117,6 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
 
     const goNext = () => {
         setFormError(null);
-        if (step === 0 && !support.ok) {
-            setFormError('Open this page in Chrome or Edge over https before adding a node.');
-            return;
-        }
         if (step === 1 && !allPrepChecked) {
             setFormError('Check every prep item so the node can actually join the mesh.');
             return;
@@ -183,17 +179,14 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
 
             {devices.length === 0 && !wizardOpen && (
                 <p style={{ margin: 0, opacity: 0.8, fontSize: '0.9rem' }}>
-                    No nodes added yet. Once a node is paired in the Meshtastic app, tap <strong>Add a node</strong> and
-                    the four-step guide walks you through connecting it to this dashboard.
+                    No radios saved yet. Tap <strong>Add a node</strong> to keep a local list of your radios.
                 </p>
             )}
 
             {devices.length > 0 && !wizardOpen && (
                 <p style={{ margin: 0, opacity: 0.7, fontSize: '0.82rem' }}>
-                    Only one node talks to this browser over Bluetooth at a time — whichever one you carry and tap{' '}
-                    <strong>Connect</strong> on below. It must be powered on, nearby, and not already connected in the
-                    Meshtastic phone app (a node only accepts one Bluetooth client at once). The rest of the mesh
-                    still shows up automatically through that connection.
+                    This list is saved only in this browser. The buttons below reconnect Bluetooth radios; for USB or
+                    Wi-Fi, use the connection options at the top of the page. Other mesh radios appear through the connected radio.
                 </p>
             )}
 
@@ -246,7 +239,7 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                                                 onClick={() => void live.connectBluetooth(device.bluetoothName)}
                                                 disabled={live.status === 'connecting'}
                                             >
-                                                {live.status === 'connecting' ? 'Connecting...' : 'Connect'}
+                                                {live.status === 'connecting' ? 'Connecting...' : 'Connect Bluetooth'}
                                             </button>
                                             <button
                                                 className="soft-button"
@@ -271,7 +264,7 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
             {live.status === 'connected' && !knownDevice && !wizardOpen && (
                 <div style={{ fontSize: '0.85rem', opacity: 0.85 }}>
                     Connected to <strong>{live.deviceName}</strong>, which isn&apos;t saved yet. Tap <strong>Add a node</strong> to
-                    name it and keep it in this list for one-tap reconnects.
+                    name it and keep it in this list.
                 </div>
             )}
 
@@ -302,8 +295,8 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                             <div>{support.secureContext ? '✔' : '✖'} Page loaded over a secure https connection.</div>
                             {!support.ok && (
                                 <div style={{ color: '#fde68a' }}>
-                                    On iPhone, use the Meshtastic app itself for messaging — this dashboard still shows
-                                    guides, emergency steps, and your saved device list.
+                                    Bluetooth is unavailable here. Connect using USB or Wi-Fi above if supported, or use
+                                    the Meshtastic phone app.
                                 </div>
                             )}
                         </div>
@@ -359,8 +352,8 @@ export default function DeviceOnboarding({ live, ownerName }: DeviceOnboardingPr
                         <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.88rem' }}>
                             <strong>Connect and confirm</strong>
                             <p style={{ margin: 0, opacity: 0.8 }}>
-                                Tap connect, then choose your node in the browser popup. Once it says connected, the node
-                                list and mesh chat switch from demo data to your real mesh.
+                                Connect a radio using the buttons at the top of this page, or choose Bluetooth below.
+                                Once connected, save it to this browser&apos;s list.
                             </p>
                             <p style={{ margin: 0, opacity: 0.7, fontSize: '0.82rem' }}>
                                 No devices in the popup? Close the Meshtastic phone app first — a node only accepts one
